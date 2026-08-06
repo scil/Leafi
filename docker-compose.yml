@@ -3,7 +3,7 @@ services:
     image: eclipse-mosquitto:2
     restart: unless-stopped
     ports:
-      - "1883:1883"
+      - "18830:1883"   # 宿主机用 18830:Windows 保留了 1848–1947 段,1883 绑不上
     volumes:
       - ./config/mosquitto:/mosquitto/config
       - mosquitto-data:/mosquitto/data

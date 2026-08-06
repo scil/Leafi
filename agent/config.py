@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     mqtt_host: str = "127.0.0.1"
-    mqtt_port: int = 1883
+    mqtt_port: int = 18830  # 宿主机映射端口(Windows 保留了 1883 所在端口段)
     go2rtc_url: str = "http://127.0.0.1:1984"
     frigate_url: str = "http://127.0.0.1:5000"
     camera_name: str = "hallway"
