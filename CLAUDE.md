@@ -1,0 +1,36 @@
+# Carema-Kis-AI 项目约定
+
+家用 AI Agent:门外走廊摄像头 + 语音,提醒并验证 10 岁孩子的日常习惯(晨起喝水、早晚刷牙)。
+设计文档 = [方案.md](方案.md)(v0.2,先读它);实施状态见 README.md 的状态表。
+
+## 不可谈判的红线(改代码前必读)
+
+1. **影像/人脸/姿态数据永不出局域网**。视觉推理全部本地(Frigate + YOLO-pose + Ollama VLM);云端(Claude API)只收纯文字,prompt 里不得出现图像或身份信息。
+2. **摄像头永不进卫生间**,只装门外走廊;验证靠"门外可见动作 + 门口 zone 停留推断"。
+3. 对孩子透明:这是陪伴教练不是暗中监控;话术风格是"教练+队友"(平等/幽默/不训斥,忌幼稚化)。
+
+## 常用命令
+
+```powershell
+.venv\Scripts\python -m pytest -q                     # 单测(必须全绿再提交)
+.venv\Scripts\python -m agent.main --mock --now brush_pm   # mock 联调(配 scripts/fake_event.py)
+docker compose up -d                                  # Frigate + mosquitto
+```
+
+- Python 3.12 venv(uv 创建);系统 Python 是 3.9,**别用系统 pip**。
+- MQTT 宿主端口是 **18830**(Windows 保留了 1883 所在端口段),容器内仍是 1883。
+- torch 要装 cu128 版(RTX 5070 Ti / Blackwell):`pip install torch --index-url https://download.pytorch.org/whl/cu128`
+
+## 结构速览
+
+- `agent/` 主程序:`main.py`(APScheduler 入口)→ `session.py`(状态机:提醒→等到场→验证→上报)
+  - `presence.py` Frigate MQTT 事件;`speaker.py` TTS→摄像头喇叭(go2rtc tapo://)或本机 ffplay
+  - `brain.py` Claude Haiku 生成台词(无 key 回退 `phrases.py` 静态话术)
+  - `vision/` P1 验证引擎:`scorer.py`(刷牙计分,纯逻辑)、`dwell.py`(门内停留)、`vlm.py`(Ollama 终裁)、`verifier.py`(编排;RTSP 部分待实机)
+- `config/frigate/config.yml` Frigate 模板(占位符从 .env 注入);`tests/` 28 项单测
+- 会话记录:SQLite `data/sessions.db`(storage.py,含连击/周统计)
+
+## 当前待实机验证(有摄像头才能做)
+
+go2rtc 喇叭推流 src 语法、rtsp_kp_stream 真流、dwell 启发式校准、Tapo 固件 tapo:// 兼容性。
+硬件未到货:Tapo C225 待下单。
