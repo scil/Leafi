@@ -8,7 +8,8 @@ from .config import settings
 log = logging.getLogger("notify")
 
 
-async def _snapshot() -> bytes | None:
+async def snapshot() -> bytes | None:
+    """取当前画面一帧(Frigate latest.jpg);失败返回 None。"""
     try:
         async with httpx.AsyncClient() as c:
             r = await c.get(
@@ -24,12 +25,13 @@ async def send(title: str, body: str, with_snapshot: bool = False) -> None:
     log.info("[通知] %s — %s", title, body)
     if settings.mock:
         return
-    snap = await _snapshot() if with_snapshot else None
+    snap = await snapshot() if with_snapshot else None
     try:
         async with httpx.AsyncClient() as c:
             if settings.bark_url:
                 await c.get(
-                    f"{settings.bark_url.rstrip('/')}/{quote(title)}/{quote(body)}", timeout=10
+                    f"{settings.bark_url.rstrip('/')}/{quote(title)}/{quote(body or ' ')}",
+                    timeout=10,
                 )
             if settings.telegram_bot_token and settings.telegram_chat_id:
                 api = f"https://api.telegram.org/bot{settings.telegram_bot_token}"

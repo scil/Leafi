@@ -16,9 +16,25 @@ class Settings(BaseSettings):
     wait_retry_min: int = 10
 
     tts_voice: str = "zh-CN-YunxiNeural"
+    speaker_backend: str = "go2rtc"     # go2rtc(摄像头喇叭)| local(本机 ffplay,开发用)
     bark_url: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    # ---- P1 视觉验证(方案.md §4)----
+    verify_mode: str = "presence"       # presence(P0 仅到场)| vision(P1 动作验证)
+    ollama_url: str = "http://127.0.0.1:11434"
+    vlm_model: str = "qwen3-vl:8b"
+    pose_model: str = "yolo11n-pose.pt"
+    target_brush_seconds: int = 100     # 可见刷牙 + 门内停留(封顶)需达到的总秒数
+    min_visible_brush_seconds: int = 60 # 门外可见刷牙动作的最低秒数
+    inside_credit_cap: int = 40         # 门内停留的信任上限(防"进去玩水")
+    verify_window_s: int = 300          # 单次验证会话时长上限
+    child_face_label: str = ""          # Frigate 人脸训练后填孩子名;空 = 任何 person 都算
+
+    # ---- P2 对话大脑 ----
+    brain_model: str = "claude-haiku-4-5"
+    anthropic_api_key: str = ""
 
     mock: bool = False
 
