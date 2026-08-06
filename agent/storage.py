@@ -80,3 +80,21 @@ def week_stats(today: dt.date | None = None) -> dict:
         rows = list(con.execute("SELECT status FROM sessions WHERE date>=?", (since,)))
     done = sum(1 for (s,) in rows if s != "missed")
     return {"done": done, "missed": len(rows) - done, "total": len(rows)}
+
+
+def week_by_task(today: dt.date | None = None) -> dict[str, tuple[int, int]]:
+    """近 7 天分任务统计:{task: (完成次数, 未完成次数)}"""
+    today = today or dt.date.today()
+    since = (today - dt.timedelta(days=6)).isoformat()
+    out: dict[str, tuple[int, int]] = {}
+    with _conn() as con:
+        for task, status in con.execute(
+            "SELECT task, status FROM sessions WHERE date>=? ORDER BY task", (since,)
+        ):
+            done, missed = out.get(task, (0, 0))
+            if status == "missed":
+                missed += 1
+            else:
+                done += 1
+            out[task] = (done, missed)
+    return out

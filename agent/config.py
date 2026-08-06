@@ -36,7 +36,18 @@ class Settings(BaseSettings):
     brain_model: str = "claude-haiku-4-5"
     anthropic_api_key: str = ""
 
+    # ---- 家长周报(P3 预览):周几:时:分;留空禁用 ----
+    weekly_report: str = "sun:20:45"
+
     mock: bool = False
+
+    def parsed_weekly_report(self) -> tuple[str, int, int] | None:
+        """"sun:20:45" -> ("sun", 20, 45);空串 = 禁用。"""
+        raw = self.weekly_report.strip()
+        if not raw:
+            return None
+        day, hh, mm = raw.split(":")
+        return day.strip().lower(), int(hh), int(mm)
 
     def parsed_schedule(self) -> list[tuple[str, str]]:
         """SCHEDULE="water:07:20,brush_pm:20:30" -> [("water","07:20"), ...]"""

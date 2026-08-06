@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from .config import settings
 from .phrases import TASKS
 from .presence import presence
+from .report import send_weekly_report
 from .session import run_task
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-9s %(message)s")
@@ -28,6 +29,13 @@ async def amain(args: argparse.Namespace) -> None:
         h, m = hhmm.split(":")
         sched.add_job(run_task, CronTrigger(hour=int(h), minute=int(m)), args=[task], id=task)
         log.info("已排程 %s @ %s", task, hhmm)
+    weekly = settings.parsed_weekly_report()
+    if weekly:
+        day, h, m = weekly
+        sched.add_job(
+            send_weekly_report, CronTrigger(day_of_week=day, hour=h, minute=m), id="weekly_report"
+        )
+        log.info("已排程 家长周报 @ %s %02d:%02d", day, h, m)
     sched.start()
     log.info("Agent 常驻运行中(mock=%s)。Ctrl+C 退出。", settings.mock)
     await asyncio.Event().wait()
