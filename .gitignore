@@ -7,3 +7,5 @@ cache/
 data/
 config/frigate/model_cache/
 config/frigate/*.db*
+
+*.pt
