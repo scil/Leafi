@@ -1,0 +1,43 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./config/mosquitto:/mosquitto/config
+      - mosquitto-data:/mosquitto/data
+
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    shm_size: "256mb"
+    ports:
+      - "5000:5000"       # Frigate UI / API
+      - "8554:8554"       # RTSP restream
+      - "8555:8555/tcp"   # WebRTC
+      - "8555:8555/udp"
+      - "1984:1984"       # go2rtc API(agent 推喇叭音频用)
+    volumes:
+      - ./config/frigate:/config
+      - ./cache:/cache:ro           # agent 生成的 TTS 音频,go2rtc 按容器内路径读取
+      - frigate-media:/media/frigate
+    environment:
+      - FRIGATE_CAM_IP=${CAM_IP:-192.168.1.50}
+      - FRIGATE_CAM_USER=${CAM_USER:-frigate}
+      - FRIGATE_CAM_PASSWORD=${CAM_PASSWORD:-change-me}
+      - FRIGATE_TAPO_CLOUD_PASSWORD=${TAPO_CLOUD_PASSWORD:-change-me}
+    # P1 启用 GPU 检测(Docker Desktop 需开 WSL2 GPU 支持)后取消注释:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  mosquitto-data:
+  frigate-media:
