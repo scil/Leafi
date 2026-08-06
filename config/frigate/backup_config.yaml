@@ -1,0 +1,49 @@
+# Carema-Kis-AI · Frigate P0 模板
+# 摄像头到货后:填好 .env(CAM_IP/CAM_USER/CAM_PASSWORD/TAPO_CLOUD_PASSWORD)→ docker compose restart frigate
+mqtt:
+  host: mosquitto
+
+go2rtc:
+  streams:
+    sink_cam:
+      - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM_IP}:554/stream1
+      - tapo://{FRIGATE_TAPO_CLOUD_PASSWORD}@{FRIGATE_CAM_IP}   # 喇叭回传通道(双向音频)
+
+cameras:
+  hallway:
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/sink_cam
+          input_args: preset-rtsp-restream
+          roles: [detect, record]
+    detect:
+      width: 1280
+      height: 720
+      fps: 5
+    objects:
+      track: [person]
+    # 装好后在 Frigate UI 画出卫生间门口区域,坐标回填(方案.md §4 的门内停留计时靠它):
+    # zones:
+    #   bathroom_door:
+    #     coordinates: ...
+
+detectors:
+  cpu0:
+    type: cpu    # P0 先 CPU 跑通;P1 换 ONNX/TensorRT(方案.md §3)
+
+record:
+  enabled: true
+  retain:
+    days: 2
+    mode: active_objects
+
+snapshots:
+  enabled: true
+  retain:
+    default: 2
+
+# P1 开启人脸识别(先在 UI 上传孩子/家长照片各 20–30 张训练):
+# face_recognition:
+#   enabled: true
+#   model_size: large

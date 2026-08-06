@@ -34,10 +34,10 @@ detectors:
 
 record:
   enabled: true
-  retain:
+  continuous:
+    days: 0
+  motion:
     days: 2
-    mode: active_objects
-
 snapshots:
   enabled: true
   retain:
@@ -47,3 +47,4 @@ snapshots:
 # face_recognition:
 #   enabled: true
 #   model_size: large
+version: 0.17-0
