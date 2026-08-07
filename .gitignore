@@ -7,5 +7,6 @@ cache/
 data/
 config/frigate/model_cache/
 config/frigate/*.db*
+config/frigate/go2rtc
 
 *.pt

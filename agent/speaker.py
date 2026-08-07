@@ -21,7 +21,7 @@ async def say(text: str) -> None:
     # 经 go2rtc 把音频推到摄像头喇叭(tapo:// 回传通道)。
     # cache/ 已挂载进 frigate 容器,go2rtc 按容器内路径 /cache/tts/... 读取。
     # src 具体语法待实机联调确认:https://github.com/AlexxIT/go2rtc#api
-    src = f"ffmpeg:/cache/tts/{path.name}#audio=pcma"
+    src = f"ffmpeg:/cache/tts/{path.name}#audio={settings.speaker_audio_codec}"
     try:
         async with httpx.AsyncClient() as c:
             r = await c.post(

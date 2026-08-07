@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     tts_voice: str = "zh-CN-YunxiNeural"
     speaker_backend: str = "go2rtc"     # go2rtc(摄像头喇叭)| local(本机 ffplay,开发用)
+    speaker_audio_codec: str = "pcma"   # 喇叭推送编码:tapo→pcma | xiaomi→opus
     bark_url: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

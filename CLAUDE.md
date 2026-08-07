@@ -30,7 +30,12 @@ docker compose up -d                                  # Frigate + mosquitto
 - `config/frigate/config.yml` Frigate 模板(占位符从 .env 注入);`tests/` 28 项单测
 - 会话记录:SQLite `data/sessions.db`(storage.py,含连击/周统计)
 
-## 当前待实机验证(有摄像头才能做)
+## 摄像头:多机型一键切换
 
-go2rtc 喇叭推流 src 语法、rtsp_kp_stream 真流、dwell 启发式校准、Tapo 固件 tapo:// 兼容性。
-硬件未到货:Tapo C225 待下单。
+- 过渡机(现有):**小米智能摄像机 3 云台版** = `cam_xiaomi`(go2rtc `xiaomi://`,需 config/frigate/go2rtc 自定义二进制 ≥1.9.14;建连需外网取密钥;喇叭编码 opus)
+- 终选候选(待下单):**Tapo C260** = `cam_tapo`(RTSP + tapo:// 喇叭;编码 pcma)
+- 切机型只改 `.env` 的 `STREAM_NAME`(+`SPEAKER_AUDIO_CODEC`),Frigate 取流与喇叭推送同步切换。
+
+## 当前待实机验证(摄像头凭据填好才能做)
+
+xiaomi 流入 Frigate(HEVC)、喇叭推送实测(opus)、rtsp_kp_stream 真流、dwell 启发式校准。

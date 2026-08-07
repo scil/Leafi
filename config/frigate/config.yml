@@ -5,16 +5,23 @@ mqtt:
 
 go2rtc:
   streams:
-    sink_cam:
+    # 多机型并存:每机型一条流;go2rtc 懒连接,未被消费的机型定义放着无害。
+    # 切换机型 = 改 .env 的 STREAM_NAME(cam_xiaomi | cam_tapo),Frigate 取流与 agent 喇叭推送同步切换。
+    cam_xiaomi:
+      # 小米智能摄像机 3 云台版(现有过渡机)。需 go2rtc ≥1.9.14(自定义二进制放本目录,命名 go2rtc);
+      # 一条链路含视频+双向音频;HEVC;每次建连需外网向小米云取密钥。
+      - xiaomi://{FRIGATE_XIAOMI_ACCOUNT}:{FRIGATE_XIAOMI_PASSWORD}@{FRIGATE_XIAOMI_IP}?did={FRIGATE_XIAOMI_DID}&model=chuangmi.camera.069a01
+    cam_tapo:
+      # Tapo C260(终选主推)/ C225:视频走 RTSP,喇叭走 tapo:// 双向通道。
       - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM_IP}:554/stream1
-      - tapo://{FRIGATE_TAPO_CLOUD_PASSWORD}@{FRIGATE_CAM_IP}   # 喇叭回传通道(双向音频)
+      - tapo://{FRIGATE_TAPO_CLOUD_PASSWORD}@{FRIGATE_CAM_IP}
 
 cameras:
   hallway:
     enabled: true
     ffmpeg:
       inputs:
-        - path: rtsp://127.0.0.1:8554/sink_cam
+        - path: rtsp://127.0.0.1:8554/{FRIGATE_ACTIVE_STREAM}
           input_args: preset-rtsp-restream
           roles: [detect, record]
     detect:

@@ -25,10 +25,18 @@ services:
       - ./cache:/cache:ro           # agent 生成的 TTS 音频,go2rtc 按容器内路径读取
       - frigate-media:/media/frigate
     environment:
+      # 当前启用的机型流(与 agent 的 STREAM_NAME 共用一个变量,一处切换)
+      - FRIGATE_ACTIVE_STREAM=${STREAM_NAME:-cam_xiaomi}
+      # Tapo C260/C225 档
       - FRIGATE_CAM_IP=${CAM_IP:-192.168.1.50}
       - FRIGATE_CAM_USER=${CAM_USER:-frigate}
       - FRIGATE_CAM_PASSWORD=${CAM_PASSWORD:-change-me}
       - FRIGATE_TAPO_CLOUD_PASSWORD=${TAPO_CLOUD_PASSWORD:-change-me}
+      # 小米 3 云台版档(默认占位符必须非空:s6 with-contenv 会丢弃空值变量,导致 go2rtc 配置替换 KeyError)
+      - FRIGATE_XIAOMI_IP=${XIAOMI_IP:-192.168.1.51}
+      - FRIGATE_XIAOMI_ACCOUNT=${XIAOMI_ACCOUNT:-unset}
+      - FRIGATE_XIAOMI_PASSWORD=${XIAOMI_PASSWORD:-unset}
+      - FRIGATE_XIAOMI_DID=${XIAOMI_DID:-unset}
     # P1 启用 GPU 检测(Docker Desktop 需开 WSL2 GPU 支持)后取消注释:
     # deploy:
     #   resources:
