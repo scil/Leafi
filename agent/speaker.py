@@ -21,6 +21,8 @@ async def say(text: str) -> None:
     # 经 go2rtc 把音频推到摄像头喇叭(xiaomi://cs2 或 tapo:// 双向通道)。
     # 目标实例由 GO2RTC_URL 决定:小米机必须指宿主实例(:2984,P2P 连接的持有者),
     # SPEAKER_SRC_DIR 需与该实例的文件系统一致(宿主=Windows 路径,容器=/cache/tts)。
+    # 注:go2rtc 的 API 动态源禁止含空格(400 "source with spaces may be insecure"),
+    # 所以实时速率(-re,go2rtc 默认已带)之外的处理(首尾垫静音)都在 tts.synth 里烘进文件。
     src = f"ffmpeg:{settings.speaker_src_dir}/{path.name}#audio={settings.speaker_audio_codec}"
     try:
         async with httpx.AsyncClient() as c:
