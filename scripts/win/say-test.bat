@@ -1,5 +1,5 @@
 @echo off
-rem Real speaker test: pushes TTS to the camera speaker via go2rtc (.env creds required)
+rem Real speaker test: speaks an English test sentence through the camera speaker
 cd /d "%~dp0..\.."
-.venv\Scripts\python -m agent.main --now brush_pm
+.venv\Scripts\python -m agent.main --say "Hello! This is your coach speaking. If you can hear me loud and clear, the speaker test is a big success!" --voice en-US-JennyNeural
 pause
