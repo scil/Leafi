@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     wait_retry_min: int = 10
 
     tts_voice: str = "zh-CN-YunxiNeural"
+    tts_voice_en: str = "en-US-JennyNeural"  # --say 传入纯英文文本时自动改用这个声线
     speaker_backend: str = "go2rtc"     # go2rtc(摄像头喇叭)| local(本机 ffplay,开发用)
     speaker_audio_codec: str = "pcma"   # 喇叭推送编码:tapo→pcma | xiaomi→opus
     speaker_src_dir: str = "/cache/tts" # go2rtc 读 TTS 文件的路径:容器实例=/cache/tts;宿主实例=Windows 路径

@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import re
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -52,12 +53,17 @@ def main() -> None:
     p.add_argument("--now", choices=list(TASKS), help="立即执行一次指定任务(联调用)")
     p.add_argument("--mock", action="store_true", help="mock 模式:喇叭/通知只打日志")
     p.add_argument("--say", metavar="TEXT", help="仅向喇叭播报一段任意文本后退出(测试用)")
-    p.add_argument("--voice", help="临时指定 TTS 声线(配 --say,如 en-US-JennyNeural)")
+    p.add_argument("--voice", help="临时指定 TTS 声线(配 --say;不给则按文字语种自动选)")
     args = p.parse_args()
     if args.mock:
         settings.mock = True
+    if args.say is not None and not args.say.strip():
+        p.error("--say 的内容是空的(在 Obsidian 里用时:请先选中要念的文字)")
     if args.voice:
         settings.tts_voice = args.voice
+    elif args.say and not re.search(r"[一-鿿]", args.say):
+        # 纯英文文本用中文声线念会很怪,自动切英文声线(中英混排仍走中文声线)
+        settings.tts_voice = settings.tts_voice_en
     try:
         asyncio.run(amain(args))
     except KeyboardInterrupt:
