@@ -17,26 +17,46 @@ copy(req[offset+hdrSize:], payload)
 音频 payload 从未装进 cs2 包,相机收到"加密头+零填充",解码即纯静电噪音。
 上游:[issue #2175](https://github.com/AlexxIT/go2rtc/issues/2175)(2026-08-07 由 RuiFG 定位)、修复 [PR #2406](https://github.com/AlexxIT/go2rtc/pull/2406)(draft)。
 
-## 补丁 2:ch0 命令通道满员杀连接(播放中途截断根因)
+## 补丁 2:缓冲区满即杀连接(播放截断 + 每 5 分钟掉线的共同根因)
 
-同文件 `worker()`:相机在对讲期间往 **channel 0(命令应答通道,popBuf 仅 10 条)**发确认,
-播放期间无人消费该通道,10 条一满 `Push` 报错,worker 直接拆掉整条 cs2 连接(视频流同死)。
-修法:ch0 溢出改为丢弃而非致命:
+`dataChannel` 的 popBuf 一满,`Push` 就返回错误,`worker()` 收到错误**直接拆掉整条 cs2 连接**
+(视频、音频、喇叭全断)。而重连要跑一趟小米云换密钥——比丢几帧昂贵几个数量级,
+云端慢的时候甚至重连不上(实测撞见过 `miss_get_vendor` 连续三次 `context deadline exceeded`)。
+
+两个通道都会中招,先后暴露为两种症状:
+
+- **channel 0(命令应答,缓冲 10)**:相机在对讲期间回执,播放时无人消费 → 喇叭播报中途整句被截断。
+- **channel 2(媒体,缓冲原 100)**:消费端偶尔跟不上 → 视频流每 5–20 分钟断一次重连。
+
+修法(统一策略,`Push` 内一处解决):缓冲满时**丢弃最旧的一块**腾位置,连接照常存活;
+媒体缓冲同时从 100 扩到 512 吸收突发。
 
 ```go
-if err != nil {
-    if ch == 0 {
-        // Command-reply channel has no consumer during media/speaker
-        // sessions. Drop overflow instead of killing the connection.
-        err = nil
-        continue
+select {
+case c.popBuf <- c.waitData[:c.waitSize]:
+default:
+    // Consumer fell behind. Drop the oldest chunk to make room instead of
+    // failing: the caller treats a full buffer as fatal and tears down the
+    // whole P2P connection, and reconnecting costs a cloud round-trip.
+    select {
+    case <-c.popBuf:
+    default:
     }
-    c.err = fmt.Errorf("%s: %w", "cs2", err)
-    return
+    select {
+    case c.popBuf <- c.waitData[:c.waitSize]:
+    default:
+    }
 }
 ```
 
-此坑为本项目独立发现(2026-08-07),上游尚无对应 issue/PR。
+丢最旧而非最新,是为了让延迟有界(丢掉的是已经过时的画面)。
+此坑为本项目独立发现(2026-08-07);媒体通道那半边对应上游
+[issue #2057](https://github.com/AlexxIT/go2rtc/issues/2057)(仍 open,无人给出根因)。
+
+**实测(2026-08-08 00:02–00:29,27 分钟连续观测)**:补丁前同长度窗口内 P2P 重连 10 次、
+缓冲错误反复、伴随小米云 `miss_get_vendor` 连续三次超时;补丁后重连 **0 次**
+(P2P 远端端口 25 次采样恒为 19652)、缓冲错误 **0**、日志零错误零警告、
+Frigate `camera_fps 5.1 / skipped_fps 0`。
 
 ## 重建步骤
 
