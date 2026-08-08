@@ -1,0 +1,4 @@
+@echo off
+rem Start the host go2rtc instance (camera P2P sources) if not already running
+cd /d "%~dp0..\.."
+powershell -NoProfile -Command "if ((Test-NetConnection 127.0.0.1 -Port 2984 -InformationLevel Quiet -WarningAction SilentlyContinue)) { Write-Host '[OK] go2rtc host already running: http://127.0.0.1:2984' } else { Start-Process -FilePath 'tools\go2rtc\go2rtc.exe' -ArgumentList '-config','tools\go2rtc\go2rtc-host.yaml' -WindowStyle Hidden -RedirectStandardOutput 'tools\go2rtc\host.log' -RedirectStandardError 'tools\go2rtc\host.err.log'; Start-Sleep 2; Write-Host '[OK] go2rtc host started: http://127.0.0.1:2984' }"

@@ -8,11 +8,10 @@ go2rtc:
     # 多机型并存:每机型一条流;go2rtc 懒连接,未被消费的机型定义放着无害。
     # 切换机型 = 改 .env 的 STREAM_NAME(cam_xiaomi | cam_tapo),Frigate 取流与 agent 喇叭推送同步切换。
     cam_xiaomi:
-      # 小米智能摄像机 3 云台版(现有过渡机)。需 go2rtc ≥1.9.14(自定义二进制放本目录,命名 go2rtc);
-      # 一条链路含视频+双向音频;HEVC;每次建连需外网向小米云取密钥。
-      # 认证:先在 go2rtc WebUI(:1984)Add→Xiaomi 登录一次(token 自动存 go2rtc_homekit.yml);
-      # URL 格式 = 数字userID:区域@IP(不是账号:密码!)
-      - xiaomi://{FRIGATE_XIAOMI_USERID}:{FRIGATE_XIAOMI_REGION}@{FRIGATE_XIAOMI_IP}?did={FRIGATE_XIAOMI_DID}&model=chuangmi.camera.069a01
+      # 小米智能摄像机 3 云台版(现有过渡机):P2P 源跑在宿主 go2rtc(tools/go2rtc,端口 2554/2984),
+      # 容器这里只做 RTSP 中继——cs2 打洞的 UDP 回包会换端口,Docker NAT 必丢,容器内直连永远超时。
+      # 宿主实例需要 Windows 防火墙对 go2rtc.exe 的入站 Allow(cs2 回包 + 本容器拉流都靠它)。
+      - rtsp://host.docker.internal:2554/cam_xiaomi
     cam_tapo:
       # Tapo C260(终选主推)/ C225:视频走 RTSP,喇叭走 tapo:// 双向通道。
       - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM_IP}:554/stream1

@@ -32,11 +32,8 @@ services:
       - FRIGATE_CAM_USER=${CAM_USER:-frigate}
       - FRIGATE_CAM_PASSWORD=${CAM_PASSWORD:-change-me}
       - FRIGATE_TAPO_CLOUD_PASSWORD=${TAPO_CLOUD_PASSWORD:-change-me}
-      # 小米 3 云台版档(默认占位符必须非空:s6 with-contenv 会丢弃空值变量,导致 go2rtc 配置替换 KeyError)
-      - FRIGATE_XIAOMI_IP=${XIAOMI_IP:-192.168.1.51}
-      - FRIGATE_XIAOMI_USERID=${XIAOMI_USERID:-unset}
-      - FRIGATE_XIAOMI_REGION=${XIAOMI_REGION:-cn}
-      - FRIGATE_XIAOMI_DID=${XIAOMI_DID:-unset}
+      # 小米机的 P2P 源在宿主 go2rtc(tools/go2rtc),容器内只中继,无需小米凭据变量。
+      # 注意:此处新增任何 FRIGATE_* 变量时默认值必须非空(s6 with-contenv 丢空值 → go2rtc 配置替换 KeyError)
     # P1 启用 GPU 检测(Docker Desktop 需开 WSL2 GPU 支持)后取消注释:
     # deploy:
     #   resources:

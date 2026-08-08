@@ -18,10 +18,10 @@ async def say(text: str) -> None:
         await _play_local(path)
         log.info("本机播报: %s", text)
         return
-    # 经 go2rtc 把音频推到摄像头喇叭(tapo:// 回传通道)。
-    # cache/ 已挂载进 frigate 容器,go2rtc 按容器内路径 /cache/tts/... 读取。
-    # src 具体语法待实机联调确认:https://github.com/AlexxIT/go2rtc#api
-    src = f"ffmpeg:/cache/tts/{path.name}#audio={settings.speaker_audio_codec}"
+    # 经 go2rtc 把音频推到摄像头喇叭(xiaomi://cs2 或 tapo:// 双向通道)。
+    # 目标实例由 GO2RTC_URL 决定:小米机必须指宿主实例(:2984,P2P 连接的持有者),
+    # SPEAKER_SRC_DIR 需与该实例的文件系统一致(宿主=Windows 路径,容器=/cache/tts)。
+    src = f"ffmpeg:{settings.speaker_src_dir}/{path.name}#audio={settings.speaker_audio_codec}"
     try:
         async with httpx.AsyncClient() as c:
             r = await c.post(

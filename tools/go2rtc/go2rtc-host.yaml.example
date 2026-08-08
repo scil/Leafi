@@ -1,0 +1,18 @@
+# 宿主机 go2rtc 实例模板:复制为 go2rtc-host.yaml 后填两处(token、摄像头参数)
+# 为什么要宿主实例:小米 cs2 P2P 握手是 UDP 打洞且回包会换端口,Docker NAT 必丢 → 摄像头源必须在真实局域网上。
+# 前置:Windows 防火墙需对 tools/go2rtc/go2rtc.exe 建入站 Allow 规则(cs2 回包 + Frigate 容器拉流都靠它)。
+# go2rtc.exe 下载:https://github.com/AlexxIT/go2rtc/releases (go2rtc_win64.zip,解压到本目录)
+
+api:
+  listen: "127.0.0.1:2984"   # agent 喇叭推送与调试 API(仅本机)
+rtsp:
+  listen: ":2554"            # Frigate 容器经 rtsp://host.docker.internal:2554/<流名> 中继
+webrtc:
+  listen: ""                 # 关闭,避免与容器映射的 8555 冲突
+
+xiaomi:
+  # WebUI 登录一次后从 config/frigate/go2rtc_homekit.yml 抄过来(用户ID: V1:token)
+  "<你的数字userID>": V1:<token>
+
+streams:
+  cam_xiaomi: xiaomi://<userID>:@<摄像头IP>?did=<设备did>&model=chuangmi.camera.069a01

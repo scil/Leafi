@@ -9,5 +9,7 @@ config/frigate/model_cache/
 config/frigate/*.db*
 config/frigate/go2rtc
 config/frigate/go2rtc_homekit.yml
+tools/go2rtc/go2rtc.exe
+tools/go2rtc/go2rtc-host.yaml
 
 *.pt
