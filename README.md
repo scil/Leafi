@@ -72,7 +72,7 @@ docker compose up -d mosquitto
 3. 路由器固定 IP(填 `CAM_IP`)+ 防火墙/VLAN **禁其出公网**
 4. 关闭固件自动更新(历史上有更新破坏 RTSP 的先例)
 5. `TAPO_CLOUD_PASSWORD` 填 TP-Link 云账号密码(`tapo://` 喇叭通道)
-6. `docker compose restart frigate` → http://localhost:5000 应见画面
+6. `docker compose restart frigate` → http://localhost:15000 应见画面
 7. VLC 验证 `rtsp://CAM_USER:CAM_PASSWORD@CAM_IP:554/stream1`
 8. go2rtc 控制台 http://localhost:1984 对 `sink_cam` 测试双向语音
 9. 安装位:**卫生间门外走廊**,覆盖门口+孩子游走区(摄像头永不进卫生间);孩子的水杯固定放在视野内

@@ -8,5 +8,6 @@ data/
 config/frigate/model_cache/
 config/frigate/*.db*
 config/frigate/go2rtc
+config/frigate/go2rtc_homekit.yml
 
 *.pt

@@ -15,7 +15,7 @@ services:
       - mosquitto
     shm_size: "256mb"
     ports:
-      - "5000:5000"       # Frigate UI / API
+      - "15000:5000"      # Frigate UI / API(宿主 15000:Windows 保留段会漂移到 4905-5004,5000 绑不上)
       - "8554:8554"       # RTSP restream
       - "8555:8555/tcp"   # WebRTC
       - "8555:8555/udp"
@@ -34,8 +34,8 @@ services:
       - FRIGATE_TAPO_CLOUD_PASSWORD=${TAPO_CLOUD_PASSWORD:-change-me}
       # 小米 3 云台版档(默认占位符必须非空:s6 with-contenv 会丢弃空值变量,导致 go2rtc 配置替换 KeyError)
       - FRIGATE_XIAOMI_IP=${XIAOMI_IP:-192.168.1.51}
-      - FRIGATE_XIAOMI_ACCOUNT=${XIAOMI_ACCOUNT:-unset}
-      - FRIGATE_XIAOMI_PASSWORD=${XIAOMI_PASSWORD:-unset}
+      - FRIGATE_XIAOMI_USERID=${XIAOMI_USERID:-unset}
+      - FRIGATE_XIAOMI_REGION=${XIAOMI_REGION:-cn}
       - FRIGATE_XIAOMI_DID=${XIAOMI_DID:-unset}
     # P1 启用 GPU 检测(Docker Desktop 需开 WSL2 GPU 支持)后取消注释:
     # deploy:

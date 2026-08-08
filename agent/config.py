@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     mqtt_host: str = "127.0.0.1"
     mqtt_port: int = 18830  # 宿主机映射端口(Windows 保留了 1883 所在端口段)
     go2rtc_url: str = "http://127.0.0.1:1984"
-    frigate_url: str = "http://127.0.0.1:5000"
+    frigate_url: str = "http://127.0.0.1:15000"  # 宿主映射端口(5000 在 Windows 保留段内)
     camera_name: str = "hallway"
     stream_name: str = "sink_cam"
 
