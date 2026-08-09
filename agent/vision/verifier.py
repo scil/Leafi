@@ -19,7 +19,17 @@ from .vlm import Verdict, verdict
 
 log = logging.getLogger("verifier")
 
-Sample = tuple[float, KP | None, bytes | None]  # (t, 关键点, 该帧jpg——仅采样帧带)
+# (t, 关键点, 原始 BGR 帧)。帧不预先编码:一次会话产出约 2400 帧,最终只有 ≤8 张
+# 会被 VLM 用到,所以编码推迟到"这一帧确实合格且还没攒够"时再做(见 run_pose_verification)。
+Sample = tuple[float, KP | None, "object | None"]
+
+
+def _encode_jpg(frame) -> bytes | None:
+    """阻塞的 JPEG 编码,由调用方丢进 executor;cv2 延迟导入,未装 P1 依赖时不影响单测。"""
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", frame)
+    return buf.tobytes() if ok else None
 
 
 @dataclass
@@ -52,16 +62,20 @@ async def run_pose_verification(
     fired: set[int] = set()
     start: float | None = None
     last_t: float | None = None
+    loop = asyncio.get_running_loop()
 
-    async for t, kp, jpg in kp_source:
+    async for t, kp, frame in kp_source:
         start = t if start is None else start
         last_t = t
         if t - start > duration_s:
             break
         if kp is not None:
             qualified = scorer.push(kp)
-            if qualified and jpg is not None and len(result.snapshots) < 8:
-                result.snapshots.append(jpg)
+            if qualified and frame is not None and len(result.snapshots) < 8:
+                # 只给终裁攒最像"在做这个动作"的帧;攒够 8 张后不再编码
+                jpg = await loop.run_in_executor(None, _encode_jpg, frame)
+                if jpg:
+                    result.snapshots.append(jpg)
         for ms in spec.milestones:
             if scorer.active_seconds >= ms and ms not in fired:
                 fired.add(ms)
@@ -115,10 +129,8 @@ def _capture_thread(url: str, sample_interval: float, out_q, stop: threading.Eve
 async def rtsp_kp_stream(
     url: str | None = None, fps: float = 8.0, duration_s: float = 300
 ) -> AsyncIterator[Sample]:
-    """RTSP 抽帧 → 姿态推理,产出 (t, KP, jpg)。运行在 GPU 上,每天仅任务时段活跃。"""
+    """RTSP 抽帧 → 姿态推理,产出 (t, KP, 原始帧)。运行在 GPU 上,每天仅任务时段活跃。"""
     import queue
-
-    import cv2
 
     from .pose import YoloPose
 
@@ -139,10 +151,6 @@ async def rtsp_kp_stream(
             except Exception:
                 continue
             kp = await loop.run_in_executor(None, pose.infer, frame, t)
-            jpg = None
-            if kp is not None:
-                ok, buf = cv2.imencode(".jpg", frame)
-                jpg = buf.tobytes() if ok else None
-            yield (t, kp, jpg)
+            yield (t, kp, frame)
     finally:
         stop.set()

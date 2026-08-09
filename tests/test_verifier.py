@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from agent.tasks import spec
 from agent.vision import verifier as V
 from agent.vision.dwell import InsideTracker
@@ -7,6 +9,12 @@ from agent.vision.scorer import KP
 from agent.vision.vlm import Verdict
 
 SPEC = spec("brush_pm")
+FRAME = object()  # 占位"原始帧";真正的编码由 _encode_jpg 做,测试里 monkeypatch 掉
+
+
+@pytest.fixture(autouse=True)
+def _fake_encode(monkeypatch):
+    monkeypatch.setattr(V, "_encode_jpg", lambda frame: b"fake-jpg")
 
 
 async def kp_stream(duration: float = 120, fps: float = 10):
@@ -16,7 +24,7 @@ async def kp_stream(duration: float = 120, fps: float = 10):
         yield (t,
                KP(t=t, nose=(500.0, 300.0), l_wrist=(510.0, 300.0 + rel * 100),
                   r_wrist=None, shoulder_w=100.0),
-               b"fake-jpg")
+               FRAME)
 
 
 async def test_verified_with_milestones(monkeypatch):
@@ -68,6 +76,27 @@ async def test_inside_credit_makes_up_total(monkeypatch):
     # 70s 可见 + min(50, cap=40) = 110 ≥ 100 → 达标
     assert res.verified
     assert res.inside_seconds == 50.0
+
+
+async def test_encode_is_lazy_and_capped(monkeypatch):
+    """1200 帧里只该编码 8 次:不合格的帧不编,攒够 8 张后也不再编。"""
+    calls = []
+
+    def counting_encode(frame):
+        calls.append(frame)
+        return b"jpg"
+
+    monkeypatch.setattr(V, "_encode_jpg", counting_encode)
+
+    async def fake_verdict(imgs, kind="brush"):
+        return Verdict(True, 0.9)
+
+    monkeypatch.setattr(V, "verdict", fake_verdict)
+    res = await V.run_pose_verification(
+        kp_stream(), InsideTracker(), SPEC, duration_s=300, fps_hint=10
+    )
+    assert len(res.snapshots) == 8
+    assert len(calls) == 8
 
 
 async def test_vlm_veto(monkeypatch):
