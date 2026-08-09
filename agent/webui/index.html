@@ -57,8 +57,13 @@ input,select,textarea{font:inherit;font-size:14px;padding:6px 9px;border:1px sol
 input[type=checkbox]{width:auto}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--mint);outline-offset:1px}
 textarea{font-family:var(--mono);font-size:13px;line-height:1.6;resize:vertical}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px 18px}
 .grid label{display:block;font-size:12.5px;color:var(--ink-2);margin-bottom:3px}
+.grid .why{font-size:11.5px;line-height:1.5;color:var(--ink-3);margin-top:4px}
+.grid .why b{color:var(--ink-2);font-weight:500}
+.explain{background:var(--sunk);border-left:2px solid var(--mint);padding:10px 13px;
+  margin:0 0 16px;font-size:13px;line-height:1.65;color:var(--ink-2)}
+.explain b{color:var(--ink)}
 .errs{background:var(--rust-wash);border:1px solid var(--rust);border-radius:3px;
   padding:12px 14px;margin:0 0 16px;font-size:14px;color:var(--rust)}
 .errs ul{margin:6px 0 0;padding-left:20px}
@@ -91,6 +96,49 @@ code{font-family:var(--mono);font-size:.9em;background:var(--sunk);padding:1px 5
 <div class="toast" id="toast"></div>
 
 <script>
+// 把术语翻译成人话。改判据时不用回去翻代码,也不用记 anchor 是什么意思。
+const HELP = {
+  verify: {
+    pose_dwell: '<b>数动作、按秒计时。</b>摄像头盯着手的来回摆动累计秒数,人走进卫生间那段看不见的时间,'
+      + '按"从门口消失到再出现"折算一部分补分。适合<b>有来回动作、要持续一两分钟</b>的事:刷牙、洗手。',
+    vlm_burst: '<b>隔几秒拍一张,拍完一起交给本地模型判一次。</b>不计时、不看门内停留。'
+      + '适合<b>几秒钟就完事、没有来回动作</b>的事:喝水、吃药。这类动作用计分器测永远是零分。',
+    presence: '<b>只记录"人来了"</b>,不判断做了什么。用于还没调好判据、或本来就只想打个卡的动作。'
+  },
+  scorer: {
+    anchor: ['手该靠近身体的哪儿',
+      '刷牙的手在嘴边 → 选 <b>nose</b>(鼻子);洗手的手在腰前的盆边 → 选 <b>hip</b>(两侧髋部的中点)。选错了这个动作一秒都记不上。'],
+    axis: ['手来回动的方向',
+      '刷牙是上下 → <b>y</b>;洗手是左右搓 → <b>x</b>;拿不准就选 <b>both</b>(任一方向有来回都算)。'],
+    near_k: ['"算靠近"的宽松度',
+      '手到锚点的距离小于 <b>这个数 × 肩宽</b> 才算贴近。用肩宽做尺子是为了人走远走近都不影响。'
+      + '刷牙 1.2、洗手 1.5。<b>调大更宽松</b>(路过挠个头也可能算)、<b>调小更严</b>(稍微偏一点就不算)。'],
+    min_flips_per_s: ['每秒至少来回几次',
+      '手上下(或左右)<b>掉头</b>的次数。刷牙大约每秒 2–5 次,所以门槛给 2.0。'
+      + '举着不动的翻转次数是 0——这条就是把"发呆"和"喝水"挡在外面的判据。<b>调大更严</b>。'],
+    window_s: ['回看多长一段来判断',
+      '判断"在不在动"时往回看几秒。默认 2 秒:太短容易被一次抖动骗过,太长会把刚停下的也算成还在做。'],
+    min_std: ['低帧率时:最小晃动幅度',
+      '摄像头掉到 8 帧以下时改用"晃动幅度"判据。低于这个值 = 基本没动。'],
+    max_std: ['低帧率时:最大晃动幅度',
+      '高于这个值 = 人在大幅走动,不是站在原地做动作。和上面一条一起夹出一个"手在动但没走位"的区间。'],
+    noise_eps: ['多小的抖动忽略不计',
+      '关键点识别本身有误差,像素级的抖动不该被当成一次真的移动。基本不用改。'],
+    max_gap_s: ['两帧最多补多少秒',
+      '中间掉帧或被挡住时,最多按这么久补进时长。默认 0.6 秒——防止断流三十秒被算成一直在刷。']
+  },
+  fields: {
+    target_seconds: '总分线:<b>可见秒数 + 门内折算</b>要达到这个数才算完成。',
+    min_visible_seconds: '这里面必须有多少秒是<b>摄像头亲眼看到</b>的。防止"进屋待着"就把分刷满。',
+    inside_credit_cap: '人在门内那段是<b>推断</b>出来的,最多只折算这么多秒。'
+      + '全程在镜头里的动作(比如洗手)填 <b>0</b>。',
+    milestones: '刷到这些秒数时喊一句鼓励。要递增,而且别超过总分线,否则永远播不出来。',
+    burst_frames: '一共拍几张交给模型。',
+    burst_interval_s: '两张之间隔多久。<b>张数 × 间隔</b> = 覆盖多长的时间窗,要盖住动作可能发生的范围。',
+    vlm_kind: '内部标识,英文小写。留着给同类动作复用同一套内置提问。'
+  }
+};
+
 let TASKS = [], META = {}, cur = 0, dirty = false, errors = {};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -181,53 +229,62 @@ function renderForm(){
     <div class="row"><label>启用</label><div><input type="checkbox" data-p="enabled" ${t.enabled?'checked':''}></div></div>
   </fieldset>`;
 
-  h += `<fieldset><legend>验证策略</legend>
+  h += `<fieldset><legend>验证策略 · 怎么判断他做没做</legend>
     <div class="row"><label>verify</label>
       <select data-p="verify">${META.verifyModes.map(m => `<option value="${m}" ${t.verify===m?'selected':''}>${m}</option>`).join('')}</select>
-      <div class="hint">
-        <code>pose_dwell</code> 有周期、时间长(刷牙洗手)·
-        <code>vlm_burst</code> 短促无周期(喝水吃药)·
-        <code>presence</code> 只记到场
-      </div>
-    </div></fieldset>`;
+    </div>
+    <div class="explain">${HELP.verify[t.verify] || ''}</div>
+  </fieldset>`;
 
   if (t.verify === 'pose_dwell'){
     const sf = META.scorerFields;
-    h += `<fieldset><legend>计分判据</legend>
+    h += `<fieldset><legend>计分判据 · 什么样的一帧才算数</legend>
+      <div class="explain">每一帧要<b>同时</b>过两关才计入时长:<br>
+        ① <b>手在不在该在的地方</b> —— 手腕离 anchor 够近(下面的 near_k 决定多近算近)<br>
+        ② <b>手在不在做该做的事</b> —— 最近两秒里沿 axis 方向来回摆动够快(min_flips_per_s)<br>
+        举着水杯不动的话第 ① 关过、第 ② 关不过,所以喝水一秒都不会被记成刷牙。</div>
       <div class="row"><label>套用预设</label>
         <select id="preset"><option value="">—</option>${Object.keys(META.presets).map(k => `<option value="${k}">${k}</option>`).join('')}</select>
-        <div class="hint">选一个会覆盖下面所有格子;之后可以再微调</div>
+        <div class="hint">先挑个最接近的预设,再微调。<code>brush</code>=手在嘴边上下动,<code>wash_hands</code>=手在腰前左右搓</div>
       </div>
       <div class="grid">${sf.map(f => {
-        const v = t.scorer[f];
-        if (f === 'anchor') return `<div><label>anchor 手靠近哪儿</label><select data-p="scorer.anchor">${['nose','hip'].map(o => `<option ${v===o?'selected':''}>${o}</option>`).join('')}</select></div>`;
-        if (f === 'axis') return `<div><label>axis 往复方向</label><select data-p="scorer.axis">${['y','x','both'].map(o => `<option ${v===o?'selected':''}>${o}</option>`).join('')}</select></div>`;
-        return `<div><label>${f}</label><input type="number" step="0.01" data-p="scorer.${f}" value="${v ?? ''}"></div>`;
+        const v = t.scorer[f], hp = HELP.scorer[f] || [f, ''];
+        const why = `<div class="why">${hp[1]}</div>`;
+        const lab = `<label>${hp[0]} <span style="opacity:.55;font-family:var(--mono)">${f}</span></label>`;
+        if (f === 'anchor') return `<div>${lab}<select data-p="scorer.anchor">${['nose','hip'].map(o => `<option ${v===o?'selected':''}>${o}</option>`).join('')}</select>${why}</div>`;
+        if (f === 'axis') return `<div>${lab}<select data-p="scorer.axis">${['y','x','both'].map(o => `<option ${v===o?'selected':''}>${o}</option>`).join('')}</select>${why}</div>`;
+        return `<div>${lab}<input type="number" step="0.01" data-p="scorer.${f}" value="${v ?? ''}">${why}</div>`;
       }).join('')}</div>
-      <div class="note">留空的数值用 MotionScorer 的默认值。<code>anchor</code> 刷牙靠鼻、洗手靠髋;<code>axis</code> 刷牙上下、洗手左右。</div>
+      <div class="note">留空 = 用内置默认值。前四项(anchor / axis / near_k / min_flips_per_s)决定成败,后面几项基本不用动。</div>
     </fieldset>`;
 
-    h += `<fieldset><legend>达标阈值</legend>
-      ${field('可见动作 ≥','target_seconds',{type:'number',placeholder:g.target_active_seconds,hint:'总分线(可见 + 门内封顶)。留空 = 用 .env 的 '+g.target_active_seconds+'s'})}
-      ${field('最低可见 ≥','min_visible_seconds',{type:'number',placeholder:g.min_visible_active_seconds,hint:'摄像头必须亲眼看到这么多秒。留空 = '+g.min_visible_active_seconds+'s'})}
-      ${field('门内上限','inside_credit_cap',{type:'number',placeholder:g.inside_credit_cap,hint:'门内停留最多兑换多少秒学分。填 0 = 该动作全程可见,不给补分'})}
-      ${field('里程碑','milestones',{placeholder:'30, 60, 90',hint:'到这些秒数时播报一句鼓励,逗号分隔'})}
+    h += `<fieldset><legend>达标阈值 · 做到什么程度算完成</legend>
+      <div class="explain">最后算总分:<b>可见秒数 + min(门内秒数, 门内上限) ≥ 总分线</b>,
+        并且<b>可见秒数本身</b>也要够。两道门槛都过,才会把画面交给本地模型做最后确认。</div>
+      ${field('总分线 ≥','target_seconds',{type:'number',placeholder:g.target_active_seconds,hint:HELP.fields.target_seconds+' 留空 = 用全局默认 '+g.target_active_seconds+'s'})}
+      ${field('最低可见 ≥','min_visible_seconds',{type:'number',placeholder:g.min_visible_active_seconds,hint:HELP.fields.min_visible_seconds+' 留空 = '+g.min_visible_active_seconds+'s'})}
+      ${field('门内最多折算','inside_credit_cap',{type:'number',placeholder:g.inside_credit_cap,hint:HELP.fields.inside_credit_cap+' 留空 = '+g.inside_credit_cap+'s'})}
+      ${field('里程碑','milestones',{placeholder:'30, 60, 90',hint:HELP.fields.milestones})}
     </fieldset>`;
   }
 
   if (t.verify === 'vlm_burst'){
-    h += `<fieldset><legend>连拍</legend>
-      ${field('抓几张','burst_frames',{type:'number'})}
-      ${field('间隔秒','burst_interval_s',{type:'number',step:'0.5',hint:'张数 × 间隔 = 覆盖的时间窗'})}
+    h += `<fieldset><legend>连拍 · 拍几张给模型看</legend>
+      ${field('抓几张','burst_frames',{type:'number',hint:HELP.fields.burst_frames})}
+      ${field('间隔秒','burst_interval_s',{type:'number',step:'0.5',hint:HELP.fields.burst_interval_s})}
     </fieldset>`;
   }
 
   if (t.verify !== 'presence'){
-    h += `<fieldset><legend>本地视觉模型终裁</legend>
-      ${field('vlm_kind','vlm_kind',{placeholder:'wash',hint:'内部标识,英文小写即可'})}
-      <div class="row"><label>提问</label>
-        <textarea rows="4" data-p="prompt" placeholder="判断画面中的孩子是否在洗手……只判断动作,不要识别或猜测人物身份。按 JSON 输出。">${esc(t.prompt)}</textarea>
-        <div class="hint"><b>红线:只能问动作,不能问身份。</b>提问里出现「身份」「是谁」会被拒绝保存</div>
+    h += `<fieldset><legend>终裁 · 让本地模型看几张图确认一下</legend>
+      <div class="explain">前面的计分只认<b>动作形状</b>,分不清手里拿的是牙刷还是勺子。
+        ${t.verify === 'pose_dwell' ? '所以时长达标后' : '所以'}会把画面交给<b>本机</b>的视觉模型问一句,它说不是就不算数。
+        模型跑在自己电脑上(Ollama),<b>图片不出家门</b>。</div>
+      ${field('vlm_kind','vlm_kind',{placeholder:'wash',hint:HELP.fields.vlm_kind})}
+      <div class="row"><label>问它什么</label>
+        <textarea rows="4" data-p="prompt" placeholder="判断画面中的孩子是否在洗手(手在水池前搓洗)。只判断动作,不要识别或猜测人物身份。按 JSON 输出。">${esc(t.prompt)}</textarea>
+        <div class="hint"><b>必须写明「不要识别或猜测人物身份」</b>——这是红线:认人只能靠 Frigate 本地人脸,
+          不能让模型去猜画面里是谁。没写会被拒绝保存。</div>
       </div></fieldset>`;
   }
 
