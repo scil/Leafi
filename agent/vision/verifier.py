@@ -12,8 +12,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from ..config import settings
+from ..tasks import TaskSpec
 from .dwell import InsideTracker
-from .scorer import KP, BrushScorer
+from .scorer import KP, MotionScorer
 from .vlm import Verdict, verdict
 
 log = logging.getLogger("verifier")
@@ -23,8 +24,9 @@ Sample = tuple[float, KP | None, bytes | None]  # (t, 关键点, 该帧jpg——
 
 @dataclass
 class VerifyResult:
-    brush_seconds: float = 0.0
+    active_seconds: float = 0.0
     inside_seconds: float = 0.0
+    cap: int = 0
     vlm: Verdict | None = None
     verified: bool = False
     snapshots: list[bytes] = field(default_factory=list)
@@ -32,20 +34,21 @@ class VerifyResult:
     def summary(self) -> str:
         v = "✅" if self.verified else "❌"
         vlm = f",VLM {self.vlm.confidence:.0%}" if self.vlm else ",VLM 未启用"
-        return (f"{v} 可见刷牙 {self.brush_seconds:.0f}s + 门内 {self.inside_seconds:.0f}s"
-                f"(上限 {settings.inside_credit_cap}s){vlm}")
+        return (f"{v} 可见动作 {self.active_seconds:.0f}s + 门内 {self.inside_seconds:.0f}s"
+                f"(上限 {self.cap}s){vlm}")
 
 
-async def run_brush_verification(
+async def run_pose_verification(
     kp_source: AsyncIterator[Sample],
     inside: InsideTracker,
+    spec: TaskSpec,
     duration_s: float = 300,
     fps_hint: float = 8.0,
     on_milestone=None,
 ) -> VerifyResult:
-    """消费 kp 流直到超时或流结束;30/60/90s 里程碑回调;结束做 VLM 终裁。"""
-    scorer = BrushScorer(fps_hint=fps_hint)
-    result = VerifyResult()
+    """消费 kp 流直到超时或流结束;spec.milestones 处回调;结束做 VLM 终裁。"""
+    scorer = MotionScorer(fps_hint=fps_hint, **spec.scorer)
+    result = VerifyResult(cap=spec.resolved_cap())
     fired: set[int] = set()
     start: float | None = None
     last_t: float | None = None
@@ -59,22 +62,22 @@ async def run_brush_verification(
             qualified = scorer.push(kp)
             if qualified and jpg is not None and len(result.snapshots) < 8:
                 result.snapshots.append(jpg)
-        for ms in (30, 60, 90):
-            if scorer.brush_seconds >= ms and ms not in fired:
+        for ms in spec.milestones:
+            if scorer.active_seconds >= ms and ms not in fired:
                 fired.add(ms)
                 if on_milestone:
                     await on_milestone(ms)
 
     now = last_t if last_t is not None else time.monotonic()
-    result.brush_seconds = scorer.brush_seconds
+    result.active_seconds = scorer.active_seconds
     result.inside_seconds = inside.finalize(now)
 
-    visible_ok = result.brush_seconds >= settings.min_visible_brush_seconds
-    total = result.brush_seconds + min(result.inside_seconds, settings.inside_credit_cap)
-    total_ok = total >= settings.target_brush_seconds
+    visible_ok = result.active_seconds >= spec.resolved_min_visible()
+    total = result.active_seconds + min(result.inside_seconds, result.cap)
+    total_ok = total >= spec.resolved_target()
     if visible_ok and total_ok:
         imgs = [base64.b64encode(s).decode() for s in result.snapshots]
-        result.vlm = await verdict(imgs, kind="brush")
+        result.vlm = await verdict(imgs, kind=spec.vlm_kind or "brush")
         result.verified = result.vlm.verified if result.vlm else True
     return result
 

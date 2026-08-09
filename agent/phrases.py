@@ -1,10 +1,14 @@
 """静态话术库(10 岁定制:教练+队友口吻,平等、幽默、不训斥)。
-P2 起由 agent/brain.py 的 Claude 动态生成,这里是离线兜底与风格基准。"""
+P2 起由 agent/brain.py 的 Claude 动态生成,这里是离线兜底与风格基准。
+
+只管"说什么";任务本身的定义(标题、验证策略)在 agent/tasks.py。
+"""
 import random
+
+from .tasks import title  # noqa: F401  (历史调用点 phrases.title 仍可用)
 
 TASKS: dict[str, dict] = {
     "water": {
-        "title": "晨起喝水",
         "opening": [
             "早!起床第一件事——把水杯干了,一整杯。",
             "教练晨报:先喝水,再谈刷牙。杯子在老地方。",
@@ -15,7 +19,6 @@ TASKS: dict[str, dict] = {
         "partial": ["杯子好像没动啊,教练看着呢。"],
     },
     "brush_am": {
-        "title": "早刷牙",
         "opening": [
             "刷牙时间——两分钟,连击别断。",
             "教练上线。牙刷拿起来,今天继续保持纪录。",
@@ -24,7 +27,6 @@ TASKS: dict[str, dict] = {
         "arrived": ["看到你了,开刷!两分钟,计时开始。"],
     },
     "brush_pm": {
-        "title": "晚刷牙",
         "opening": ["睡前最后一关——刷牙两分钟,刷完今天完美收官。"],
         "retry": ["第二次提醒——牙刷在等你,连击要保不住了。"],
         "arrived": ["到位。两分钟,开始。"],
@@ -45,7 +47,3 @@ GENERIC = {
 def pick(task: str, kind: str) -> str:
     opts = TASKS.get(task, {}).get(kind) or GENERIC.get(kind) or ["好嘞。"]
     return random.choice(opts)
-
-
-def title(task: str) -> str:
-    return TASKS.get(task, {}).get("title", task)

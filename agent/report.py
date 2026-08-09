@@ -4,7 +4,7 @@ import logging
 
 from . import storage
 from .notify import send
-from .phrases import title
+from .tasks import title
 
 log = logging.getLogger("report")
 

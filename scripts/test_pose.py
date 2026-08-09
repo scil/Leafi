@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2  # noqa: E402
 
 from agent.vision.pose import YoloPose  # noqa: E402
-from agent.vision.scorer import BrushScorer  # noqa: E402
+from agent.vision.scorer import MotionScorer  # noqa: E402
 
 
 def main() -> None:
@@ -22,7 +22,7 @@ def main() -> None:
     if not cap.isOpened():
         sys.exit(f"打不开视频源: {src}")
     pose = YoloPose()
-    scorer = BrushScorer(fps_hint=8)
+    scorer = MotionScorer(fps_hint=8)
     last_print = 0.0
     try:
         while True:
@@ -35,10 +35,10 @@ def main() -> None:
                 scorer.push(kp)
             if t - last_print >= 1.0:
                 last_print = t
-                print(f"present={scorer.present_seconds:6.1f}s  brush={scorer.brush_seconds:6.1f}s")
+                print(f"present={scorer.present_seconds:6.1f}s  brush={scorer.active_seconds:6.1f}s")
     except KeyboardInterrupt:
         pass
-    print(f"\n最终:present={scorer.present_seconds:.1f}s  brush={scorer.brush_seconds:.1f}s")
+    print(f"\n最终:present={scorer.present_seconds:.1f}s  brush={scorer.active_seconds:.1f}s")
 
 
 if __name__ == "__main__":

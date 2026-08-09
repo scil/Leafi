@@ -8,10 +8,10 @@ from apscheduler.triggers.cron import CronTrigger
 
 from . import speaker
 from .config import settings
-from .phrases import TASKS
 from .presence import presence
 from .report import send_weekly_report
 from .session import run_task
+from .tasks import REGISTRY
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-9s %(message)s")
 log = logging.getLogger("main")
@@ -30,8 +30,8 @@ async def amain(args: argparse.Namespace) -> None:
 
     sched = AsyncIOScheduler()
     for task, hhmm in settings.parsed_schedule():
-        if task not in TASKS:
-            log.warning("SCHEDULE 里的任务 %r 没有话术定义,跳过", task)
+        if task not in REGISTRY:
+            log.warning("SCHEDULE 里的任务 %r 未在 agent/tasks.py 注册,跳过", task)
             continue
         h, m = hhmm.split(":")
         sched.add_job(run_task, CronTrigger(hour=int(h), minute=int(m)), args=[task], id=task)
@@ -50,7 +50,7 @@ async def amain(args: argparse.Namespace) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Carema-Kis-AI P0 agent")
-    p.add_argument("--now", choices=list(TASKS), help="立即执行一次指定任务(联调用)")
+    p.add_argument("--now", choices=list(REGISTRY), help="立即执行一次指定任务(联调用)")
     p.add_argument("--mock", action="store_true", help="mock 模式:喇叭/通知只打日志")
     p.add_argument("--say", metavar="TEXT", help="仅向喇叭播报一段任意文本后退出(测试用)")
     p.add_argument("--voice", help="临时指定 TTS 声线(配 --say;不给则按文字语种自动选)")

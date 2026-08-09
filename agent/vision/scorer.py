@@ -1,11 +1,16 @@
-"""刷牙动作计分器(方案.md §4 L2 信号a)。纯逻辑、零重依赖,可单测。
+"""周期性动作计分器(方案.md §4 L2 信号a)。纯逻辑、零重依赖,可单测。
 
-帧级判定"在刷":
-  near   任一手腕到鼻的距离 < near_k × 肩宽
-  动态   采样 ≥8fps 时:窗口内近侧手腕相对纵坐标的速度符号翻转率 ≥ min_flips_per_s
+帧级判定"在做该动作":
+  near   任一手腕到 anchor 的距离 < near_k × 肩宽
+  动态   采样 ≥8fps 时:窗口内近侧手腕沿 axis 的速度符号翻转率 ≥ min_flips_per_s
          (刷牙 2–5Hz 小幅往复;喝水是"抬起-保持",翻转率≈0)
          低帧率(<8fps,如直接用 Frigate detect 流)退化为:窗口内位置标准差
          落在 [min_std, max_std] —— 手在动但没有大幅走位
+
+不同动作差的不只是数值,还有判据本身的两个维度,所以它们是构造参数而非常量:
+  anchor  手该靠近哪儿 —— 刷牙/喝水看鼻(口部),洗手/系鞋带看髋(腰部)
+  axis    往复发生在哪个方向 —— 刷牙上下(y),洗手左右搓(x),不确定就 "both"
+预设见本文件末尾 PRESETS,由 agent/tasks.py 的 TaskSpec.scorer 引用。
 """
 from collections import deque
 from dataclasses import dataclass
@@ -20,16 +25,31 @@ class KP:
     l_wrist: tuple[float, float] | None
     r_wrist: tuple[float, float] | None
     shoulder_w: float | None
+    l_hip: tuple[float, float] | None = None
+    r_hip: tuple[float, float] | None = None
+
+    def anchor(self, kind: str) -> tuple[float, float] | None:
+        if kind == "nose":
+            return self.nose
+        if kind == "hip":
+            hips = [h for h in (self.l_hip, self.r_hip) if h is not None]
+            if not hips:
+                return None
+            return (sum(h[0] for h in hips) / len(hips),
+                    sum(h[1] for h in hips) / len(hips))
+        raise ValueError(f"未知 anchor:{kind!r}")
 
 
 def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
-class BrushScorer:
+class MotionScorer:
     def __init__(
         self,
         fps_hint: float,
+        anchor: str = "nose",
+        axis: str = "y",
         near_k: float = 1.2,
         window_s: float = 2.0,
         min_flips_per_s: float = 2.0,
@@ -38,7 +58,11 @@ class BrushScorer:
         noise_eps: float = 0.01,
         max_gap_s: float = 0.6,
     ):
+        if axis not in ("x", "y", "both"):
+            raise ValueError(f"未知 axis:{axis!r}")
         self.fps_hint = fps_hint
+        self.anchor = anchor
+        self.axis = axis
         self.near_k = near_k
         self.window_s = window_s
         self.min_flips_per_s = min_flips_per_s
@@ -47,22 +71,22 @@ class BrushScorer:
         self.noise_eps = noise_eps
         self.max_gap_s = max_gap_s
 
-        self.brush_seconds = 0.0
+        self.active_seconds = 0.0
         self.present_seconds = 0.0
         self._last_t: float | None = None
-        self._window: deque[tuple[float, float]] = deque()  # (t, rel_y)
+        self._window: deque[tuple[float, tuple[float, float]]] = deque()  # (t, (rel_x, rel_y))
 
     def push(self, kp: KP) -> bool:
-        """喂入一帧;返回该帧是否记为"在刷"。"""
+        """喂入一帧;返回该帧是否记为"在做该动作"。"""
         dt = 0.0
         if self._last_t is not None:
             dt = min(max(kp.t - self._last_t, 0.0), self.max_gap_s)
         self._last_t = kp.t
         self.present_seconds += dt
 
-        near, rel_y = self._near_and_rel(kp)
-        if rel_y is not None:
-            self._window.append((kp.t, rel_y))
+        near, rel = self._near_and_rel(kp)
+        if rel is not None:
+            self._window.append((kp.t, rel))
             while self._window and kp.t - self._window[0][0] > self.window_s:
                 self._window.popleft()
         else:
@@ -70,19 +94,22 @@ class BrushScorer:
 
         qualified = near and self._is_dynamic()
         if qualified:
-            self.brush_seconds += dt
+            self.active_seconds += dt
         return qualified
 
-    def _near_and_rel(self, kp: KP) -> tuple[bool, float | None]:
-        if kp.nose is None or kp.shoulder_w is None or kp.shoulder_w <= 0:
+    def _near_and_rel(self, kp: KP) -> tuple[bool, tuple[float, float] | None]:
+        """返回 (是否贴近锚点, 手腕相对锚点的 (x,y) 偏移/肩宽)。"""
+        anchor = kp.anchor(self.anchor)
+        if anchor is None or kp.shoulder_w is None or kp.shoulder_w <= 0:
             return False, None
         wrists = [w for w in (kp.l_wrist, kp.r_wrist) if w is not None]
         if not wrists:
             return False, None
-        nearest = min(wrists, key=lambda w: _dist(w, kp.nose))
-        near = _dist(nearest, kp.nose) < self.near_k * kp.shoulder_w
-        rel_y = (nearest[1] - kp.nose[1]) / kp.shoulder_w
-        return near, rel_y
+        nearest = min(wrists, key=lambda w: _dist(w, anchor))
+        near = _dist(nearest, anchor) < self.near_k * kp.shoulder_w
+        rel = ((nearest[0] - anchor[0]) / kp.shoulder_w,
+               (nearest[1] - anchor[1]) / kp.shoulder_w)
+        return near, rel
 
     def _is_dynamic(self) -> bool:
         if len(self._window) < 3:
@@ -90,11 +117,16 @@ class BrushScorer:
         span = self._window[-1][0] - self._window[0][0]
         if span <= 0:
             return False
-        ys = [y for _, y in self._window]
+        axes = (0, 1) if self.axis == "both" else ((0,) if self.axis == "x" else (1,))
+        # both = 任一轴上出现合格往复即可(动作方向不确定时用)
+        return any(self._axis_dynamic(i, span) for i in axes)
+
+    def _axis_dynamic(self, i: int, span: float) -> bool:
+        vs = [rel[i] for _, rel in self._window]
         if self.fps_hint >= 8:
             flips = 0
             prev_sign = 0
-            for a, b in zip(ys, ys[1:]):
+            for a, b in zip(vs, vs[1:]):
                 d = b - a
                 if abs(d) < self.noise_eps:
                     continue
@@ -103,4 +135,14 @@ class BrushScorer:
                     flips += 1
                 prev_sign = sign
             return flips / span >= self.min_flips_per_s
-        return self.min_std <= pstdev(ys) <= self.max_std
+        return self.min_std <= pstdev(vs) <= self.max_std
+
+
+# 各动作的判据预设。加新动作时在这里加一条,再由 TaskSpec.scorer 引用。
+# 数值目前按刷牙实测标定,其余是合理初值 —— 装机收一周数据后按方案.md §4 校准。
+PRESETS: dict[str, dict] = {
+    "brush": {"anchor": "nose", "axis": "y", "near_k": 1.2, "min_flips_per_s": 2.0},
+    # 洗手:手在腰/盆前左右搓,幅度比刷牙大、频率低
+    "wash_hands": {"anchor": "hip", "axis": "x", "near_k": 1.5, "min_flips_per_s": 1.2,
+                   "max_std": 0.9},
+}

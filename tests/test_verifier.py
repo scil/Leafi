@@ -1,9 +1,12 @@
 import math
 
+from agent.tasks import spec
 from agent.vision import verifier as V
 from agent.vision.dwell import InsideTracker
 from agent.vision.scorer import KP
 from agent.vision.vlm import Verdict
+
+SPEC = spec("brush_pm")
 
 
 async def kp_stream(duration: float = 120, fps: float = 10):
@@ -27,11 +30,11 @@ async def test_verified_with_milestones(monkeypatch):
     async def on_ms(ms):
         milestones.append(ms)
 
-    res = await V.run_brush_verification(
-        kp_stream(), InsideTracker(), duration_s=300, fps_hint=10, on_milestone=on_ms
+    res = await V.run_pose_verification(
+        kp_stream(), InsideTracker(), SPEC, duration_s=300, fps_hint=10, on_milestone=on_ms
     )
     assert res.verified
-    assert res.brush_seconds >= 100
+    assert res.active_seconds >= 100
     assert milestones == [30, 60, 90]
     assert 1 <= len(res.snapshots) <= 8
     assert "✅" in res.summary()
@@ -42,11 +45,11 @@ async def test_insufficient_skips_vlm(monkeypatch):
         raise AssertionError("时长不达标不应调用 VLM")
 
     monkeypatch.setattr(V, "verdict", fake_verdict)
-    res = await V.run_brush_verification(
-        kp_stream(duration=20), InsideTracker(), duration_s=300, fps_hint=10
+    res = await V.run_pose_verification(
+        kp_stream(duration=20), InsideTracker(), SPEC, duration_s=300, fps_hint=10
     )
     assert not res.verified
-    assert res.brush_seconds < 25
+    assert res.active_seconds < 25
 
 
 async def test_inside_credit_makes_up_total(monkeypatch):
@@ -59,8 +62,8 @@ async def test_inside_credit_makes_up_total(monkeypatch):
     inside.on_event({"type": "end", "after": {"label": "person",
                                               "current_zones": ["bathroom_door"]}}, now=0.0)
     inside.on_event({"type": "new", "after": {"label": "person"}}, now=50.0)  # 门内 50s
-    res = await V.run_brush_verification(
-        kp_stream(duration=70), inside, duration_s=300, fps_hint=10
+    res = await V.run_pose_verification(
+        kp_stream(duration=70), inside, SPEC, duration_s=300, fps_hint=10
     )
     # 70s 可见 + min(50, cap=40) = 110 ≥ 100 → 达标
     assert res.verified
@@ -73,7 +76,7 @@ async def test_vlm_veto(monkeypatch):
         return Verdict(False, 0.7, "未见牙刷")
 
     monkeypatch.setattr(V, "verdict", fake_verdict)
-    res = await V.run_brush_verification(
-        kp_stream(), InsideTracker(), duration_s=300, fps_hint=10
+    res = await V.run_pose_verification(
+        kp_stream(), InsideTracker(), SPEC, duration_s=300, fps_hint=10
     )
     assert not res.verified

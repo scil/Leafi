@@ -29,9 +29,10 @@ class Settings(BaseSettings):
     ollama_url: str = "http://127.0.0.1:11434"
     vlm_model: str = "qwen3-vl:8b"
     pose_model: str = "yolo11n-pose.pt"
-    target_brush_seconds: int = 100     # 可见刷牙 + 门内停留(封顶)需达到的总秒数
-    min_visible_brush_seconds: int = 60 # 门外可见刷牙动作的最低秒数
-    inside_credit_cap: int = 40         # 门内停留的信任上限(防"进去玩水")
+    # 以下三条是 pose_dwell 类任务的全局默认;单个任务可在 agent/tasks.py 的 TaskSpec 里覆盖
+    target_active_seconds: int = 100     # 可见动作 + 门内停留(封顶)需达到的总秒数
+    min_visible_active_seconds: int = 60 # 门外可见动作的最低秒数
+    inside_credit_cap: int = 40          # 门内停留的信任上限(防"进去玩水")
     verify_window_s: int = 300          # 单次验证会话时长上限
     child_face_label: str = ""          # Frigate 人脸训练后填孩子名;空 = 任何 person 都算
 

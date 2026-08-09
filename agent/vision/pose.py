@@ -1,7 +1,7 @@
 """YOLO-pose 后端:BGR 帧 → KP(取画面中最大的人)。
 
 ultralytics 延迟导入 —— 未装 P1 依赖(requirements-p1.txt)时,导入本模块不报错,
-实例化时才给出清晰提示。COCO 17 关键点:0=nose, 5/6=shoulders, 9/10=wrists。
+实例化时才给出清晰提示。COCO 17 关键点:0=nose, 5/6=shoulders, 9/10=wrists, 11/12=hips。
 """
 from .scorer import KP
 
@@ -41,4 +41,5 @@ class YoloPose:
         shoulder_w = None
         if l_sh and r_sh:
             shoulder_w = ((l_sh[0] - r_sh[0]) ** 2 + (l_sh[1] - r_sh[1]) ** 2) ** 0.5
-        return KP(t=t, nose=pt(0), l_wrist=pt(9), r_wrist=pt(10), shoulder_w=shoulder_w)
+        return KP(t=t, nose=pt(0), l_wrist=pt(9), r_wrist=pt(10), shoulder_w=shoulder_w,
+                  l_hip=pt(11), r_hip=pt(12))
