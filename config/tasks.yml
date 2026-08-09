@@ -1,0 +1,58 @@
+# 由 python -m agent.webui 生成;手改也行,保存后 agent 会自动重读
+version: 1
+tasks:
+- name: water
+  title: 晨起喝水
+  verify: vlm_burst
+  schedule: 07:20
+  vlm_kind: water
+  prompt: 这些是家用走廊摄像头在晨起喝水任务期间抽取的画面。判断画面中的孩子是否在喝水(手持水杯、仰头饮水)。只判断动作,不要识别或猜测人物身份。按 JSON 输出。
+  phrases:
+    opening:
+    - 早!起床第一件事——把水杯干了,一整杯。
+    - 教练晨报:先喝水,再谈刷牙。杯子在老地方。
+    retry:
+    - 水还没喝?一分钟的事,别让连击断在一杯水上。
+    arrived:
+    - 看到你了。咕咚咕咚,干杯!
+    done:
+    - 水分补给完成,开局漂亮。
+    partial:
+    - 杯子好像没动啊,教练看着呢。
+- name: brush_am
+  title: 早刷牙
+  verify: pose_dwell
+  schedule: 07:35
+  vlm_kind: brush
+  prompt: 这些是家用走廊摄像头在一次刷牙任务期间抽取的画面。判断画面中的孩子是否在刷牙(手持牙刷或牙刷在口中、有刷牙动作)。只判断动作,不要识别或猜测人物身份。按 JSON 输出。
+  scorer:
+    anchor: nose
+    axis: y
+    near_k: 1.2
+    min_flips_per_s: 2
+  phrases:
+    opening:
+    - 刷牙时间——两分钟,连击别断。
+    - 教练上线。牙刷拿起来,今天继续保持纪录。
+    retry:
+    - 还没见到人。再不来,今早战绩记零。
+    arrived:
+    - 看到你了,开刷!两分钟,计时开始。
+- name: brush_pm
+  title: 晚刷牙
+  verify: pose_dwell
+  schedule: '20:30'
+  vlm_kind: brush
+  prompt: 这些是家用走廊摄像头在一次刷牙任务期间抽取的画面。判断画面中的孩子是否在刷牙(手持牙刷或牙刷在口中、有刷牙动作)。只判断动作,不要识别或猜测人物身份。按 JSON 输出。
+  scorer:
+    anchor: nose
+    axis: y
+    near_k: 1.2
+    min_flips_per_s: 2
+  phrases:
+    opening:
+    - 睡前最后一关——刷牙两分钟,刷完今天完美收官。
+    retry:
+    - 第二次提醒——牙刷在等你,连击要保不住了。
+    arrived:
+    - 到位。两分钟,开始。

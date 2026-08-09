@@ -92,7 +92,7 @@ async def _verify_vlm_burst(ts: TaskSpec, name: str) -> None:
         if jpg:
             frames.append(base64.b64encode(jpg).decode())
         await asyncio.sleep(ts.burst_interval_s)
-    v = await verdict(frames, kind=ts.vlm_kind or ts.name)
+    v = await verdict(frames, kind=ts.vlm_kind or ts.name, prompt=ts.prompt)
     ok = bool(v and v.verified)
     storage.record(
         ts.name,

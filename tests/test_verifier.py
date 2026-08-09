@@ -28,7 +28,7 @@ async def kp_stream(duration: float = 120, fps: float = 10):
 
 
 async def test_verified_with_milestones(monkeypatch):
-    async def fake_verdict(imgs, kind="brush"):
+    async def fake_verdict(imgs, kind="brush", prompt=""):
         assert imgs, "达标后应带采样帧调用 VLM"
         return Verdict(True, 0.9)
 
@@ -49,7 +49,7 @@ async def test_verified_with_milestones(monkeypatch):
 
 
 async def test_insufficient_skips_vlm(monkeypatch):
-    async def fake_verdict(imgs, kind="brush"):
+    async def fake_verdict(imgs, kind="brush", prompt=""):
         raise AssertionError("时长不达标不应调用 VLM")
 
     monkeypatch.setattr(V, "verdict", fake_verdict)
@@ -62,7 +62,7 @@ async def test_insufficient_skips_vlm(monkeypatch):
 
 async def test_inside_credit_makes_up_total(monkeypatch):
     """门外只刷了 70s(≥min_visible),门内停留补足到 target。"""
-    async def fake_verdict(imgs, kind="brush"):
+    async def fake_verdict(imgs, kind="brush", prompt=""):
         return Verdict(True, 0.8)
 
     monkeypatch.setattr(V, "verdict", fake_verdict)
@@ -88,7 +88,7 @@ async def test_encode_is_lazy_and_capped(monkeypatch):
 
     monkeypatch.setattr(V, "_encode_jpg", counting_encode)
 
-    async def fake_verdict(imgs, kind="brush"):
+    async def fake_verdict(imgs, kind="brush", prompt=""):
         return Verdict(True, 0.9)
 
     monkeypatch.setattr(V, "verdict", fake_verdict)
@@ -101,7 +101,7 @@ async def test_encode_is_lazy_and_capped(monkeypatch):
 
 async def test_vlm_veto(monkeypatch):
     """时长够但 VLM 否决(比如拿的是勺子不是牙刷)→ 不通过。"""
-    async def fake_verdict(imgs, kind="brush"):
+    async def fake_verdict(imgs, kind="brush", prompt=""):
         return Verdict(False, 0.7, "未见牙刷")
 
     monkeypatch.setattr(V, "verdict", fake_verdict)

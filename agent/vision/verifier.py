@@ -91,7 +91,7 @@ async def run_pose_verification(
     total_ok = total >= spec.resolved_target()
     if visible_ok and total_ok:
         imgs = [base64.b64encode(s).decode() for s in result.snapshots]
-        result.vlm = await verdict(imgs, kind=spec.vlm_kind or "brush")
+        result.vlm = await verdict(imgs, kind=spec.vlm_kind or "brush", prompt=spec.prompt)
         result.verified = result.vlm.verified if result.vlm else True
     return result
 

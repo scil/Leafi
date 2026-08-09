@@ -45,5 +45,13 @@ GENERIC = {
 
 
 def pick(task: str, kind: str) -> str:
-    opts = TASKS.get(task, {}).get(kind) or GENERIC.get(kind) or ["好嘞。"]
+    """优先用 tasks.yml 里为这个动作配的台词(界面可编),再退到本文件,最后退到 GENERIC。"""
+    from .tasks import spec
+
+    opts = (
+        spec(task).phrases.get(kind)
+        or TASKS.get(task, {}).get(kind)
+        or GENERIC.get(kind)
+        or ["好嘞。"]
+    )
     return random.choice(opts)

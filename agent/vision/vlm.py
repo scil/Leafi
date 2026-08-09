@@ -52,14 +52,20 @@ def parse_verdict(content: str) -> Verdict:
     )
 
 
-async def verdict(images_b64: list[str], kind: str = "brush") -> Verdict | None:
-    """返回 None = 终裁不可用(Ollama 未起/模型未拉),调用方以 L2 计分为准。"""
+async def verdict(
+    images_b64: list[str], kind: str = "brush", prompt: str = ""
+) -> Verdict | None:
+    """返回 None = 终裁不可用(Ollama 未起/模型未拉),调用方以 L2 计分为准。
+
+    prompt 由 TaskSpec 传入(界面可编);留空则回退本文件的 PROMPTS。
+    """
     if not images_b64:
         return None
+    question = (prompt or "").strip() or PROMPTS[kind]
     payload = {
         "model": settings.vlm_model,
         "stream": False,
-        "messages": [{"role": "user", "content": PROMPTS[kind], "images": images_b64}],
+        "messages": [{"role": "user", "content": question, "images": images_b64}],
         "format": SCHEMA,
         "options": {"temperature": 0},
     }

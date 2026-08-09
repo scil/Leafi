@@ -3,3 +3,4 @@ paho-mqtt>=2.1
 edge-tts>=6.1
 httpx>=0.27
 pydantic-settings>=2.4
+pyyaml>=6.0          # config/tasks.yml(动作注册表,由 agent.webui 读写)
