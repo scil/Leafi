@@ -14,6 +14,7 @@
 ```powershell
 .venv\Scripts\python -m pytest -q                     # 单测(必须全绿再提交)
 .venv\Scripts\python -m agent.main --mock --now brush_pm   # mock 联调(配 scripts/fake_event.py)
+.venv\Scripts\python -m agent.webui                        # 动作编辑界面 → 127.0.0.1:8770
 docker compose up -d                                  # Frigate + mosquitto
 ```
 
@@ -24,12 +25,16 @@ docker compose up -d                                  # Frigate + mosquitto
 ## 结构速览
 
 - `agent/` 主程序:`main.py`(APScheduler 入口)→ `session.py`(状态机:提醒→等到场→验证→上报)
-  - `tasks.py` **任务注册表**:一个动作=一条 TaskSpec(标题/验证策略/阈值)。加新动作从这里开始,
-    三步:REGISTRY 加一条 → `phrases.py` 加话术 → `vision/vlm.py` 的 PROMPTS 加同名 key(测试会校验)
+  - `tasks.py` **任务注册表**:一个动作=一条 TaskSpec(标题/排程/验证策略/阈值/判据/话术/终裁提问)。
+    数据在 `config/tasks.yml`,**加新动作走界面**:`scripts\win\taskeditor.bat` → 127.0.0.1:8770。
+    读取带 mtime 检查,改完即时生效;**只有排程时刻要重启 agent**。
+    yml 缺失时回退 `tasks.py` 里的 BUILTIN + `phrases.py`/`vlm.py` 的静态兜底。
+    改动前先看 `validate()`——校验规则(含红线 01:终裁提问必须写明不识别身份)集中在那里
+  - `webui/` 动作编辑界面(标准库 http.server,只监听回环;两个接口 + 一张单页)
   - `presence.py` Frigate MQTT 事件;`speaker.py` TTS→摄像头喇叭(go2rtc tapo://)或本机 ffplay
   - `brain.py` Claude Haiku 生成台词(无 key 回退 `phrases.py` 静态话术)
   - `vision/` P1 验证引擎:`scorer.py`(周期动作计分,纯逻辑;判据 anchor/axis 见其 PRESETS)、`dwell.py`(门内停留)、`vlm.py`(Ollama 终裁)、`verifier.py`(编排;RTSP 部分待实机)
-- `config/frigate/config.yml` Frigate 模板(占位符从 .env 注入);`tests/` 38 项单测
+- `config/frigate/config.yml` Frigate 模板(占位符从 .env 注入);`config/tasks.yml` 动作注册表(界面读写);`tests/` 58 项单测
 - 会话记录:SQLite `data/sessions.db`(storage.py,含连击/周统计)
 
 ## 摄像头:多机型一键切换
