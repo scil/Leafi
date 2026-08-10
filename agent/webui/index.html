@@ -119,9 +119,11 @@ const HELP = {
     window_s: ['回看多长一段来判断',
       '判断"在不在动"时往回看几秒。默认 2 秒:太短容易被一次抖动骗过,太长会把刚停下的也算成还在做。'],
     min_std: ['低帧率时:最小晃动幅度',
-      '摄像头掉到 8 帧以下时改用"晃动幅度"判据。低于这个值 = 基本没动。'],
+      '备用判据:帧率低于 8 时改看"晃动幅度",低于这个值 = 基本没动。'
+      + '<b>注意:目前 agent 固定按 8 帧上报,这条走不到</b>,改了不影响线上,等接了真实帧率再说。'],
     max_std: ['低帧率时:最大晃动幅度',
-      '高于这个值 = 人在大幅走动,不是站在原地做动作。和上面一条一起夹出一个"手在动但没走位"的区间。'],
+      '高于这个值 = 人在大幅走动,不是站在原地做动作。和上面一条一起夹出一个"手在动但没走位"的区间。'
+      + '同样只在低帧率分支生效,<b>当前不起作用</b>。'],
     noise_eps: ['多小的抖动忽略不计',
       '关键点识别本身有误差,像素级的抖动不该被当成一次真的移动。基本不用改。'],
     max_gap_s: ['两帧最多补多少秒',
@@ -134,8 +136,10 @@ const HELP = {
       + '全程在镜头里的动作(比如洗手)填 <b>0</b>。',
     milestones: '刷到这些秒数时喊一句鼓励。要递增,而且别超过总分线,否则永远播不出来。',
     burst_frames: '一共拍几张交给模型。',
-    burst_interval_s: '两张之间隔多久。<b>张数 × 间隔</b> = 覆盖多长的时间窗,要盖住动作可能发生的范围。',
-    vlm_kind: '内部标识,英文小写。留着给同类动作复用同一套内置提问。'
+    burst_interval_s: '两张之间隔多久。第一张到最后一张跨度 = <b>(张数 − 1) × 间隔</b>'
+      + '(默认 8 张 × 4 秒 = 28 秒),要盖住动作可能发生的范围。',
+    vlm_kind: '内部标识,英文小写。用于归类与记录;<b>提问正文仍必须自己填</b>——'
+      + '校验要求每个终裁动作都写明"不识别身份",填了同样的 kind 也不会自动套用内置提问。'
   }
 };
 
@@ -238,10 +242,11 @@ function renderForm(){
 
   if (t.verify === 'pose_dwell'){
     const sf = META.scorerFields;
+    const win = t.scorer.window_s ?? (META.presets.brush || {}).window_s ?? 2;
     h += `<fieldset><legend>计分判据 · 什么样的一帧才算数</legend>
       <div class="explain">每一帧要<b>同时</b>过两关才计入时长:<br>
         ① <b>手在不在该在的地方</b> —— 手腕离 anchor 够近(下面的 near_k 决定多近算近)<br>
-        ② <b>手在不在做该做的事</b> —— 最近两秒里沿 axis 方向来回摆动够快(min_flips_per_s)<br>
+        ② <b>手在不在做该做的事</b> —— 最近 ${win} 秒(window_s)里沿 axis 方向来回摆动够快(min_flips_per_s)<br>
         举着水杯不动的话第 ① 关过、第 ② 关不过,所以喝水一秒都不会被记成刷牙。</div>
       <div class="row"><label>套用预设</label>
         <select id="preset"><option value="">—</option>${Object.keys(META.presets).map(k => `<option value="${k}">${k}</option>`).join('')}</select>
@@ -311,7 +316,7 @@ function renderForm(){
       else if (n.type === 'number') v = n.value === '' ? null : Number(n.value);
       else v = n.value;
       set(p, v);
-      if (p === 'verify') renderForm();
+      if (p === 'verify' || p === 'scorer.window_s') renderForm();
     };
   });
   const ps = el.querySelector('#preset');
