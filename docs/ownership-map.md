@@ -11,6 +11,8 @@ One row per fact type → owner → layer → enforced by → reading rule. Node
 | Vocabulary | `GLOSSARY.md` | 2 | Matt Pocock `domain-modeling` format | tests and docs use these terms |
 | Architecture overview, boundaries, C4 L1/L2 | `docs/architecture/overview.md`, `c4-context.md`, `c4-container.md` | 2 | `tests/test_architecture.py`; Mermaid renders on GitHub | |
 | Data-model meaning | `docs/architecture/data-model.md` | 2 | `leafi/core/storage.py` schema is the fact; `tests/test_storage.py` | read with the schema |
+| The reading algorithm (alignment, completion, practice, controls, difficulties, CHECK) | `docs/adr/0013-reading-algorithm-v1.md` (pseudocode) → `leafi/study/alignment.py`, `session.py` | 2 | `tests/test_alignment.py` walkthroughs, `tests/test_practice.py`, `tests/test_session_controls.py` | the ADR is the only place the rules are stated; flows draw them |
+| Design review record | `docs/plans/active/reviews/*.md` + `prompts/` | 1 | — | five codex rounds (2026-10-19) and the implementation review; rerun with the stored prompts |
 | Config semantics | `docs/architecture/config.md` + `.env.example` + `config/devices.yml` | 2 | pydantic validation; `python -m leafi devices` | |
 | Runtime flows | `docs/architecture/flows/*.md` | 2 | the session test that walks each | one diagram per flow |
 | Deployment topology | `docs/architecture/deployment.md` | 2 | `docker-compose.yml`, `scripts/win/*.bat` are the facts | |
