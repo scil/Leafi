@@ -37,7 +37,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 ## Conventions that differ from defaults
 
 - Repository text, commits and docs are English; no attribution trailers in commits. Enforced by: advisory.
-- Mermaid diagrams, MADR ADRs under `docs/adr/` with `status` frontmatter. Enforced by: review.
+- Mermaid diagrams; short ADRs (Matt Pocock's format, ADR-0015) under `docs/adr/` with `status` frontmatter. Enforced by: review.
 
 ## Known traps
 
