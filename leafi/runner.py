@@ -22,6 +22,14 @@ async def run_study(settings: Settings, args: argparse.Namespace) -> int:
     built = composition.build(settings, text_mode=bool(args.text), voice_policy=args.voice_policy,
                               tts_backend="mock" if args.mock else None,
                               config=composition.load_config(settings) if not args.mock else _mock_config())
+    if getattr(args, "mouth", None):
+        # `--mouth pc`: speak only through the named devices (a voice session at the desk without the camera
+        # speaker; AGENTS.md forbids camera audio unless the owner asks for it).
+        keep = set(args.mouth)
+        unknown = keep - set(built.hub.mouths)
+        if unknown:
+            log.warning("--mouth: no such Mouth %s (have %s)", sorted(unknown), sorted(built.hub.mouths))
+        built.hub.mouths = {n: m for n, m in built.hub.mouths.items() if n in keep}
     store = Store(settings.db_path)
     brain_name = "mock" if args.mock else settings.brain_backend
     brain = brain_service.REGISTRY.create(brain_name, settings)

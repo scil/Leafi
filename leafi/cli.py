@@ -45,9 +45,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     from leafi import doctor
 
     settings = _settings()
-    print(doctor.report(settings))
     if args.download:
-        print("--download: not implemented yet; run the commands printed above (plan Decision log).")
+        if settings.leafi_no_network:
+            print("LEAFI_NO_NETWORK=1: nothing is downloaded.")
+            return 2
+        print("downloading missing models (the only sanctioned download, ADR-0011):")
+        for label, outcome in doctor.download(settings, set(args.only) if args.only else None):
+            print(f"  {label:<16}{outcome}")
+    print(doctor.report(settings))
     return 0
 
 
@@ -103,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("devices", help="print the parsed devices.yml and the Hub").set_defaults(fn=cmd_devices)
     d = sub.add_parser("doctor", help="backend and model status")
-    d.add_argument("--download", action="store_true")
+    d.add_argument("--download", action="store_true", help="fetch the missing models under MODELS_DIR")
+    d.add_argument("--only", nargs="*", choices=["asr", "vad", "tts en", "pronunciation", "ocr"],
+                   help="restrict --download to these services")
     d.set_defaults(fn=cmd_doctor)
     s = sub.add_parser("study", help="run a reading session")
     s.add_argument("--text", action="store_true", help="typed input on the console, no hardware")
@@ -112,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--page", type=int, help="printed page number for --page-text")
     s.add_argument("--mock", action="store_true", help="mock services and no camera (safe in the home)")
     s.add_argument("--voice-policy", choices=["all", "primary", "none"])
+    s.add_argument("--mouth", action="append", metavar="DEVICE",
+                   help="speak only through this device (repeatable), e.g. --mouth pc keeps the camera silent")
     s.set_defaults(fn=cmd_study)
     e = sub.add_parser("export", help="JSON summary of a session (no audio, no learner free text)")
     e.add_argument("--session", type=int, required=True)
