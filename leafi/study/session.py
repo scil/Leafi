@@ -16,7 +16,7 @@ from typing import Any
 
 from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate
-from leafi.core.ports import Display, Utterance
+from leafi.core.ports import Display, ListenerLost, Utterance
 from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.core.text import typed_utterance, words
 from leafi.study import (
@@ -68,6 +68,8 @@ class PageRequest:
 class SessionFlags:
     idle: bool = False
     stopped: bool = False
+    lease_lost: bool = False  # TD-15: another launch took the speech lease; this session stopped itself
+    listener_lost: bool = False  # TD-16: the selected Ear died; continued on the console or stopped
     transitions: list[str] = field(default_factory=list)
 
 
@@ -117,6 +119,7 @@ class StudySession:
         self.resume_row = None
         self.lease: speech_lease.Lease | None = None
         self._renew: asyncio.Task | None = None
+        self._lease_lost: asyncio.Future | None = None  # resolves to a `/stop` when the lease is taken over
 
     # ------------------------------------------------------------ I/O helpers
 
@@ -197,6 +200,8 @@ class StudySession:
             self._main_task = asyncio.create_task(self.listener.next_utterance(timeout_s))
             self._main_timed = timeout_s is not None
         tasks = {self._main_task: "main"}
+        if self._lease_lost is not None:
+            tasks[self._lease_lost] = "lease"
         if self.control_source is not None and self.control_source is not self.listener:
             tasks[self._control_read()] = "control"
         if self.page_tracker is not None and self._page_open:
@@ -215,17 +220,43 @@ class StudySession:
                     return main.result()
                 main.cancel()
             return None
-        for kind in ("control", "page", "main"):
+        main = self._main_task
+        if main is not None and main.done() and not main.cancelled() and isinstance(main.exception(), ListenerLost):
+            # A dead Ear is handled before any tie-break: a ready console line must not hide it (TD-16).
+            self._main_task = None
+            return await self._listener_lost(main.exception())
+        for kind in ("lease", "control", "page", "main"):
             for t in done:
                 if tasks[t] == kind:
                     if kind == "page":
                         self._page_task = None
-                    else:
+                    elif kind != "lease":
                         self._take_control_read(t)
                         if t is self._main_task:
                             self._main_task = None
                     return t.result()
         return None
+
+    async def _listener_lost(self, err: BaseException) -> Utterance | None:
+        """LISTENER_LOST (flows/reading-session.md, TD-16): the selected Ear is gone. Continue on the console
+        when one exists (text mode from here on), else stop with the reading saved."""
+        log.error("voice listener lost: %s", err)
+        self.flags.listener_lost = True
+        self.flags.transitions.append("LISTENER_LOST")
+        console = self.control_source if self.control_source is not None and \
+            not getattr(self.control_source, "is_voice", False) else None
+        if console is None:
+            await self.line("mic_lost_stop")
+            return typed_utterance("/stop", "listener_lost")
+        await self.line("mic_lost")
+        pending = self._control_task
+        self.listener = console
+        self.voice = False
+        self.gate = ListeningGate(console)
+        self.control_source = console  # the console is now both input and control source (text mode)
+        self._main_task, self._main_timed = pending, False  # a pending console read carries over
+        self._control_task = None
+        return await self.listen(self.settings.study_idle_s)
 
     async def _watch_page(self) -> Utterance:
         """Poll the Eye; a settled frame that differs from the page being read is a page turn (`/page`)."""
@@ -277,6 +308,7 @@ class StudySession:
         # hold the lease, every other unfinished session belongs to a dead process and is stale.
         self.lease = speech_lease.acquire(self.settings.lease_path, self.settings.lease_ttl_s)
         records.close_stale_sessions(self.store)
+        self._lease_lost = asyncio.get_running_loop().create_future()
         self._renew = asyncio.create_task(self._renew_loop())
         mode = "voice" if self.voice else "text"
         self.session_id = self.store.insert("reading_sessions", started_at=now_iso(), mode=mode,
@@ -298,6 +330,9 @@ class StudySession:
             await self.wrap()
         finally:
             self._cancel_inputs()
+            close = getattr(self.listener, "close", None)
+            if close is not None:  # stop the voice Listener's capture pump with the session, not at loop exit
+                await close()
             if self._renew:
                 self._renew.cancel()
             if self.lease:
@@ -305,12 +340,20 @@ class StudySession:
         return self.session_id
 
     async def _renew_loop(self) -> None:
+        """Renew every third of the TTL. A failed renewal means another launch took the lease over (this
+        process was treated as dead after a suspend longer than the TTL, TD-15): this session must stop
+        speaking at once and end, instead of the newcomer closing it while it still writes."""
         while True:
-            await asyncio.sleep(max(1.0, self.settings.lease_ttl_s / 3))
+            await asyncio.sleep(max(0.1, self.settings.lease_ttl_s / 3))
             try:
                 self.lease.renew()
             except speech_lease.LeaseHeld:
-                log.error("speech lease lost")
+                log.error("speech lease lost: another Leafi session took it over; stopping")
+                self.flags.lease_lost = True
+                self.stopping = True  # text still shows on Faces; no Mouth plays
+                await self.hub.stop_speaking()
+                if self._lease_lost is not None and not self._lease_lost.done():
+                    self._lease_lost.set_result(typed_utterance("/stop", "lease"))
                 return
 
     # ------------------------------------------------------------ IDENTIFY_BOOK
@@ -948,7 +991,10 @@ class StudySession:
         if self.book_id is not None:
             lexicon.rebuild(self.store, self.book_id)
         summ = records.summary(self.store, self.session_id)
-        summ.update(idle=self.flags.idle, stopped=self.flags.stopped, interrupted=False)
+        summ.update(idle=self.flags.idle, stopped=self.flags.stopped, interrupted=False,
+                    lease_lost=self.flags.lease_lost, listener_lost=self.flags.listener_lost)
+        if self.flags.lease_lost:
+            await self.line("lease_lost")
         if self.anki is not None:
             try:
                 rep = await anki.sync_outbox(self.store, self.anki, self.settings.anki_deck, self.settings.anki_model)

@@ -46,6 +46,10 @@ LINES: dict[str, list[str]] = {
     "idle": ["Let's take a break. See you next time!"],
     "bye": ["Great session, teammate. See you next time!"],
     "lease_held": ["Another Leafi session is speaking right now."],
+    "lease_lost": ["Another Leafi took over the speaker, so I'll stop here. Your reading is saved."],
+    "mic_lost": ["I can't hear the microphone any more. Type what you read, or restart me when it's back."],
+    "mic_lost_stop": ["I can't hear the microphone any more, and there's no keyboard here. Let's stop; "
+                      "your reading is saved."],
     "playback_stop_hint": ["Tip: type /stop any time, even while I'm talking."],
 }
 
