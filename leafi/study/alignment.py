@@ -202,11 +202,13 @@ def best_path(tokens: list[Tok], lo: int, hi: int, words: list[str], pcur: int) 
     def trans(i: int, j: int, c: int):
         """Transitions in lexicographic (index, op) order; END (shortest sequence) first."""
         out = []
+        # c = aligned tokens so far in sent(i-1); that sentence is always entered (its token i-1 was aligned
+        # or deleted), so leaving it with c < 2 costs the boundary penalty — also when c == 0 (review 1 #19).
         if j == m:
-            out.append(("end", None, (C_BOUND if c == 1 else 0, 0), None))
+            out.append(("end", None, (C_BOUND if c < 2 else 0, 0), None))
         if i < hi:
             cross = sent[i] != sent[i - 1]
-            pen = C_BOUND if (cross and c == 1) else 0
+            pen = C_BOUND if (cross and c < 2) else 0
             cbase = 0 if cross else c
             if j < m:
                 cost, op, s = oc(i, j)

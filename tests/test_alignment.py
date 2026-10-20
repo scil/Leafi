@@ -310,3 +310,91 @@ def test_tie_break_is_unique_and_deterministic():
     p1 = best_path(st.tokens, 0, st.n, ["a", "b"], 2)
     p2 = best_path(st.tokens, 0, st.n, ["a", "b"], 2)
     assert [(o.index, o.op) for o in p1] == [(o.index, o.op) for o in p2] == [(2, 0), (3, 0)]
+
+
+# ---------------------------------------------------------------- exact-cost regression against brute force
+
+
+def _reference_best(text: str, words: list[str], pcur: int = 0):
+    """Enumerate every ADR-0013 path (branch and bound) and score it from the ADR text alone:
+    ops + jump + 0.5 for every sentence the path enters (aligns or deletes a token in) with < 2 aligned."""
+    from leafi.core.text import norm
+    from leafi.study.alignment import (
+        C_BOUND, C_DEL, C_INS, C_JUMP, OP_DEL, OP_INS, OP_SUB, _opcost)
+
+    st = ReadingState.from_text(text)
+    toks, n, m = st.tokens, st.n, len(words)
+    ws = [norm(w) for w in words]
+
+    def total(f, ops):
+        cost = C_JUMP * abs(f - pcur)
+        entered: dict[int, int] = {}
+        ins = 0
+        for op, i, j in ops:
+            if op == OP_INS:
+                cost += C_INS
+                ins += 1
+            elif op == OP_DEL:
+                cost += C_DEL
+                entered.setdefault(toks[i].sentence_id, 0)
+            else:
+                cost += _opcost(toks[i], ws[j])[0]
+                entered[toks[i].sentence_id] = entered.get(toks[i].sentence_id, 0) + 1
+        cost += sum(C_BOUND for c in entered.values() if c < 2)
+        return cost, ins
+
+    best: list = []
+    bound = [10 ** 9]
+
+    def walk(f, i, j, ops, partial):
+        if partial > bound[0]:
+            return
+        if j == m:
+            if ops and ops[-1][0] != OP_DEL:
+                cost, ins = total(f, ops)
+                key = (cost, abs(f - pcur), ins, [(i_, op) for op, i_, _ in ops])
+                best.append(key)
+                bound[0] = min(bound[0], cost)
+            return
+        if i < n:
+            c, op, _ = _opcost(toks[i], ws[j])
+            walk(f, i + 1, j + 1, ops + [(op, i, j)], partial + c)
+            if ops:
+                walk(f, i + 1, j, ops + [(OP_DEL, i, None)], partial + C_DEL)
+        walk(f, i, j + 1, ops + [(OP_INS, i, j)], partial + C_INS)
+
+    for f in range(n):
+        for j0 in range(m):
+            c, op, _ = _opcost(toks[f], ws[j0])
+            lead = [(OP_INS, f, j) for j in range(j0)]
+            walk(f, f + 1, j0 + 1, lead + [(op, f, j0)], C_INS * j0 + C_JUMP * abs(f - pcur) + c)
+    assert OP_SUB is not None
+    return min(best)
+
+
+def test_boundary_penalty_applies_to_sentences_entered_only_by_deletions():
+    """Review 1 #19: `b d a b b a c` against `b a d. c. c a c.`."""
+    text, words = "b a d. c. c a c.", "b d a b b a c".split()
+    st = ReadingState.from_text(text)
+    ref = _reference_best(text, words)
+    got = best_path(st.tokens, 0, st.n, words, 0)
+    assert [(o.index, o.op) for o in got] == ref[3]
+
+
+def test_dp_matches_the_brute_force_reference_on_small_cases():
+    import random
+
+    rng = random.Random(13)
+    vocab = ["a", "b", "c", "d"]
+    for _ in range(300):
+        sents = [" ".join(rng.choice(vocab) for _ in range(rng.randint(1, 3))) for _ in range(rng.randint(1, 4))]
+        text = ". ".join(sents) + "."
+        words = [rng.choice(vocab) for _ in range(rng.randint(1, 6))]
+        st = ReadingState.from_text(text)
+        pcur = rng.randint(0, st.n - 1)
+        ref = _reference_best(text, words, pcur)
+        got = best_path(st.tokens, 0, st.n, words, pcur)
+        if got is None:  # inserting every word is strictly cheaper than any aligned path
+            assert ref[0] > 12 * len(words), (text, words, pcur)
+            continue
+        assert [(o.index, o.op) for o in got] == ref[3], (text, words, pcur)
