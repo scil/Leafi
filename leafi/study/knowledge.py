@@ -24,15 +24,17 @@ KNOWLEDGE_MIN_SESSIONS = 2
 
 
 def upsert_item(store: Store, kind: str, key: str, language: str = "en", sense_hint: str = "") -> int:
+    """The item and its first outbox `add` are created in one transaction (review 1 #16)."""
     key = key.strip()
-    row = store.one("SELECT id FROM knowledge_items WHERE kind=? AND language=? AND key=? AND sense_hint=?",
-                    (kind, language, key, sense_hint))
-    if row:
-        return row["id"]
-    now = now_iso()
-    item_id = store.insert("knowledge_items", kind=kind, language=language, key=key, sense_hint=sense_hint,
-                           status="new", anki_item_key=str(uuid.uuid4()), created_at=now, updated_at=now)
-    store.insert("anki_outbox", knowledge_item_id=item_id, op="add", state="pending", updated_at=now)
+    with store.transaction():
+        row = store.one("SELECT id FROM knowledge_items WHERE kind=? AND language=? AND key=? AND sense_hint=?",
+                        (kind, language, key, sense_hint))
+        if row:
+            return row["id"]
+        now = now_iso()
+        item_id = store.insert("knowledge_items", kind=kind, language=language, key=key, sense_hint=sense_hint,
+                               status="new", anki_item_key=str(uuid.uuid4()), created_at=now, updated_at=now)
+        store.insert("anki_outbox", knowledge_item_id=item_id, op="add", state="pending", updated_at=now)
     return item_id
 
 

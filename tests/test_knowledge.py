@@ -100,3 +100,19 @@ def test_card_fields_are_english_first(store):
     f = knowledge.card_fields(store, item)
     assert f["正面"] == "blew"
     assert f["背面"].index("moved air") < f["背面"].index("吹")
+
+
+def test_item_and_its_outbox_add_are_created_atomically(store):
+    """Review 1 #16: a failure between the two inserts must not leave an unscheduled item."""
+    import sqlite3
+
+    def deny_outbox(action, table, *_):
+        return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_INSERT and table == "anki_outbox" else sqlite3.SQLITE_OK
+
+    store.conn.set_authorizer(deny_outbox)
+    with pytest.raises(sqlite3.DatabaseError):
+        knowledge.upsert_item(store, "word", "blew")
+    store.conn.set_authorizer(None)
+    item = knowledge.upsert_item(store, "word", "blew")
+    assert store.one("SELECT COUNT(*) AS n FROM knowledge_items")["n"] == 1
+    assert store.one("SELECT COUNT(*) AS n FROM anki_outbox WHERE knowledge_item_id=?", (item,))["n"] == 1
