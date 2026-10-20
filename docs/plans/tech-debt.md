@@ -19,6 +19,6 @@
 | TD-3 | Frigate (15000) and MQTT (18830) are host-mapped without auth. | deployment | C | when any device outside the PC joins the LAN services |
 | TD-4 | `agent/` (habit track) talks to go2rtc and MQTT directly instead of through the Hub; two config modules, two SQLite files. | habits | B | product.md T2, after the study track is stable |
 | TD-5 | Chinese comments and log strings in `agent/` (owner rule: repository text is English). | habits | D | translate per touched line |
-| TD-6 | `codex-review` skill says the CLI rejects `gpt-6-astra`; it accepts it as of codex-cli 0.155.0 (checked 2026-10-19). | shared skill `codex-review` | D | harvest into the skill (one line) |
-| TD-7 | docs-maintainer refresh gate was due (34 days); 10 sources changed. A quick read found no rule change affecting this repo; the skill's changelog and fingerprints are not updated here (another repo). | shared skill `docs-maintainer` | D | run the Refresh path in `ai-skills` |
+| TD-6 | Resolved 2026-10-20 in `ai-skills` (commits ddfc150, d4b363f): codex-review now records that `gpt-6-astra` is accepted, the in-repo `.scratch/review/` diff location, the quota fallback and the earlier structural move. | shared skill `codex-review` | — | done |
+| TD-7 | Resolved 2026-10-20 in `ai-skills` (commits 196c2c1, aaaaced): docs-maintainer refresh applied, changelog and fingerprints updated; ai-agents-md's own 7-day refresh is still due there. | shared skill `docs-maintainer` | — | done |
 | TD-8 | Obsidian console note still named "Carema Console"; links fixed, filename kept to preserve wikilinks. | vault | D | when the four tutorial notes are revised for the study track |
