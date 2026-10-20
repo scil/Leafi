@@ -536,19 +536,7 @@ class StudySession:
             self.flags.stopped = True
             return WRAP
         if kind in ("page", "next_page"):
-            await self._depart()
-            if kind == "page":
-                text = None
-                if ctl.path is not None:
-                    try:
-                        text = Path(ctl.path).read_text(encoding="utf-8")
-                    except OSError:
-                        text = None
-                self.request = PageRequest(ctl.n, text)
-            else:
-                cur = self.store.one("SELECT printed_number FROM pages WHERE id=?", (self.page_id,))["printed_number"]
-                self.request = PageRequest(cur + 1 if cur is not None else None)
-            return FIND_PAGE
+            return await self._turn_page(ctl)
         if kind == "back":
             self.state = back(self.state, ctl.n or 1)
             self._save_state()
@@ -564,6 +552,23 @@ class StudySession:
             return CHECK if self.state.page_complete() else None
         await self.line("noop")
         return None
+
+    async def _turn_page(self, ctl: Control) -> str:
+        """`/page N [--text f]`, "next page" or an Eye page turn, identical in every state (review 1 #14):
+        completion (iii), page settlement, page read ended, then FIND_PAGE with the requested page."""
+        text = None
+        if ctl.kind == "page" and ctl.path is not None:
+            try:
+                text = Path(ctl.path).read_text(encoding="utf-8")
+            except OSError:
+                log.warning("page text file could not be read")
+        if ctl.kind == "next_page" and self.page_id is not None:
+            cur = self.store.one("SELECT printed_number FROM pages WHERE id=?", (self.page_id,))["printed_number"]
+            self.request = PageRequest(cur + 1 if cur is not None else None)
+        else:
+            self.request = PageRequest(ctl.n, text)
+        await self._depart()
+        return FIND_PAGE
 
     async def _depart(self) -> None:
         """Completion (iii) of the current sentence, then page settlement (stop / next page / page turn)."""
@@ -700,9 +705,7 @@ class StudySession:
                     self.flags.stopped = True
                     return WRAP
                 if ctl.kind in ("page", "next_page"):
-                    self.request = PageRequest(ctl.n) if ctl.kind == "page" else PageRequest()
-                    await self._depart()
-                    return FIND_PAGE
+                    return await self._turn_page(ctl)
                 if ctl.kind == "skip":
                     miscues.record_practice(self.store, mid, attempt + 1, "skipped")
                     miscues.set_status(self.store, mid, "unsure", reason="skipped")
@@ -846,8 +849,7 @@ class StudySession:
                         self.flags.stopped = True
                         return WRAP
                     if ctl.kind in ("page", "next_page"):
-                        self.request = PageRequest(ctl.n)
-                        return FIND_PAGE
+                        return await self._turn_page(ctl)
                     if ctl.kind == "back":
                         self.state = back(self.state, ctl.n or 1)
                         self._save_state()
@@ -882,20 +884,7 @@ class StudySession:
                 self.flags.stopped = True
                 return WRAP
             if kind in ("page", "next_page"):
-                self._end_page_read()
-                text = None
-                if ctl.path is not None:
-                    try:
-                        text = Path(ctl.path).read_text(encoding="utf-8")
-                    except OSError:
-                        text = None
-                if kind == "next_page":
-                    cur = self.store.one("SELECT printed_number FROM pages WHERE id=?",
-                                         (self.page_id,))["printed_number"]
-                    self.request = PageRequest(cur + 1 if cur is not None else None)
-                else:
-                    self.request = PageRequest(ctl.n, text)
-                return FIND_PAGE
+                return await self._turn_page(ctl)
             if kind == "back":
                 self.state = back(self.state, ctl.n or 1)
                 self._save_state()

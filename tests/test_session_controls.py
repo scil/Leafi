@@ -122,3 +122,17 @@ async def test_empty_lines_never_trigger_reposition(settings):
     store, face, s, _ = await _run(settings, ["The", "", "", "/stop"])
     assert not any("first few words" in t for t in face.texts)
     assert store.all("SELECT * FROM observations WHERE utterance_id IN (SELECT id FROM utterances WHERE text='')") == []
+
+
+async def test_page_command_with_text_works_the_same_in_practice_and_check(settings, tmp_path):
+    """Review 1 #14."""
+    page2 = tmp_path / "p2.txt"
+    page2.write_text("Second page here.", encoding="utf-8")
+    for db, script in (("practice.db", ["The dog red far.", f"/page 2 --text {page2}", "/stop"]),
+                       ("check.db", ["The dog ran far. The cat sat.", f"/page 2 --text {page2}", "/stop"])):
+        settings.data_dir = tmp_path / db
+        store, face, s, _ = await _run(settings, script)
+        reads = store.all("SELECT p.printed_number, pr.ended_at, rev.text FROM page_reads pr JOIN pages p ON "
+                          "p.id = pr.page_id JOIN page_revisions rev ON rev.id = pr.page_revision_id ORDER BY pr.id")
+        assert [(r["printed_number"], r["text"]) for r in reads] == [(1, PAGE), (2, "Second page here.")], db
+        assert all(r["ended_at"] for r in reads), db
