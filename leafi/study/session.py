@@ -135,14 +135,21 @@ class StudySession:
             await self.gate.speak(self.hub, text, lang, slow=slow, local_only=local_only)
             return
         speak = asyncio.create_task(self.gate.speak(self.hub, text, lang, slow=slow, local_only=local_only))
-        while not speak.done():
-            ctl_task = self._control_read()
-            done, _ = await asyncio.wait({speak, ctl_task}, return_when=asyncio.FIRST_COMPLETED)
-            if ctl_task in done:
-                self._take_control_read(ctl_task)
-                u = ctl_task.result()
-                if u is not None:
-                    await self._during_playback(u)
+        try:
+            while not speak.done():
+                ctl_task = self._control_read()
+                done, _ = await asyncio.wait({speak, ctl_task}, return_when=asyncio.FIRST_COMPLETED)
+                if ctl_task in done:
+                    self._take_control_read(ctl_task)
+                    u = ctl_task.result()
+                    if u is not None:
+                        await self._during_playback(u)
+        except asyncio.CancelledError:
+            # The session itself was cancelled (Ctrl-C): stop the line and reap it before run() releases the
+            # lease; the Hub side is cancellation-safe (review 1 #6, review 2 D5).
+            speak.cancel()
+            await asyncio.gather(speak, return_exceptions=True)
+            raise
         await speak
 
     def _will_play(self) -> bool:

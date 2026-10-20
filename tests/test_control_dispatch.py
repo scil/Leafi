@@ -114,3 +114,30 @@ async def test_a_timed_out_listen_does_not_answer_the_next_listen(settings):
             for r in store.all("SELECT * FROM miscues")}
     assert rows == {"ran": ("withdrawn", "practice")}
     assert 5.0 in listener.timeouts
+
+
+async def test_cancelling_the_session_during_playback_stops_the_speaker(settings, tmp_path):
+    """Review 2 D5: a cancelled run() (Ctrl-C) must not leave the clip playing."""
+    started = asyncio.Event()
+
+    class Log(list):
+        def append(self, item):
+            super().append(item)
+            if item == ("start", "mouth"):
+                started.set()
+
+    log = Log()
+    mouth = FakeMouth(hang=True, log=log)
+    hub = Hub(faces={"f": RecordingFace()}, mouths={"pc": mouth}, synthesizer=FakeSynth(tmp_path), policy="all")
+    s = StudySession(store=Store(settings.db_path), hub=hub, settings=settings, brain=MockBrain(),
+                     listener=ScriptedListener([], voice=True), control_source=ConsoleOnce([]))
+    task = asyncio.create_task(s.run(book_title="B", page_text=PAGE, page_number=1))
+    await asyncio.wait_for(started.wait(), 5)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    await asyncio.sleep(0)
+    assert mouth.stopped >= 1 and ("end", "mouth") in log
+    assert not hub._lock.locked() and not s.gate._lock.locked()
