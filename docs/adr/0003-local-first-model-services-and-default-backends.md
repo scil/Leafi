@@ -31,6 +31,10 @@ Study needs speech recognition, speech synthesis, page OCR, pronunciation scorin
 
 `claude-haiku-5-5` remains configurable for the habit track's one-line phrases (`BRAIN_MODEL_CHEAP`); the first track's choice of Haiku for cost is the owner's and is kept there.
 
+## Amendments
+
+ADR-0011 (2026-10-19) defers the Ollama Brain fallback and the qwen3-vl OCR second opinion out of v1 (ports kept), gates automatic pronunciation judgement behind an evaluation threshold, and records that the installed `anthropic` 0.120.2 exposes `output_config.format` but no `fallbacks` parameter, so fallback is application-owned (static phrases) and the SDK is pinned rather than upgraded for v1.
+
 ## Decision outcome
 
 Each service is a package `leafi/services/<name>/` with a `Protocol`, a registry keyed by the `.env` backend name, one module per backend and `mock.py`. Backends load lazily; a missing model file reports a download command through `python -m leafi doctor`.

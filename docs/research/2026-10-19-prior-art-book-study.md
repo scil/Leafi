@@ -113,7 +113,7 @@ Sources above imply three cheap loops: (1) user corrections become page ground t
 | D2 | Zero mouths → every `say()` is rendered as text on Faces and the log; policy configurable | **Adopted** | User requirement |
 | D3 | Model services (ASR/TTS/OCR/Pronunciation/LLM/VLM) behind ports with a `mock` backend each | **Adopted** | Reference (xiaozhi-server provider registry) + testability |
 | D4 | Default backends: sherpa-onnx Parakeet TDT v2; Kokoro-onnx + edge-tts; RapidOCR + qwen3-vl; OpenPronounce-style wav2vec2 phonemes; Claude Opus 5.5 + Ollama fallback | **Adopted, backends replaceable** | References §2.3–2.5, §2.9 |
-| D5 | Reading verification = align ASR transcript to expected page text → word verdicts; phoneme scorer only on flagged words | **Adopted** | References §2.1–2.2 |
+| D5 | Reading verification = align ASR transcript to expected page text → observations with a committed cursor; candidate miscues; phoneme scorer only on flagged words and only after evaluation | **Adopted (revised by ADR-0009/0011 after codex review)** | References §2.1–2.2 |
 | D6 | Anki is the review scheduler (FSRS); Leafi's SQLite is the system of record; cards link back by note id | **Adopted** | Reference §2.7 + existing `anki-cards` tooling |
 | D7 | Self-improvement = corrections/lexicon/learner profile as data; no fine-tuning in v1 | **Adopted** | §2.8 |
 | D8 | Barge-in / full-duplex voice pipeline (Pipecat-class) | **Deferred** | Turn-based reading loop suffices for v1 |

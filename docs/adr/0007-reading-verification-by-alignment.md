@@ -1,7 +1,9 @@
 ---
-status: accepted
+status: superseded by 0009
 date: 2026-10-19
 ---
+
+> Superseded the same day by ADR-0009 after codex review round 1: alignment now yields observations with a committed cursor and insertion events; a pronunciation judgement needs acoustic evidence. Kept for the option analysis.
 
 # Reading is verified by aligning the transcript to the expected page text; phonemes only on flagged words
 

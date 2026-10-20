@@ -55,15 +55,17 @@ Acceptance: `python -m leafi devices` prints the parsed table; `say()` with 0/1/
 
 Deliverables: `leafi/study/{books,pages,alignment,miscues,coach,session,knowledge,anki,review,corrections,lexicon,phrases}.py`, `leafi/services/{brain,tts}/` with `mock` + real backends (brain: Claude via official SDK; TTS: Kokoro + edge; both lazily imported), `python -m leafi study --text --book "<title>" --page-text <file>`.
 
-Key behaviours:
-- `alignment.align(expected: list[str], utterance: Utterance, *, unsure_below=0.5) -> AlignResult(verdicts, cursor_advance)` per ADR-0007.
-- Intent classification for learner Utterances: `read` (default), `correct_page_text`, `explain`, `stop`, `next_page`, `repeat` — rule-based first (`"the book says X not Y"`, `"what does X mean"`, `"I don't understand"`), Brain only when rules fail.
-- Coach turns use structured output `{line, action, words_to_practice, question?}`; Chinese appears only inside explanations (`meaning_zh`) and never in the spoken English practice.
-- Static phrases (`study/phrases.py`) in the Coach voice for every coach action, used when the Brain is unavailable.
-- Anki: deck `Leafi`, model `问答题`, English-first bilingual fields; fake AnkiConnect server in tests.
-- Storage per `data-model.md`; `export --session <id>` JSON.
+Key behaviours (revised after codex review round 1; ADR-0009, ADR-0010, ADR-0011 govern):
+- `alignment.align(window: list[Token], utterance: Utterance, committed_cursor: int, *, reread_back=6, unsure_below=0.5) -> AlignResult(observations, provisional_cursor, committed_cursor)`: bounded semi-global alignment; observations are matched/substituted/deleted spans and insertion events anchored between tokens; unattempted suffix never deleted; rereads not penalised; commitment rule per ADR-0009 §3.
+- Candidate miscues from substituted/deleted observations; practice = model-and-repeat, ≤ 2 retries, skip always; outcomes `withdrawn | unsure | confirmed`; text mode records `practiced` with `evidence=none`.
+- Intent classification: control grammar only for utterances ≤ 6 words (`stop`, `skip`, `next page`, `page N`, `I don't understand`, `what does X mean`, `the book says X not Y`); typed `/stop /skip /page N /fix Y X /explain X`; everything else is reading. Brain is not used for intent in v1.
+- Immediate coach lines come from `study/phrases.py` (Coach voice, static, deny-list checked). The Brain is enrichment only (explain, questions, better line when in time), async, 12 s deadline, revision-guarded, strict schema + action allow-list; unavailable → skip without a Difficulty.
+- Page identity and revisions per ADR-0010; corrections in one transaction; miscues invalidated with reason.
+- Anki: deck `Leafi`, model `问答题`, tag `leafi-id::<uuid>` for dedupe, `anki_outbox`, learner-chosen ease (again/good); stateful fake AnkiConnect server in tests (lost-ack mode, parent edits).
+- Speech lease `data/leafi.lock` held by the session; `agent/speaker.py` gains a 5-line check that logs instead of speaking while the lease is held (the only change to `agent/`).
+- Storage per `data-model.md`; `export --session <id>` JSON (counts and items, no learner free text); `forget --session <id>`.
 
-Acceptance script (`tests/test_study_text_mode.py`): a scripted console listener reads a fixture page with one substitution, one skip, one correction utterance, one "what does X mean", answers one comprehension question; assertions on miscues, correction precedence, knowledge items, Anki push through the fake, summary content.
+Acceptance script (`tests/test_study_text_mode.py`): a scripted console listener reads a fixture page with one substitution, one mid-sentence skip, a hesitation split across two utterances, a reread of three words, one correction utterance, one "what does X mean", a `/skip` during practice, answers one comprehension question (Brain mock), then `/stop`; assertions on observations, candidate→practiced transitions, correction revision chain and invalidation, knowledge items + encounters, Anki outbox through the fake (including one lost ack), summary counts, lease released.
 
 ### S2 — See the book (B1, B2)
 
@@ -77,25 +79,22 @@ Deliverables: `leafi/devices/local_pc.py` (Ear via `sounddevice`, Mouth via ffpl
 
 Acceptance: hardware-marked tests with Kokoro-synthesised fixture audio: correct reading → all `read`; one substituted word → that word `mispronounced`; practice retry resolves it. Turn latency bench ≤ 1.5 s on the PC.
 
-### S4 — Device breadth (H5)
+### Out of this plan (ADR-0011): S4 device breadth (ESP32/Wyoming/Tapo) and S5 habits-on-the-Hub get their own plans once the loop is proven with the v1 device set (console, PC, Xiaomi Eye+Mouth).
 
-xiaozhi WebSocket server adapter (Ear/Mouth/Face with subtitles), Wyoming client, Tapo camera profile. Acceptance per ADR-0008.
+### Prototypes (decisive ones run before the slice that depends on them; P-1 may run during S1 since S1 does not need audio)
 
-### S5 — Habits on the Hub (T2)
-
-Move `agent/speaker.py`, `notify.py`, `presence.py` behind Hub ports; one config; one SQLite. Acceptance: existing 58+ habit tests still green; `--mock --now brush_pm` runs through the Hub.
-
-### Prototypes (answer before the slice that depends on them)
-
-- P-1 (before S3): sherpa-onnx Parakeet via `OfflineRecognizer.from_transducer(model_type="nemo_transducer")` — do `result.timestamps`/`tokens` exist and do hotwords apply? Throwaway script under `scripts/proto/`.
-- P-2 (before S3 camera Ear): can ffmpeg pull audio from the host go2rtc Xiaomi stream, at what codec/rate, and is a child reading at ~1 m intelligible?
-- P-3 (before S2): RapidOCR PP-OCRv5 vs v6 vs qwen3-vl on three photos of the current book taken through the camera at `snapshot_width` 1920 and 2304.
+- P-1 (before S3, can start now): sherpa-onnx Parakeet TDT 0.6B v2 int8 via `OfflineRecognizer.from_transducer(model_type="nemo_transducer")`: token→word reconstruction, timing granularity, whether confidence exists (else `None`), behaviour on silence, and whether hotwords apply with `modified_beam_search`. Throwaway script `scripts/proto/p1_parakeet.py`; result recorded in Surprises.
+- P-2 (before S3 camera Ear): ffmpeg pulls audio from the host go2rtc Xiaomi stream — codec, rate, latency; a child reading at ~1 m intelligible? Owner runs it (camera needed).
+- P-3 (before S2 real OCR): RapidOCR PP-OCRv5 vs v6 on three desk captures (hands, curvature, glare, a spread) at `snapshot_width` 1920 and 2304; report reading order, missing lines and page-number detection separately from word accuracy. Owner takes the captures; Opus runs the comparison.
+- P-4 (before enabling `PRON_AUTO_JUDGE`): OpenPronounce Windows smoke test offline (`LEAFI_NO_NETWORK=1`), then the parent-labelled child-speech evaluation (≥ 40 flagged words, false-correction rate ≤ 15 %).
+- P-5 (before S3): Kokoro → prepared clip → camera end-to-audible latency and truncation for a word and a line (owner present; audible).
+- P-6 (before S3): `sounddevice` capture lifecycle on this PC: device selection, 16 kHz resampling, overflow signalling, unplug/replug, pause/resume under model load.
 
 ## Concrete steps for the implementer (Opus)
 
 1. Read `AGENTS.md`, `GLOSSARY.md`, ADR-0001…0007, `docs/architecture/overview.md`, `data-model.md`, `flows/reading-session.md`, this plan. Keep the `tdd` skill's loop: one seam, one failing test, minimal code.
-2. S0 then S1 in full; S2's OCR service + page tracker with the mock and the PIL fixtures; S3 only the service shells with mocks plus the `sounddevice` Ear (real ASR/pronunciation backends may be written but are hardware-marked).
-3. Add `requirements-study.txt` (sherpa-onnx, kokoro-onnx, rapidocr, onnxruntime, openpronounce, sounddevice, zxing-cpp, rapidfuzz, websockets, numpy) and `requirements-dev.txt` (ruff); do not install heavy packages into the venv unless a hardware test is being run.
+2. S0 then S1 in full (text mode, mock/static speech, Brain mock + real Claude backend behind the registry, Anki outbox with the stateful fake, speech lease incl. the 5-line check in `agent/speaker.py`); S2's OCR service + page identity/revisions + page tracker with the mock OCR and PIL fixtures, plus the go2rtc Eye/Mouth adapter against a fake server; S3 only the service shells with mocks plus the `sounddevice` Ear skeleton (real ASR/pronunciation backends may be written but are hardware-marked). P-1 (Parakeet contract) may be run as a throwaway script if the model download is acceptable (~600 MB); record the result in Surprises.
+3. Add `requirements-study.txt` (sherpa-onnx, kokoro-onnx, rapidocr, onnxruntime, openpronounce, sounddevice, zxing-cpp, rapidfuzz, numpy, websockets) and `requirements-dev.txt` (ruff); pin versions resolved on 2026-10-19 (research §1); do not install heavy packages into the venv unless a hardware test or P-1 is being run.
 4. Update `README.md` run instructions, `docs/engineering/repo-map.md` (remove *planned* marks), `docs/engineering/code-locator.md` entries that now have files, and the Progress section here.
 5. Run `.venv\Scripts\python -m pytest -q`; everything green; then `codex-review` loop on the diff (`-c model="gpt-6-astra"`, read-only sandbox).
 
@@ -116,8 +115,9 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 - [x] 2026-10-19 Research corpus written (`docs/research/…`); refresh gate of `docs-maintainer` run (10 sources changed; no rule change affecting this repo; TD-7).
 - [x] 2026-10-19 Skills audit: `mattpocock-skills@claude-plugins-official` 1.3.1 installed and contains every skill in the upstream repo; `docs/agents/*` written by hand per `setup-matt-pocock-skills` (local tracker, single context). Shared skills to junction: `docs-maintainer`, `codex-review`, `code-plan-review`, `anki-cards`, `tiered-research`.
 - [x] 2026-10-19 Docs set written (product, glossary, architecture, ADR-0001…0008, engineering, ownership map, this plan).
-- [ ] Rename to Leafi in README, CLAUDE/AGENTS, code strings, Frigate template, `.env.example`, vault console.
-- [ ] Codex design review (gpt-6-astra) and fixes.
+- [x] 2026-10-19 Rename to Leafi in README, CLAUDE/AGENTS, code strings, Frigate template, `.env.example`, `.env`, vault console (commit 8204ac1).
+- [x] 2026-10-19 Codex design review round 1 (gpt-6-astra, reasoning high): `reviews/2026-10-19-codex-design-review-1.md`; resolved by ADR-0009/0010/0011 and the revised data model, flows, security, performance, testing docs.
+- [ ] Codex design review round 2 (narrow: the resolutions).
 - [ ] Opus implements S0, S1, S2 (mock + fixtures), S3 shells.
 - [ ] Tests green; commit; docs updated after change.
 - [ ] Hardware steps on the PC: P-1, P-2, P-3; S2/S3 real backends; acceptance 1 with the camera.
@@ -144,6 +144,13 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 | 2026-10-19 | Alignment-based verification | ADR-0007 |
 | 2026-10-19 | Local markdown issue tracker for Matt Pocock's skills | solo project; no external side effects |
 | 2026-10-19 | Reply language in this repo: English only | owner instruction (token saving); recorded in CLAUDE.md |
+| 2026-10-19 | Alignment = observations + committed cursor; miscues are candidates until practice/acoustic evidence; ≤ 2 retries, skip always; text mode records no acoustic evidence | codex review A1/A2/D3/D4/G4 → ADR-0009 (supersedes 0007) |
+| 2026-10-19 | Stable page ids, immutable revisions, located corrections, invalidation with reason, revision-guarded async results | codex review A3/A4/D2/B7 → ADR-0010 |
+| 2026-10-19 | One egress table; study notifications text-only; habit snapshot = owner's open decision (TD-9); OpenPronounce offline; Ollama/VLM fallbacks deferred; `PRON_AUTO_JUDGE`, `ASR_HOTWORDS` off until evaluated; v1 = console + PC + Xiaomi Eye/Mouth; S4/S5 are future plans | codex review D1/G1/G3/C1–C4/E3 → ADR-0011 |
+| 2026-10-19 | Composition root `leafi/app.py`; `Synthesizer` protocol in core; audio ownership on `Utterance.audio_ref`; half-duplex listening gate; speech lease between processes | codex review B1/B2/A5/B3/D5 → overview.md, device-routing.md |
+| 2026-10-19 | Three latency budgets (ack 0.3 s, local feedback 1.5 s PC / 2.5 s camera, enrichment 6 s); Brain off the fast path | codex review A6 → performance.md |
+| 2026-10-19 | `anthropic` pinned at 0.120.2 (has `output_config`, no `fallbacks`); application-owned fallback | codex review E7 → TD-1 |
+| 2026-10-19 | Codex review prompt: the file `scratchpad/codex-design-review-prompt.md` content is reproduced in the review report's header for reruns | — |
 
 ## Outcomes & retrospective
 

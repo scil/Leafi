@@ -81,18 +81,34 @@ _Avoid_: lesson, run
 One stretch of speech (or typed text) from the learner, with words, timestamps and confidence when audio was involved.
 _Avoid_: transcript (the Utterance holds a transcript; it is not one)
 
-**Alignment**:
-The mapping of an Utterance onto the expected Page text that assigns each expected word a verdict.
+**Page revision**:
+One immutable version of a Page's text; OCR makes the first, each Correction makes the next. Page text means the latest revision.
 
-**Verdict**:
-The status of one expected word after Alignment: read, mispronounced, skipped, inserted, unsure.
+**Alignment**:
+The mapping of an Utterance onto a window of the current Page revision that yields Observations and a Committed cursor.
+
+**Observation**:
+What Alignment saw, with no judgement attached: a matched, substituted or deleted span of expected words, or an insertion between two expected words.
+_Avoid_: verdict, result
+
+**Committed cursor**:
+The position in the Page text up to which reading is settled; everything after it is provisional and may be revised by the next Utterance.
+
+**Candidate miscue**:
+A substituted or deleted Observation that may be a reading problem. It becomes confirmed, unsure or withdrawn through Practice or acoustic evidence, or invalidated by a Correction.
+_Avoid_: error, mistake, wrong (in copy shown to the child)
 
 **Miscue**:
-A Verdict other than read, stored with what was expected and what was heard.
-_Avoid_: error, mistake (in copy shown to the child)
+A Candidate miscue and its later status. Only confirmed Miscues count toward Difficulties.
 
 **Practice**:
-A Leafi-led repeat of a word or sentence after a Miscue: model it, let the learner retry, re-score.
+A Leafi-led repeat of a word after a Candidate miscue: model it, let the learner retry at most twice, offer skip, record the outcome.
+
+**Speech lease**:
+The lock a study session holds so that no other Leafi process speaks through the shared Mouths while it runs.
+
+**Listening gate**:
+The session-owned switch that pauses the Listener while any Mouth plays and reopens it after the Mouth's drain time.
 
 **Knowledge item**:
 A thing the learner met and should keep: a word, a phrase, a grammar point, a fact from the book, a pronunciation. It may become an Anki card.

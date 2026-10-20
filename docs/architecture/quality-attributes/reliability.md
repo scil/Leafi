@@ -1,14 +1,15 @@
 # Reliability
 
-Objective: a study session never ends because a model or device failed; it degrades.
+Objective: a study session never ends because a model or device failed; it degrades, and every degraded step reports a typed outcome (`completed` / `uncertain` / `unavailable`) so that an unavailable assessment is never recorded as a learner difficulty and a late result is rejected when `(session_id, page_revision_id)` has moved on (ADR-0010 §5).
 
 | Failure | Behaviour | Check |
 |---|---|---|
-| Claude API down / no key | Brain falls back to Ollama, then to static Coach-voice phrases (`study/phrases.py`); the session continues | `tests/test_coach.py::test_brain_fallback_chain` |
-| TTS backend fails | `say()` shows text on Faces, logs, returns; next line tries again | `tests/test_hub.py::test_say_without_mouth` |
-| Camera unreachable | Eye returns `None`; page tracker keeps the last Page; Leafi asks the learner to read the page number | `tests/test_page_tracker.py` |
-| OCR low confidence | second opinion (`OCR_SECOND_OPINION`), then ask the learner to read the first line; Page text marked `unsure` | `tests/test_ocr_pipeline.py` |
-| Anki closed | cards queue in `knowledge_items` with null `anki_note_id`; pushed at the next wrap | `tests/test_anki.py::test_queue_when_unreachable` |
+| Claude API down / no key / deadline (12 s, 1 retry) | Brain returns `unavailable`; immediate lines come from static Coach-voice phrases (`study/phrases.py`); explanations and checks are skipped without recording a difficulty | `tests/test_coach.py::test_brain_unavailable` |
+| TTS backend fails with a Mouth present | `say()` shows text on Faces, logs, returns; the gate reopens; next line tries again | `tests/test_hub.py::test_say_tts_failure` |
+| Camera unreachable or frame-diff without confident match | state `PAGE_UNCERTAIN`: assessment suspended, utterances stored without observations, Leafi asks for the page number | `tests/test_page_tracker.py` |
+| OCR low confidence | recapture once; then ask the learner to read the first line; then offer typed page text (second-opinion VLM deferred, ADR-0011) | `tests/test_ocr_pipeline.py` |
+| Anki closed, or add succeeded but the response was lost | `anki_outbox` keeps the op `pending`; next wrap dedupes by the `leafi-id::` tag before adding | `tests/test_anki.py::test_lost_ack_no_duplicate` |
+| Crash between correction insert and revision insert | single transaction rolls back; nothing applied | `tests/test_corrections.py::test_rollback` |
 | Process crash mid-session | `reading_sessions.ended_at` null; next start closes it with `summary="interrupted"` | `tests/test_storage.py::test_close_stale_sessions` |
 | go2rtc speaker push rejected (space in src, codec) | logged with the src string; no retry storm (one retry) | existing `agent/speaker.py` behaviour, to be kept in the adapter |
 
