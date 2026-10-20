@@ -26,8 +26,14 @@ MATCH_NEW_BELOW = 0.75  # count terms alone give unrelated pages ~0.3; first/las
 
 
 def map_point(p: int, edits: list[Edit], side: Literal["start", "end"] = "start") -> int:
-    """Map a position through sorted edits. Inside an edited range: its new start (`start`) or end (`end`)."""
+    """Map a position through sorted edits. Inside an edited range: its new start (`start`) or end (`end`).
+
+    Insertion affinity (review 1 #11): at a pure insertion point a span start follows the inserted text and a
+    span end stays before it, so the inserted text belongs to neither neighbour.
+    """
     for os_, oe, ns, ne in edits:
+        if p == os_ == oe:
+            return ne if side == "start" else ns
         if p <= os_:
             return p - os_ + ns
         if p < oe:

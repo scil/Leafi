@@ -151,3 +151,20 @@ async def test_candidates_keep_their_evidence_after_a_correction_shifts_token_in
     rows = {r["expected"]: (r["status"], r["withdrawn_reason"] or r["unsure_reason"])
             for r in store.all("SELECT * FROM miscues")}
     assert rows == {"ran": ("withdrawn", "self_corrected")}
+
+
+def test_a_span_starting_at_an_insertion_point_follows_the_inserted_text(store):
+    """Review 1 #11: "The cat ran" + insert "big " at 4 → correcting "big" must not invalidate the `cat` miscue."""
+    text = "The cat ran."
+    book_id, page_id, rev1 = seed.book_page(store, text)
+    s = seed.session(store, book_id)
+    read = seed.page_read(store, s, page_id, rev1)
+    cat = seed.miscue(store, read, rev1, text, "cat")
+    rev2 = pages.insert_revision(store, page_id, "The big cat ran.", "ocr", [], [[4, 4, 4, 8]])
+    assert pages.map_span((4, 7), [[4, 4, 4, 8]]) == (8, 11)
+    assert pages.map_span((0, 4), [[4, 4, 4, 8]]) == (0, 4)  # a span ending there stays before it
+    span = corrections.locate("The big cat ran.", "big")
+    res = corrections.apply_correction(store, page_id=page_id, revision_id=rev2, char_start=span[0],
+                                       char_end=span[1], new_text="small", source="text")
+    assert cat not in res.invalidated
+    assert seed.status_of(store, cat) == ("candidate", None)
