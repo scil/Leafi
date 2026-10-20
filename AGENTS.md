@@ -17,7 +17,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 - Python: `.venv\Scripts\python` (3.12, created by `uv`; the venv has no `pip` — install with `uv pip install --python .venv <pkg>`). The system Python is 3.9: never use it.
 - Tests: `.venv\Scripts\python -m pytest -q` (all green before commit). Hardware/model tests run only with `LEAFI_HW_TESTS=1`.
 - Habit mock run: `.venv\Scripts\python -m agent.main --mock --now brush_pm`; task editor: `python -m agent.webui` → 127.0.0.1:8770.
-- Study (planned): `python -m leafi study --text` needs no hardware; `python -m leafi doctor` lists models to download.
+- Study: `python -m leafi study --text --mock --book X --page-text <file>` needs no hardware and speaks nowhere; `python -m leafi doctor` lists models to download; `python -m leafi devices` prints the Hub.
 - Containers: `docker compose up -d`; host go2rtc: `scripts\win\go2rtc-host.bat`. MQTT host port is 18830, Frigate 15000, host go2rtc 2984 (Windows reserves the usual ports).
 
 ## Verification

@@ -81,5 +81,17 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `STUDY_LANGUAGE` | `en` | expected book language |
 | `PAGES_RETAIN_DAYS` | `7` | delete cached page images after N days |
 | `AUDIO_KEEP_CLIPS` | `false` | keep learner audio clips (off by default; see security) |
+| `BRAIN_BACKEND` | `claude` | `claude` · `ollama` (deferred) · `mock`; an empty `ANTHROPIC_API_KEY` means static phrases only |
+| `BOOK_LOOKUP` | `off` | `off` · `openlibrary` (ISBN digits only, egress table) |
+| `TTS_VOICE_ZH_EDGE` / `TTS_VOICE_EN_EDGE` | `zh-CN-YunxiNeural` / `en-US-JennyNeural` | edge-tts voices |
+| `SENTENCE_PAUSE_S` | `1.2` | voice: silence that completes a sentence near its end (ADR-0013 completion (ii)) |
+| `REVIEW_KNOWN_INTERVAL_DAYS` / `REVIEW_MAX_CARDS` | `21` / `5` | `learning→known` interval; cards per review turn |
+| `LEASE_TTL_S` | `60` | speech-lease expiry, renewed every third of it |
+| `DATA_DIR` / `CACHE_DIR` / `MODELS_DIR` / `DEVICES_FILE` | `data` / `cache` / `models` / `config/devices.yml` | paths (tests and the no-network run point them at a temp dir) |
+| `LEAFI_DEBUG_TEXT` | `false` | allow raw utterance text in DEBUG logs |
+
+`devices.yml` values may use `${VAR:-default}` for optional variables (empty allowed); a plain `${VAR}` is required.
+
+**Shared name:** `BRAIN_MODEL` is read by both tracks; the habit `.env` may set it to a Haiku model for one-line phrases (plan Surprises, until T2).
 
 Removed names: none yet. Renamed: the repository path in `SPEAKER_SRC_DIR` examples changed from `Carema-Kis-AI` to `Leafi` (2026-10-19).
