@@ -57,7 +57,9 @@ def split_number(lines: list[str]) -> tuple[int | None, list[str]]:
 
 class PageTracker:
     def __init__(self, store: Store, eye: Eye | None, ocr, settings, *, sleep=asyncio.sleep,
-                 settle_frames: int = 2, diff_threshold: float = 6.0, interval_s: float = 0.4) -> None:
+                 settle_frames: int = 2, diff_threshold: float = 1.0, interval_s: float = 0.4) -> None:
+        # diff_threshold (mean grey diff at 64×64): two different text pages differ by ~1.7, a hand by ~40.
+        # Calibrate on real desk captures in prototype P-3.
         self.store = store
         self.eye = eye
         self.ocr = ocr

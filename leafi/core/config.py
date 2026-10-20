@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     check_answer_s: float = 20.0
     say_timeout_s: float = 20.0
     sentence_pause_s: float = 1.2
+    page_poll_s: float = 1.0  # how often the session checks the Eye for a physical page turn
     study_language: str = "en"
     pages_retain_days: int = 7
     review_known_interval_days: int = 21

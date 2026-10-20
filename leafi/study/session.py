@@ -18,7 +18,7 @@ from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate
 from leafi.core.ports import Display, Utterance
 from leafi.core.storage import Store, dumps, loads, now_iso
-from leafi.core.text import norm, words
+from leafi.core.text import norm, typed_utterance, words
 from leafi.study import (
     anki,
     books,
@@ -73,7 +73,7 @@ class SessionFlags:
 
 class StudySession:
     def __init__(self, *, store: Store, hub: Hub, settings, brain=None, anki_client: anki.AnkiClient | None = None,
-                 listener=None, pron=None, page_tracker=None, ocr=None, catalog=None) -> None:
+                 listener=None, pron=None, page_tracker=None, ocr=None, catalog=None, control_source=None) -> None:
         self.store = store
         self.ocr = ocr
         self.catalog = catalog
@@ -86,6 +86,20 @@ class StudySession:
         self.listener = listener or hub.listener()
         self.voice = bool(getattr(self.listener, "is_voice", False))
         self.gate = ListeningGate(self.listener)
+        # Control dispatch (review 1 #7, #20): the console is read by one persistent task, also during playback.
+        if control_source is None:
+            if not self.voice:
+                control_source = self.listener
+            else:
+                control_source = next((lis for lis in hub.listeners.values()
+                                       if lis is not self.listener and not getattr(lis, "is_voice", False)), None)
+        self.control_source = control_source
+        self.stopping = False
+        self._inbox: list[Utterance] = []
+        self._main_task: asyncio.Task | None = None
+        self._control_task: asyncio.Task | None = None
+        self._page_task: asyncio.Task | None = None
+        self._page_open = False
         self.flags = SessionFlags()
         self.session_id: int | None = None
         self.guard: coach.AsyncGuard | None = None
@@ -106,16 +120,117 @@ class StudySession:
     # ------------------------------------------------------------ I/O helpers
 
     async def say(self, text: str, lang: str = "en", slow: bool = False, local_only: bool = False) -> None:
-        """`local_only=True` for any line that embeds learner-originated text (security.md egress table)."""
-        if text:
+        """`local_only=True` for any line that embeds learner-originated text (security.md egress table).
+
+        While audio plays, the console is still read: `/stop` cancels speech and is routed to the current state
+        (settlement → WRAP), `/skip` cuts the current line only, anything else waits for the next listen().
+        """
+        if not text:
+            return
+        if self.stopping:  # a /stop is pending: show, do not speak
+            await self.hub.show(Display("say", text, lang))
+            return
+        if self.control_source is None or not self._will_play():
             await self.gate.speak(self.hub, text, lang, slow=slow, local_only=local_only)
+            return
+        speak = asyncio.create_task(self.gate.speak(self.hub, text, lang, slow=slow, local_only=local_only))
+        while not speak.done():
+            ctl_task = self._control_read()
+            done, _ = await asyncio.wait({speak, ctl_task}, return_when=asyncio.FIRST_COMPLETED)
+            if ctl_task in done:
+                self._take_control_read(ctl_task)
+                u = ctl_task.result()
+                if u is not None:
+                    await self._during_playback(u)
+        await speak
+
+    def _will_play(self) -> bool:
+        return self.hub.policy != "none" and bool(self.hub.mouths) and self.hub.synthesizer is not None
+
+    def _control_read(self) -> asyncio.Task:
+        if self.control_source is self.listener:
+            if self._main_task is None:
+                self._main_task = asyncio.create_task(self.listener.next_utterance(None))
+            return self._main_task
+        if self._control_task is None:
+            self._control_task = asyncio.create_task(self.control_source.next_utterance(None))
+        return self._control_task
+
+    def _take_control_read(self, task: asyncio.Task) -> None:
+        if task is self._main_task:
+            self._main_task = None
+        if task is self._control_task:
+            self._control_task = None
+
+    async def _during_playback(self, u: Utterance) -> None:
+        ctl = controls.parse(u.text)
+        if ctl is not None and ctl.kind == "stop":
+            self.stopping = True
+            self._inbox.insert(0, u)
+            await self.hub.stop_speaking()
+        elif ctl is not None and ctl.kind == "skip":
+            await self.hub.skip_current()
+        else:
+            self._inbox.append(u)
 
     async def line(self, key: str, local_only: bool = False, **kw: Any) -> None:
         await self.say(phrases.say(key, **kw), local_only=local_only)
 
     async def listen(self, timeout_s: float | None) -> Utterance | None:
+        """Next input from the reading Listener, the console control source, or an Eye page turn.
+
+        Pending reads persist across calls (nothing is cancelled, nothing is lost); console controls win ties.
+        """
         await self.hub.show(Display("listening", "listening"))
-        return await self.listener.next_utterance(timeout_s)
+        if self._inbox:
+            return self._inbox.pop(0)
+        if self._main_task is None:
+            self._main_task = asyncio.create_task(self.listener.next_utterance(timeout_s))
+        tasks = {self._main_task: "main"}
+        if self.control_source is not None and self.control_source is not self.listener:
+            tasks[self._control_read()] = "control"
+        if self.page_tracker is not None and self._page_open:
+            if self._page_task is None:
+                self._page_task = asyncio.create_task(self._watch_page())
+            tasks[self._page_task] = "page"
+        done, _ = await asyncio.wait(tasks, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED)
+        if not done:
+            return None
+        for kind in ("control", "page", "main"):
+            for t in done:
+                if tasks[t] == kind:
+                    if kind == "page":
+                        self._page_task = None
+                    else:
+                        self._take_control_read(t)
+                        if t is self._main_task:
+                            self._main_task = None
+                    return t.result()
+        return None
+
+    async def _watch_page(self) -> Utterance:
+        """Poll the Eye; a settled frame that differs from the page being read is a page turn (`/page`)."""
+        tracker = self.page_tracker
+        while True:
+            await asyncio.sleep(self.settings.page_poll_s)
+            eye = self.hub.eye()
+            frame = await eye.snapshot(None) if eye is not None else None
+            if frame is None:
+                continue
+            if tracker.last is None:
+                tracker.last = frame
+                continue
+            if tracker.changed(frame):
+                settled = await tracker.settle()
+                if settled is not None and tracker.changed(settled):
+                    log.info("page turn seen by the Eye")
+                    return typed_utterance("/page", "eye")
+
+    def _cancel_inputs(self) -> None:
+        for t in (self._main_task, self._control_task, self._page_task):
+            if t is not None and not t.done():
+                t.cancel()
+        self._main_task = self._control_task = self._page_task = None
 
     def _store_utterance(self, u: Utterance, kind: str) -> int:
         return self.store.insert(
@@ -163,6 +278,7 @@ class StudySession:
             self.flags.transitions.append(WRAP)
             await self.wrap()
         finally:
+            self._cancel_inputs()
             if self._renew:
                 self._renew.cancel()
             if self.lease:
@@ -229,6 +345,10 @@ class StudySession:
     # ------------------------------------------------------------ FIND_PAGE
 
     async def find_page(self) -> str:
+        self._page_open = False  # no page-turn watching while the page itself is being found
+        if self._page_task is not None:
+            self._page_task.cancel()
+            self._page_task = None
         if self.resume_row is not None:
             row, self.resume_row = self.resume_row, None
             self.page_id = row["page_id"]
@@ -312,6 +432,7 @@ class StudySession:
                                          tokens_expected=st.n)
         st.page_read_id, st.revision_id = self.read_id, self.rev.id
         self.state = st
+        self._page_open = True
         self.seq = 0
         self.unanchored = 0
         self.reposition = False

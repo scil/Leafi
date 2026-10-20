@@ -269,10 +269,18 @@ class Hub:
     async def stop_speaking(self) -> None:
         """Clear queued say() calls and cancel the current clip on every Mouth."""
         self._generation += 1
-        for task in list(self._play_tasks):
-            task.cancel()
+        await self.skip_current()
+
+    async def skip_current(self) -> None:
+        """Cancel only the clip playing now; queued lines still play (console `/skip` during playback)."""
         for name, mouth in list(self._playing.items()):
             await self._stop_mouth(name, mouth)
+        for task in list(self._play_tasks):
+            task.cancel()
+
+    @property
+    def playing(self) -> bool:
+        return bool(self._playing)
 
     async def notify(self, title: str, body: str) -> None:
         for name, n in self.notifiers.items():
