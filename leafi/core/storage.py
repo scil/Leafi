@@ -114,6 +114,10 @@ MIGRATIONS: list[str] = [
     CREATE INDEX miscues_read ON miscues(page_read_id);
     CREATE INDEX page_reads_session ON page_reads(session_id);
     """,
+    # 2 — field hashes of the first add attempt, so a lost-ack dedupe never adopts parent edits (review 1 #4)
+    """
+    ALTER TABLE anki_outbox ADD COLUMN attempted_fields TEXT;
+    """,
 ]
 
 

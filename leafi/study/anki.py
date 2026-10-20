@@ -97,16 +97,20 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
     for row in rows:
         oid, item_id, key = row["id"], row["knowledge_item_id"], row["anki_item_key"]
         fields = knowledge.card_fields(store, item_id)
-        store.execute("UPDATE anki_outbox SET state='sent', attempts=attempts+1, updated_at=? WHERE id=?",
-                      (now_iso(), oid))
+        store.execute("UPDATE anki_outbox SET state='sent', attempts=attempts+1, updated_at=?, "
+                      "attempted_fields=COALESCE(attempted_fields, ?) WHERE id=?",
+                      (now_iso(), dumps({f: field_hash(v) for f, v in fields.items()}) if row["op"] == "add" else None,
+                       oid))
         try:
             if row["op"] == "add":
                 note_id = None
                 found = await client.find_notes(f'"tag:leafi-id::{key}"')
                 if found:
+                    # A lost acknowledgement: Leafi owns only what it attempted; a remote value that differs is
+                    # the parent's and must stay theirs (parent edits win).
                     note_id = found[0]
-                    info = (await client.notes_info([note_id]))[0]
-                    acked = {f: field_hash(v["value"]) for f, v in info["fields"].items()}
+                    attempted = store.one("SELECT attempted_fields FROM anki_outbox WHERE id=?", (oid,))
+                    acked = loads(attempted["attempted_fields"], {}) if attempted else {}
                     rep.deduped += 1
                 else:
                     if not deck_ready:

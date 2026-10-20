@@ -125,3 +125,19 @@ async def test_unreconciled_sent_answer_is_listed_for_the_parent(store):
     unknown = await anki.reconcile(store, _client(fake))
     assert len(unknown) == 1
     assert store.one("SELECT state FROM review_answers WHERE card_id=?", (cid,))["state"] == "sent"
+
+
+async def test_lost_add_recovery_does_not_adopt_parent_edits_as_leafi_values(store):
+    """Review 1 #4: the parent edits the note between the lost add and the dedupe; the edit must survive."""
+    fake = FakeAnki()
+    item = _item(store)
+    fake.lose_next.add("addNote")
+    await anki.sync_outbox(store, _client(fake))
+    nid = next(iter(fake.notes))
+    fake.parent_edit(nid, "背面", "parent's own wording")
+    assert (await anki.sync_outbox(store, _client(fake))).deduped == 1
+    knowledge.add_encounter(store, item, session_id=None, trigger="explain", explanation_en="pushed air",
+                            explanation_zh="吹动", example="It blew away.")
+    rep = await anki.sync_outbox(store, _client(fake))
+    assert fake.notes[nid]["fields"]["背面"] == "parent's own wording"
+    assert rep.conflicts
