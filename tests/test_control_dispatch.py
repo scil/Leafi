@@ -141,3 +141,37 @@ async def test_cancelling_the_session_during_playback_stops_the_speaker(settings
     await asyncio.sleep(0)
     assert mouth.stopped >= 1 and ("end", "mouth") in log
     assert not hub._lock.locked() and not s.gate._lock.locked()
+
+
+async def test_a_page_turn_during_review_is_handled_in_read_without_no_op_lines(settings):
+    """Review 2 D6: no page watching in REVIEW_DUE; the turn is picked up once READ starts."""
+    from leafi.study import anki
+    from tests.fakes.anki import FakeAnki
+
+    class DelayedVoice(SlowVoice):
+        async def next_utterance(self, timeout_s):
+            while self.script and callable(self.script[0]):
+                self.script.pop(0)()
+            if self.script and isinstance(self.script[0], tuple):
+                delay, text = self.script.pop(0)
+                await asyncio.sleep(delay)
+                return typed_utterance(text)
+            return await super().next_utterance(timeout_s)
+
+    settings.sentence_pause_s = 0.05
+    settings.page_poll_s = 0.02
+    store = Store(settings.db_path)
+    fake = FakeAnki()
+    fake.add_due_card("blew")
+    eye = FakeEye([render(PAGES[0], number=1)])
+    tracker = PageTracker(store, eye, MockOcr(), settings, sleep=lambda s: asyncio.sleep(0), settle_frames=1)
+    face = RecordingFace()
+    hub = Hub(faces={"f": face}, eyes={"desk": eye}, policy="none", study_eye="desk")
+    script = [lambda: eye.show(render(PAGES[1], number=2)), (0.3, "good")] + [0.05] * 40 + ["/stop"]
+    s = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(unavailable=True),
+                     listener=DelayedVoice(script, voice=True), page_tracker=tracker, ocr=MockOcr(),
+                     anki_client=anki.AnkiClient(transport=fake.transport()))
+    await asyncio.wait_for(s.run(book_title="Kite", page_number=1), 20)
+    assert "That doesn't do anything right now." not in face.texts
+    assert store.one("SELECT ease FROM review_answers")["ease"] == 3
+    assert s.flags.transitions.count("FIND_PAGE") == 2

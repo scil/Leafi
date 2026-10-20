@@ -451,7 +451,6 @@ class StudySession:
                                          tokens_expected=st.n)
         st.page_read_id, st.revision_id = self.read_id, self.rev.id
         self.state = st
-        self._page_open = True
         self.seq = 0
         self.unanchored = 0
         self.reposition = False
@@ -508,6 +507,9 @@ class StudySession:
         return controls.parse(u.text)
 
     async def read(self) -> str:
+        # Page turns are watched from READ on (PRACTICE and CHECK follow it); not in REVIEW_DUE, where a turn
+        # could only be a no-op (review 2 D6). The first turn seen in READ is handled there.
+        self._page_open = True
         idle = 0.0
         while True:
             timeout = self.settings.sentence_pause_s if self.voice else self.settings.study_idle_s
