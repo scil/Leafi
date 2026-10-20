@@ -34,6 +34,7 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Check: `tests/test_alignment.py`; add the sentence as a walkthrough-style test.
 
 ## "practice never ends" / "skip did nothing" / controls
+- Note: `/skip` typed while Leafi is talking only cuts that line (`Hub.skip_current`); it is not delivered to the state, so practice still waits for a retry or another `/skip`. ADR-0013 promises only `/stop` during playback (plan Decision log, review 2 D4).
 - Start: `leafi/study/session.py` (`practice`, `_practise_word`, `_read_control`, `_depart`), `leafi/study/controls.py`.
 - Trap: control precedence wins everywhere, even when the page text says "stop" or the practised word is "skip" (ADR-0013 "skip always"); only a spoken utterance longer than 6 words is never a control; `/back N` counts from the sentence just read when `pcur` sits at a sentence start or at the page end (`alignment.back`).
 - Check: `tests/test_practice.py`, `tests/test_session_controls.py`.

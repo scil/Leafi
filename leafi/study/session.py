@@ -54,8 +54,8 @@ from leafi.study.controls import Control
 log = logging.getLogger("leafi.session")
 
 READ, PRACTICE, CHECK, WRAP, FIND_PAGE, REVIEW_DUE = "READ", "PRACTICE", "CHECK", "WRAP", "FIND_PAGE", "REVIEW_DUE"
-PRON_CONFIRM_BELOW = 0.5
-ANSWER_WORDS = {"yes", "no", "good", "again"}  # spoken one-word answers in CHECK are answers, not commands  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
+PRON_CONFIRM_BELOW = 0.5  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
+ANSWER_WORDS = {"yes", "no", "good", "again"}  # spoken one-word answers in CHECK are answers, not commands
 
 
 @dataclass
@@ -501,7 +501,7 @@ class StudySession:
 
     # ------------------------------------------------------------ READ
 
-    def _control(self, u: Utterance, *, reading: bool) -> Control | None:
+    def _control(self, u: Utterance) -> Control | None:
         """Control precedence wins everywhere (ADR-0013 "skip always"); the only reading exception is the
         grammar's own limit: a spoken utterance longer than 6 words is never a control (review 1 #10)."""
         return controls.parse(u.text)
@@ -533,7 +533,7 @@ class StudySession:
                     return WRAP
                 continue
             idle = 0.0
-            ctl = self._control(u, reading=True)
+            ctl = self._control(u)
             if ctl is not None:
                 nxt = await self._read_control(ctl, u)
             else:
