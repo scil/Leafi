@@ -143,7 +143,7 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 - [x] 2026-10-20 Codex implementation review 1 (`reviews/2026-10-20-codex-implementation-review-1.md`, 20 findings): each reproduced with a failing test at its seam, then fixed — #1 8c6ce02, #2 3a95912, #3 d4eb905, #4 271ebaf, #5 2c0ec2a, #6+#9 cb5eb8f, #7+#20 8a2c8c9, #8 c68e3fe, #10 0d490a8, #11 066e786, #12 already 31e30bc, #13 b300e53, #14 ef17d66, #15 c55323b, #16 2c713c0, #17 78469e9, #18 5569843, #19 1e11fac. Tests 224 → 249 passed.
 - [x] 2026-10-20 Claude implementation review 2 (`reviews/2026-10-20-claude-implementation-review-2.md`): all 20 round-1 findings confirmed; D1 9274d4c, D2 994e444, D3 bd6e04b, D5 ddcec80, D6 e8d7cf4 (each reproduced with a failing test first), D4 recorded as a documented choice; cosmetic fixes. Tests 249 → 253 passed, 3 hardware skips.
 - [ ] Hardware steps on the PC: P-1, P-2, P-3, P-4, P-5, P-6; install `requirements-study.txt`; run `LEAFI_HW_TESTS=1`; S2/S3 real backends (OpenPronounce wiring, Silero VAD, camera Ear); acceptance 1 with the camera.
-- [ ] codex-review loop on the implementation diff (`-c model="gpt-6-astra"`), plan step 5.
+- [x] 2026-10-20 Implementation review loop: round 1 codex (20 findings, 19 fixed, 1 already fixed); round 2 confirming by an independent Claude reviewer because the codex quota was exhausted (all 20 verified fixed; D1–D6 fixed or recorded); final 253 passed, 3 hardware-marked skipped, ruff clean; 43 commits since the design freeze (3e0b52c). TD-15/TD-16 (voice-mode lease and microphone failure handling) recorded for the hardware plan.
 
 ## Surprises & discoveries
 
