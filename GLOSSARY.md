@@ -92,7 +92,13 @@ What Alignment saw, with no judgement attached: a matched, substituted or delete
 _Avoid_: verdict, result
 
 **Committed cursor**:
-The position in the Page text up to which reading is settled; everything after it is provisional and may be revised by the next Utterance.
+The position in the Page text up to which reading is settled; everything after it is provisional and may be revised by the next Utterance. The provisional cursor is the furthest point reading has reached.
+
+**Reading state**:
+The per-page-read record of every expected token's status and the two cursors, kept across Utterances and persisted after each one.
+
+**Unread**:
+The status of expected tokens the learner never reached in a completed sentence or page; they are reported, never practised.
 
 **Candidate miscue**:
 A substituted or deleted Observation that may be a reading problem. It becomes confirmed, unsure or withdrawn through Practice or acoustic evidence, or invalidated by a Correction.

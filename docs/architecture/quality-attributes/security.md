@@ -45,4 +45,4 @@ Page text and learner text are data: quoted in a delimited block, the Brain's re
 
 ## Retention
 
-See data-model.md → Retention. Parent deletion: `python -m leafi forget --session <id>` and `--book <id>`.
+See data-model.md → Retention. Parent deletion: `python -m leafi forget --session <id>` and `--book <id>`, defined in ADR-0010 §9.

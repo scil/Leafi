@@ -1,5 +1,5 @@
 ---
-status: accepted, amended by 0012
+status: superseded by 0013
 date: 2026-10-19
 supersedes: 0007
 ---

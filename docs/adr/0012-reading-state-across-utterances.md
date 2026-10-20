@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded by 0013
 date: 2026-10-19
 amends: 0009
 ---
+
+> Superseded the same day by ADR-0013, which states the reading algorithm once with pseudocode (codex review round 3: the anchor gate blocked singleton accumulation, ties on identical text, completion events, text-mode practice status). Kept for the reasoning.
 
 # Alignment keeps a reading state across utterances; candidates reconcile; nothing is "confirmed" without acoustic evidence
 

@@ -10,7 +10,7 @@ Objective: a study session never ends because a model or device failed; it degra
 | OCR low confidence | recapture once; then ask the learner to read the first line; then offer typed page text (second-opinion VLM deferred, ADR-0011) | `tests/test_ocr_pipeline.py` |
 | Anki closed, or add succeeded but the response was lost | `anki_outbox` keeps the op `pending`; next wrap dedupes by the `leafi-id::` tag before adding | `tests/test_anki.py::test_lost_ack_no_duplicate` |
 | Crash between correction insert and revision insert | single transaction rolls back; nothing applied | `tests/test_corrections.py::test_rollback` |
-| Process crash mid-session | `reading_sessions.ended_at` null; next start closes it with `summary="interrupted"` | `tests/test_storage.py::test_close_stale_sessions` |
+| Process crash mid-session | `reading_sessions.ended_at` null; next start closes it (`summary.interrupted=true`, open candidates → `unsure (interrupted)`, reading state kept); a new session on the same book offers to continue from the committed cursor in a new page read (ADR-0013) | `tests/test_storage.py::test_close_stale_sessions`, `tests/test_session_resume.py` |
 | go2rtc speaker push rejected (space in src, codec) | logged with the src string; no retry storm (one retry) | existing `agent/speaker.py` behaviour, to be kept in the adapter |
 
 Timeouts: `say()` 20 s; Brain 12 s overall with 1 retry (`BRAIN_DEADLINE_S`); OCR 15 s; ASR per utterance 10 s after VAD stop; Anki 10 s.

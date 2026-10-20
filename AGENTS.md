@@ -30,7 +30,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 
 - `leafi.core` imports nothing from `leafi.devices`, `leafi.services`, `leafi.study`; tracks never import adapters or backends directly (ADR-0002/0003). Enforced by: `tests/test_architecture.py`.
 - Page text is read through `pages.current_text()`; corrections add revisions and invalidate with a reason, never delete (ADR-0010). Enforced by: `tests/test_corrections.py`.
-- Alignment keeps a reading state across utterances; candidates reconcile; a miscue is `confirmed` only with acoustic evidence, otherwise `unsure`; ≤ 2 retries, skip always (ADR-0009, ADR-0012). Enforced by: `tests/test_alignment.py`, `tests/test_practice.py`.
+- The reading algorithm (alignment, commitment, completion, practice, difficulties, CHECK outcomes) has one owner, ADR-0013; implement it from the pseudocode and never restate its rules elsewhere. `confirmed` needs acoustic evidence; ≤ 2 retries; skip always. Enforced by: `tests/test_alignment.py`, `tests/test_practice.py`.
 - Zero mouths is valid: `hub.say()` returns with text shown on Faces; half-duplex listening gate; one speaker at a time (ADR-0002, ADR-0011). Enforced by: `tests/test_hub.py`.
 
 ## Conventions that differ from defaults

@@ -25,7 +25,7 @@ Codex review round 1 found the privacy boundary stated three ways (images never 
 
 Everything else is LAN-only. Enforcement: `tests/test_privacy.py` installs an `httpx` transport that records every request from the study loop under a synthetic sensitive canary (learner name, school, handwritten label text, audio bytes) and asserts canaries never appear in any outbound body, plus a subprocess test with networking denied (`LEAFI_NO_NETWORK=1` makes any non-loopback connect raise) that must still complete a text-mode session.
 
-Identity redaction: configurable identifiers (`REDACT_TERMS`, the learner's name and school by default) are replaced locally before any cloud payload; free-form learner questions go to the Brain only after redaction, and page text goes only as the selected window.
+Identity redaction: `REDACT_TERMS` (set by the parent with `python -m leafi setup --redact`; empty until then, `doctor` warns) are replaced locally in the page window before any cloud payload. Learner free text never goes to the Brain in v1 (see below).
 
 **Habit-track parent snapshot.** The repository boundary (AGENTS.md) governs: images do not leave the LAN. `agent/notify.py` attaches a frame to the parent's Telegram only when the owner sets `NOTIFY_WITH_SNAPSHOT=true` in `.env` (default `false`, a 3-line change plus a test in S1). The owner's 2026-08 design is thereby kept as an explicit opt-in on their own phone, not as a default. The `Notifier` port has no frame parameter; the study track never attaches one.
 
