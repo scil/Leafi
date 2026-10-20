@@ -97,6 +97,7 @@ class StudySession:
         self.stopping = False
         self._inbox: list[Utterance] = []
         self._main_task: asyncio.Task | None = None
+        self._main_timed = False
         self._control_task: asyncio.Task | None = None
         self._page_task: asyncio.Task | None = None
         self._page_open = False
@@ -151,6 +152,7 @@ class StudySession:
         if self.control_source is self.listener:
             if self._main_task is None:
                 self._main_task = asyncio.create_task(self.listener.next_utterance(None))
+                self._main_timed = False
             return self._main_task
         if self._control_task is None:
             self._control_task = asyncio.create_task(self.control_source.next_utterance(None))
@@ -186,6 +188,7 @@ class StudySession:
             return self._inbox.pop(0)
         if self._main_task is None:
             self._main_task = asyncio.create_task(self.listener.next_utterance(timeout_s))
+            self._main_timed = timeout_s is not None
         tasks = {self._main_task: "main"}
         if self.control_source is not None and self.control_source is not self.listener:
             tasks[self._control_read()] = "control"
@@ -195,6 +198,15 @@ class StudySession:
             tasks[self._page_task] = "page"
         done, _ = await asyncio.wait(tasks, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED)
         if not done:
+            # Our deadline fired. A main read that carries its own (finite) deadline belongs to this call:
+            # cancel and clear it, so its late `None` never answers the next listen() (review 2 D1). An
+            # untimed read (the console) stays pending and carries over.
+            main = self._main_task
+            if main is not None and self._main_timed:
+                self._main_task = None
+                if main.done() and not main.cancelled() and main.result() is not None:
+                    return main.result()
+                main.cancel()
             return None
         for kind in ("control", "page", "main"):
             for t in done:

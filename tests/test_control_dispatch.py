@@ -99,3 +99,18 @@ async def test_a_physical_page_turn_settles_candidates_and_finds_the_new_page(se
         "SELECT p.printed_number FROM page_reads pr JOIN pages p ON p.id = pr.page_id ORDER BY pr.id")]
     assert printed == [1, 2], (s.flags.transitions, hub.faces["f"].texts)
     assert s.flags.transitions.count("FIND_PAGE") == 2
+
+
+async def test_a_timed_out_listen_does_not_answer_the_next_listen(settings):
+    """Review 2 D1: the pause that completes a sentence must not hand PRACTICE an instant timeout."""
+    settings.sentence_pause_s = 0.1
+    settings.practice_retry_s = 5
+    store = Store(settings.db_path)
+    listener = SlowVoice([_voice("The dog red"), 0.1, _voice("ran"), "/stop"], voice=True)
+    s = StudySession(store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none"), settings=settings,
+                     brain=MockBrain(unavailable=True), listener=listener)
+    await asyncio.wait_for(s.run(book_title="B", page_text="The dog ran far.", page_number=1), 10)
+    rows = {r["expected"]: (r["status"], r["withdrawn_reason"] or r["unsure_reason"])
+            for r in store.all("SELECT * FROM miscues")}
+    assert rows == {"ran": ("withdrawn", "practice")}
+    assert 5.0 in listener.timeouts
