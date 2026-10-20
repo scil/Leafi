@@ -55,7 +55,13 @@ def cmd_study(args: argparse.Namespace) -> int:
     from leafi.runner import run_study
 
     settings = _settings()
-    return asyncio.run(run_study(settings, args))
+    try:
+        return asyncio.run(run_study(settings, args))
+    except KeyboardInterrupt:
+        # Ctrl-C: the session task was cancelled and cleaned up (lease released, line stopped); the session row
+        # is closed as interrupted at the next start (ADR-0013 → Interrupted session). No traceback for the owner.
+        print("\nLeafi: stopped. The session is closed as interrupted at the next start.")
+        return 130
 
 
 def cmd_export(args: argparse.Namespace) -> int:

@@ -18,6 +18,8 @@ LINES: dict[str, list[str]] = {
     "confirm_title": ["Is this \"{title}\"? (yes / no)"],
     "ask_page_text": ["I can't see the page. Type /page N --text <file> with the page text."],
     "page_ready": ["Page {page} is ready. Read it aloud whenever you like.", "Got page {page}. Off you go!"],
+    "page_ready_text": ["Page {page} is ready. Type each sentence as you read it, then press Enter "
+                        "(/stop to finish, /skip, /back, /fix OLD NEW, /explain WORD)."],
     "continue_offer": ["Last time we stopped on page {page}. Continue from there? (yes / no)"],
     "sentence_done": ["Nice!", "Smooth.", "Got it.", ""],
     "practice_intro": ["Let's try \"{word}\" together.", "Quick one: \"{word}\". Listen first."],

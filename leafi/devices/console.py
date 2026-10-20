@@ -72,9 +72,14 @@ class ConsoleDevice:
     # ---- Face
     async def show(self, msg: Display) -> None:
         self.shown.append(msg)
-        if msg.kind == "listening":  # the prompt itself is the listening indicator on a terminal
-            return
         out = self._stdout or sys.stdout
+        if msg.kind == "listening":
+            # On an interactive terminal a visible prompt is the listening indicator; piped input gets none.
+            stream = self._stdin or sys.stdin
+            if self._script is None and getattr(stream, "isatty", lambda: False)():
+                out.write("> ")
+                out.flush()
+            return
         prefix = {"say": "Leafi", "status": "  ·", "listening": "  ~", "alert": "  !"}[msg.kind]
         try:
             out.write(f"{prefix}: {msg.text}\n" if msg.kind == "say" else f"{prefix} {msg.text}\n")

@@ -458,7 +458,10 @@ class StudySession:
 
     async def _after_page_found(self) -> str:
         printed = self.store.one("SELECT printed_number FROM pages WHERE id=?", (self.page_id,))["printed_number"]
-        await self.line("page_ready", page=printed if printed is not None else "")
+        # Text mode has no microphone: say how to feed the reading, not "read it aloud" (owner's first run
+        # waited 180 s for a typed line that never came).
+        await self.line("page_ready" if self.voice else "page_ready_text",
+                        page=printed if printed is not None else "")
         if self.first_page:
             self.first_page = False
             return REVIEW_DUE
