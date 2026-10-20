@@ -72,8 +72,10 @@ class SessionFlags:
 
 class StudySession:
     def __init__(self, *, store: Store, hub: Hub, settings, brain=None, anki_client: anki.AnkiClient | None = None,
-                 listener=None, pron=None, page_tracker=None) -> None:
+                 listener=None, pron=None, page_tracker=None, ocr=None, catalog=None) -> None:
         self.store = store
+        self.ocr = ocr
+        self.catalog = catalog
         self.hub = hub
         self.settings = settings
         self.brain = brain
@@ -175,11 +177,21 @@ class StudySession:
     # ------------------------------------------------------------ IDENTIFY_BOOK
 
     async def identify_book(self, title: str | None) -> str:
+        isbn = None
+        if not title and self.hub.eye() is not None and self.ocr is not None:
+            guess = await books.identify(self.hub.eye(), self.ocr, self.catalog)
+            if guess.title:
+                await self.line("confirm_title", title=guess.title)
+                ans = await self._yes_no()
+                if ans is None:
+                    return WRAP
+                if ans:
+                    title, isbn = guess.title, guess.isbn
         if not title:
             title = await self._ask_title()
             if title is None:
                 return WRAP
-        self.book_id = books.find_or_create(self.store, title, language=self.settings.study_language)
+        self.book_id = books.find_or_create(self.store, title, isbn, language=self.settings.study_language)
         self.store.execute("UPDATE reading_sessions SET book_id=? WHERE id=?", (self.book_id, self.session_id))
         row = records.resumable_read(self.store, self.book_id)
         if row is not None:

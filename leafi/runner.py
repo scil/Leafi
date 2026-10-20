@@ -28,8 +28,24 @@ async def run_study(settings: Settings, args: argparse.Namespace) -> int:
     pron = None
     if settings.pron_auto_judge and not args.text:
         pron = pronunciation.REGISTRY.create("mock" if args.mock else settings.pron_backend, settings)
+    ocr = tracker = catalog = None
+    eye = built.hub.eye()
+    if eye is not None and not args.text:
+        from leafi.services import catalog as catalog_service
+        from leafi.services import ocr as ocr_service
+        from leafi.study.page_tracker import PageTracker
+
+        state, detail = ocr_service.REGISTRY.status(settings.ocr_backend, settings)
+        if state == "ok":
+            ocr = ocr_service.REGISTRY.create(settings.ocr_backend, settings)
+            tracker = PageTracker(store, eye, ocr, settings)
+        else:
+            log.warning("page camera off: ocr %s %s %s", settings.ocr_backend, state, detail)
+        if settings.book_lookup != "off":
+            catalog = catalog_service.REGISTRY.create(settings.book_lookup, settings)
     session = StudySession(store=store, hub=built.hub, settings=settings, brain=brain,
-                           anki_client=None if args.mock else AnkiClient(settings.anki_url), pron=pron)
+                           anki_client=None if args.mock else AnkiClient(settings.anki_url), pron=pron,
+                           page_tracker=tracker, ocr=ocr, catalog=catalog)
     page_text = args.page_text.read_text(encoding="utf-8") if args.page_text else None
     try:
         sid = await session.run(book_title=args.book, page_text=page_text, page_number=args.page)
