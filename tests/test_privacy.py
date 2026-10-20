@@ -167,3 +167,41 @@ asyncio.run(main())
                        env=_env(tmp_path), timeout=60)
     assert r.returncode == 0, r.stderr[-2000:] + r.stdout
     assert "score 0.9" in r.stdout
+
+
+async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatch):
+    """A Mouth with the edge backend: no canary and no learner-originated text reaches cloud TTS."""
+    import edge_tts
+
+    from leafi.services import tts
+    from tests.fakes import FakeMouth
+
+    spoken: list[str] = []
+
+    class Recorder:
+        def __init__(self, text, voice, rate="+0%"):
+            spoken.append(text)
+
+        async def save(self, path):
+            Path(path).write_bytes(b"\x00" * 600)
+
+    monkeypatch.setattr(edge_tts, "Communicate", Recorder)
+    settings.redact_terms = f"{NAME},{SCHOOL},{LABEL}"
+    mouth = FakeMouth()
+    hub = Hub(faces={"f": RecordingFace()}, mouths={"cam": mouth}, policy="all",
+              synthesizer=tts.create(settings, en="edge", zh="edge"))
+    learner_word = "Zorblatt"
+    script = [
+        f"This book belongs to {NAME}",
+        f"what does {NAME} mean",                       # explain_wait embeds the (page) target → redacted
+        f"/fix belongs {learner_word}",                  # learner-typed correction text → local-only line
+        "/stop",
+    ]
+    session = StudySession(store=Store(settings.db_path), hub=hub, settings=settings,
+                           brain=brain_service.REGISTRY.create("mock", settings), listener=ScriptedListener(script))
+    await session.run(book_title="Canary book", page_text=PAGE, page_number=1)
+    assert spoken, "the edge backend was not exercised"
+    assert mouth.played
+    for text in spoken:
+        for c in [*CANARIES, learner_word]:
+            assert c.lower() not in text.lower(), (c, text)

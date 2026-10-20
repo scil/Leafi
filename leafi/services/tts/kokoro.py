@@ -22,6 +22,7 @@ def _paths(settings) -> tuple[Path, Path]:
 
 class KokoroTts:
     name = "kokoro"
+    cloud = False
     model = "kokoro-v1.0"
 
     def __init__(self, settings, lang: str = "en") -> None:

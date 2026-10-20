@@ -90,3 +90,39 @@ def test_cli_devices_and_doctor_run(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdout", io.StringIO())
     assert cli.main(["doctor"]) == 0
     assert cli.main(["devices"]) == 0
+
+
+class _EdgeRecorder:
+    texts: list[str] = []
+
+    def __init__(self, text, voice, rate="+0%"):
+        _EdgeRecorder.texts.append(text)
+
+    async def save(self, path):
+        open(path, "wb").write(b"\x00" * 600)
+
+
+async def test_edge_backend_redacts_before_sending(settings, monkeypatch):
+    import edge_tts
+
+    monkeypatch.setattr(edge_tts, "Communicate", _EdgeRecorder)
+    _EdgeRecorder.texts = []
+    settings.redact_terms = "Zephyrine,Quillfield Academy"
+    service = tts.create(settings, en="edge", zh="edge")
+    await service.synth("Good question! Let me think about \"Zephyrine\" at Quillfield Academy.", "en")
+    assert _EdgeRecorder.texts and all("zephyrine" not in t.lower() and "quillfield" not in t.lower()
+                                       for t in _EdgeRecorder.texts)
+
+
+async def test_local_only_lines_never_reach_a_cloud_backend(settings, monkeypatch):
+    import edge_tts
+
+    monkeypatch.setattr(edge_tts, "Communicate", _EdgeRecorder)
+    _EdgeRecorder.texts = []
+    mixed = tts.create(settings, en="edge", zh="mock")
+    clip = await mixed.synth("Thanks! \"Zorblat\" it is.", "en", local_only=True)
+    assert clip.codec == "wav" and _EdgeRecorder.texts == []  # spoken by the local backend
+    cloud_only = tts.create(settings, en="edge", zh="edge")
+    with pytest.raises(tts.LocalOnlyUnavailable):
+        await cloud_only.synth("Thanks! \"Zorblat\" it is.", "en", local_only=True)
+    assert _EdgeRecorder.texts == []

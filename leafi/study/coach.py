@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from leafi.core.storage import Store
 from leafi.core.text import norm, words
+from leafi.core.text import redact as core_redact
 from leafi.services.brain import BrainRequest, Intent
 from leafi.study import knowledge
 from leafi.study.alignment import ReadingState
@@ -24,9 +25,7 @@ REDACTED = "[name]"
 
 
 def redact(text: str, terms: Iterable[str]) -> str:
-    for t in sorted({t for t in terms if t}, key=len, reverse=True):
-        text = re.sub(re.escape(t), REDACTED, text, flags=re.IGNORECASE)
-    return text
+    return core_redact(text, terms, REDACTED)
 
 
 def sentence_text(page_text: str, state: ReadingState, sid: int) -> str:

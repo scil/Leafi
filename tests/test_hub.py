@@ -207,3 +207,16 @@ def test_import_is_pure():
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == ""
+
+
+async def test_local_only_flag_reaches_the_synthesizer_and_failure_still_shows_text(tmp_path):
+    class Synth(FakeSynth):
+        async def synth(self, text, lang, *, slow=False, local_only=False):
+            self.calls.append((text, lang, local_only))
+            raise RuntimeError("no local backend")
+
+    synth = Synth(tmp_path)
+    hub = hub_with(tmp_path, {"cam": FakeMouth()}, synth=synth)
+    await hub.say("Thanks! Zorblat it is.", local_only=True)
+    assert synth.calls == [("Thanks! Zorblat it is.", "en", True)]
+    assert hub.faces["f"].texts == ["Thanks! Zorblat it is."]

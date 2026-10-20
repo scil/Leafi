@@ -10,6 +10,7 @@ from leafi.core.ports import AudioClip
 
 class MockTts:
     name = "mock"
+    cloud = False
     model = "silence-1"
 
     def __init__(self, lang: str = "en") -> None:

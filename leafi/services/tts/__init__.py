@@ -25,8 +25,13 @@ REGISTRY = Registry("tts", {
 })
 
 
+class LocalOnlyUnavailable(RuntimeError):
+    """A local-only line (learner-originated text) with only cloud backends configured: no audio."""
+
+
 class TtsBackend(Protocol):
     name: str
+    cloud: bool  # True when synthesis sends the text off the LAN (egress table)
     voice: str
     model: str
 
@@ -41,8 +46,13 @@ class TtsService:
     def _backend(self, lang: str) -> TtsBackend:
         return self.backends.get(lang) or self.backends.get("en") or next(iter(self.backends.values()))
 
-    async def synth(self, text: str, lang: str, *, slow: bool = False) -> AudioClip:
+    async def synth(self, text: str, lang: str, *, slow: bool = False, local_only: bool = False) -> AudioClip:
         be = self._backend(lang)
+        if local_only and getattr(be, "cloud", False):
+            local = [b for b in self.backends.values() if not getattr(b, "cloud", False)]
+            if not local:
+                raise LocalOnlyUnavailable("line embeds learner text and no local TTS backend exists")
+            be = local[0]
         speed = "slow" if slow else "normal"
         key = hashlib.sha256(f"{text}|{lang}|{be.voice}|{speed}|{be.name}:{be.model}".encode()).hexdigest()[:32]
         self.cache_dir.mkdir(parents=True, exist_ok=True)

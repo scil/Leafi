@@ -149,4 +149,5 @@ class Notifier(Protocol):
 class Synthesizer(Protocol):
     """Implemented by `leafi.services.tts`; injected into the Hub by the composition root."""
 
-    async def synth(self, text: str, lang: str, *, slow: bool = False) -> AudioClip: ...
+    async def synth(self, text: str, lang: str, *, slow: bool = False, local_only: bool = False) -> AudioClip: ...
+    # local_only: the line embeds learner-originated text; never send it to a cloud backend (security.md).

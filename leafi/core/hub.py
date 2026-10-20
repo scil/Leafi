@@ -199,7 +199,7 @@ class Hub:
 
         await asyncio.gather(*(one(n, f) for n, f in self.faces.items()))
 
-    async def say(self, text: str, lang: str = "en", *, slow: bool = False) -> float:
+    async def say(self, text: str, lang: str = "en", *, slow: bool = False, local_only: bool = False) -> float:
         """Faces first, then TTS → Mouths per policy. Returns the max drain_s of the Mouths that played."""
         generation = self._generation
         async with self._lock:
@@ -214,7 +214,8 @@ class Hub:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self.say_timeout_s
             try:
-                clip = await asyncio.wait_for(self.synthesizer.synth(text, lang, slow=slow), self.say_timeout_s)
+                clip = await asyncio.wait_for(self.synthesizer.synth(text, lang, slow=slow, local_only=local_only),
+                                              self.say_timeout_s)
             except Exception:
                 log.error("TTS failed; text shown on Faces only", exc_info=True)
                 return 0.0
@@ -273,12 +274,13 @@ class ListeningGate:
         self.listener = listener
         self.is_open = True
 
-    async def speak(self, hub: Hub, text: str, lang: str = "en", *, slow: bool = False) -> None:
+    async def speak(self, hub: Hub, text: str, lang: str = "en", *, slow: bool = False,
+                    local_only: bool = False) -> None:
         await self.listener.pause()
         self.is_open = False
         drain = 0.0
         try:
-            drain = await hub.say(text, lang, slow=slow)
+            drain = await hub.say(text, lang, slow=slow, local_only=local_only)
         finally:
             await self.listener.resume(after_s=drain)
             self.is_open = True

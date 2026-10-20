@@ -104,12 +104,13 @@ class StudySession:
 
     # ------------------------------------------------------------ I/O helpers
 
-    async def say(self, text: str, lang: str = "en", slow: bool = False) -> None:
+    async def say(self, text: str, lang: str = "en", slow: bool = False, local_only: bool = False) -> None:
+        """`local_only=True` for any line that embeds learner-originated text (security.md egress table)."""
         if text:
-            await self.gate.speak(self.hub, text, lang, slow=slow)
+            await self.gate.speak(self.hub, text, lang, slow=slow, local_only=local_only)
 
-    async def line(self, key: str, **kw: Any) -> None:
-        await self.say(phrases.say(key, **kw))
+    async def line(self, key: str, local_only: bool = False, **kw: Any) -> None:
+        await self.say(phrases.say(key, **kw), local_only=local_only)
 
     async def listen(self, timeout_s: float | None) -> Utterance | None:
         await self.hub.show(Display("listening", "listening"))
@@ -684,7 +685,7 @@ class StudySession:
         span = corrections.locate(text, ctl.old, near, window) or corrections.locate(text, ctl.old, near)
         source = "text" if typed else "voice"
         if span is None:
-            await self.line("correction_not_found", old=ctl.old)
+            await self.line("correction_not_found", local_only=True, old=ctl.old)
             corrections.record_unlocated(self.store, revision_id=self.rev.id, old_text=ctl.old, new_text=ctl.text,
                                          source=source, utterance_id=utterance_id)
             await self.line("correction_saved")
@@ -695,7 +696,7 @@ class StudySession:
         self.rev = pages.revision(self.store, res.revision_id)
         self.state = res.state
         self._save_state()
-        await self.line("correction_thanks", new=ctl.text)
+        await self.line("correction_thanks", local_only=True, new=ctl.text)
 
     # ------------------------------------------------------------ CHECK (ADR-0013 → CHECK outcomes)
 
