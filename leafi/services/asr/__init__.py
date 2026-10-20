@@ -52,10 +52,36 @@ class VoiceListener:
         self._clock = clock
         self._open_at = 0.0
         self._paused = False
-        self._chunks = None
+        self._queue: asyncio.Queue[AudioChunk] | None = None
+        self._pump_task: asyncio.Task | None = None
+
+    def _ensure_pump(self) -> asyncio.Queue:
+        """Capture runs in one persistent task; input deadlines apply to queue reads only, so a timeout never
+        closes the Ear's iterator (review 1 #8)."""
+        if self._queue is None:
+            self._queue = asyncio.Queue(maxsize=600)
+            self._pump_task = asyncio.create_task(self._pump())
+        return self._queue
+
+    async def _pump(self) -> None:
+        q = self._queue
+        async for chunk in self.ear.listen():
+            if not self._gate_open():
+                continue  # Leafi is speaking or draining: discard
+            if q.full():
+                q.get_nowait()
+                log.warning("capture overflow: dropped one chunk")
+            q.put_nowait(chunk)
+
+    async def close(self) -> None:
+        if self._pump_task is not None:
+            self._pump_task.cancel()
 
     async def pause(self) -> None:
         self._paused = True
+        if self._queue is not None:  # discard buffered audio
+            while not self._queue.empty():
+                self._queue.get_nowait()
 
     async def resume(self, after_s: float = 0.0) -> None:
         self._open_at = self._clock() + after_s
@@ -65,8 +91,7 @@ class VoiceListener:
         return not self._paused and self._clock() >= self._open_at
 
     async def next_utterance(self, timeout_s: float | None) -> Utterance | None:
-        if self._chunks is None:
-            self._chunks = self.ear.listen().__aiter__()
+        q = self._ensure_pump()
         speech: list[bytes] = []
         silence_s = 0.0
         loop = asyncio.get_running_loop()
@@ -75,11 +100,11 @@ class VoiceListener:
             remaining = None if deadline is None else deadline - loop.time()
             if remaining is not None and remaining <= 0 and not speech:
                 return None
+            if self._pump_task is not None and self._pump_task.done() and q.empty():
+                return None  # the Ear ended
             try:
-                chunk: AudioChunk = await asyncio.wait_for(self._chunks.__anext__(), remaining if not speech else None)
+                chunk: AudioChunk = await asyncio.wait_for(q.get(), remaining if not speech else None)
             except TimeoutError:
-                return None
-            except StopAsyncIteration:
                 return None
             if not self._gate_open():
                 speech.clear()

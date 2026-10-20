@@ -127,3 +127,30 @@ async def test_local_only_lines_never_reach_a_cloud_backend(settings, monkeypatc
     with pytest.raises(tts.LocalOnlyUnavailable):
         await cloud_only.synth("Thanks! \"Zorblat\" it is.", "en", local_only=True)
     assert _EdgeRecorder.texts == []
+
+
+class QueueEar:
+    """An async-generator Ear like LocalPcDevice.listen(): closing it on a timeout would end capture."""
+
+    def __init__(self) -> None:
+        self.q: asyncio.Queue = asyncio.Queue()
+        self.closed = False
+
+    async def listen(self):
+        try:
+            while True:
+                yield AudioChunk(await self.q.get())
+        finally:
+            self.closed = True
+
+
+async def test_a_listening_timeout_does_not_close_capture():
+    """Review 1 #8."""
+    ear = QueueEar()
+    lis = asr.VoiceListener(ear, MockAsr(["the dog ran"]), pause_s=0.3)
+    assert await lis.next_utterance(0.05) is None
+    assert not ear.closed
+    for pcm in [LOUD] * 3 + [QUIET] * 4:
+        ear.q.put_nowait(pcm)
+    u = await asyncio.wait_for(lis.next_utterance(2.0), 3)
+    assert u is not None and u.text == "the dog ran"
