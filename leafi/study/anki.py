@@ -232,8 +232,9 @@ def _update_status(store: Store, card: DueCard, ease: int, known_days: int) -> N
                       (new, now_iso(), card.knowledge_item_id))
 
 
-async def reconcile(store: Store, client: AnkiClient) -> list[int]:
-    """`sent` answers: acked when Anki has a review after `sent_at`; the rest are returned for the parent."""
+async def reconcile(store: Store, client: AnkiClient, known_days: int = 21) -> list[int]:
+    """`sent` answers: acked when Anki has a review after `sent_at`, applying the same knowledge-status
+    transition as a normal acknowledgement (once: only `sent` rows are looked at); the rest are returned."""
     unknown = []
     for r in store.all("SELECT * FROM review_answers WHERE state='sent'"):
         try:
@@ -244,7 +245,16 @@ async def reconcile(store: Store, client: AnkiClient) -> list[int]:
         sent_ms = dt.datetime.fromisoformat(r["sent_at"]).timestamp() * 1000
         entries = (reviews or {}).get(str(r["card_id"])) or (reviews or {}).get(r["card_id"]) or []
         if any(e.get("id", 0) >= sent_ms for e in entries):
-            store.execute("UPDATE review_answers SET state='acked', acked_at=? WHERE id=?", (now_iso(), r["id"]))
+            interval = 0
+            try:
+                info = await client.cards_info([r["card_id"]])
+                interval = int(info[0].get("interval", 0)) if info else 0
+            except (AnkiUnavailable, AnkiError):
+                pass
+            with store.transaction():
+                store.execute("UPDATE review_answers SET state='acked', acked_at=? WHERE id=?", (now_iso(), r["id"]))
+                _update_status(store, DueCard(r["card_id"], r["knowledge_item_id"], "", interval), r["ease"],
+                               known_days)
         else:
             unknown.append(r["id"])
     return unknown

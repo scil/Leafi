@@ -452,7 +452,7 @@ class StudySession:
         if self.anki is None:
             return READ
         try:
-            await anki.reconcile(self.store, self.anki)
+            await anki.reconcile(self.store, self.anki, self.settings.review_known_interval_days)
             cards = await anki.due_cards(self.store, self.anki, self.settings.anki_deck, self.settings.review_max_cards)
         except (anki.AnkiUnavailable, anki.AnkiError):
             return READ

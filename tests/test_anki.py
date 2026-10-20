@@ -141,3 +141,19 @@ async def test_lost_add_recovery_does_not_adopt_parent_edits_as_leafi_values(sto
     rep = await anki.sync_outbox(store, _client(fake))
     assert fake.notes[nid]["fields"]["背面"] == "parent's own wording"
     assert rep.conflicts
+
+
+async def test_reconciled_review_applies_the_knowledge_status_transition(store):
+    """Review 1 #18: a lost first-review response, once reconciled, moves the item new → learning."""
+    fake = FakeAnki()
+    item = _item(store)
+    await anki.sync_outbox(store, _client(fake))
+    fake.add_due_card("", note_id=next(iter(fake.notes)))
+    (card,) = await anki.due_cards(store, _client(fake))
+    fake.lose_next.add("answerCards")
+    assert await anki.answer(store, _client(fake), card, 3) == "sent"
+    assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "new"
+    assert await anki.reconcile(store, _client(fake)) == []
+    assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "learning"
+    await anki.reconcile(store, _client(fake))  # idempotent
+    assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "learning"
