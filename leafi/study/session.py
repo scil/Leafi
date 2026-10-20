@@ -54,7 +54,8 @@ from leafi.study.controls import Control
 log = logging.getLogger("leafi.session")
 
 READ, PRACTICE, CHECK, WRAP, FIND_PAGE, REVIEW_DUE = "READ", "PRACTICE", "CHECK", "WRAP", "FIND_PAGE", "REVIEW_DUE"
-PRON_CONFIRM_BELOW = 0.5  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
+PRON_CONFIRM_BELOW = 0.5
+ANSWER_WORDS = {"yes", "no", "good", "again"}  # spoken one-word answers in CHECK are answers, not commands  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
 
 
 @dataclass
@@ -719,22 +720,30 @@ class StudySession:
             data = await coach.enrich(self.brain, req, self.guard, self.settings.brain_deadline_s)
         if data:
             await self.line("check_intro")
+            leave = False
             for q in data["questions"]:
                 await self.say(q["question"])
-                u = await self.listen(self.settings.check_answer_s if self.voice else None)
-                ctl = controls.parse(u.text) if u is not None else None
-                if ctl and ctl.kind == "stop":
-                    self.flags.stopped = True
-                    return WRAP
-                if ctl and ctl.kind in ("page", "next_page"):
-                    self.request = PageRequest(ctl.n)
-                    return FIND_PAGE
-                if ctl and ctl.kind == "back":
-                    self.state = back(self.state, ctl.n or 1)
-                    self._save_state()
-                    return READ
-                if ctl and ctl.kind == "skip":
-                    break  # leaves CHECK with no record
+                while True:  # every control is dispatched before anything is graded (review 1 #5)
+                    u = await self.listen(self.settings.check_answer_s if self.voice else None)
+                    ctl = controls.parse(u.text) if u is not None else None
+                    if ctl is None or ctl.kind == "dont_know" or (not ctl.typed and ctl.kind in ANSWER_WORDS):
+                        break
+                    if ctl.kind == "stop":
+                        self.flags.stopped = True
+                        return WRAP
+                    if ctl.kind in ("page", "next_page"):
+                        self.request = PageRequest(ctl.n)
+                        return FIND_PAGE
+                    if ctl.kind == "back":
+                        self.state = back(self.state, ctl.n or 1)
+                        self._save_state()
+                        return READ
+                    if ctl.kind == "skip":
+                        leave = True  # leaves CHECK with no record
+                        break
+                    await self.line("noop")
+                if leave:
+                    break
                 if u is not None:
                     self._store_utterance(u, "answer")
                 skipped = bool(ctl and ctl.kind == "dont_know")

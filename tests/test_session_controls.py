@@ -101,3 +101,12 @@ async def test_back_during_practice_reopens_the_practised_sentence(settings):
     assert _miscues(store) == {"ran": ("unsure", "skipped")}  # open candidate of the aborted practice
     assert _first_obs_token(store, "The dog ran far.") == 0
     assert store.one("SELECT tokens_unread FROM page_reads")["tokens_unread"] == 0
+
+
+async def test_controls_in_check_are_dispatched_not_graded(settings):
+    """Review 1 #5: an inapplicable control at a CHECK question is a no-op; the question still awaits an answer."""
+    store, face, s, _ = await _run(settings, ["The dog ran far. The cat sat.", "/explain fox", "/good", "a fox",
+                                              "/stop"])
+    answers = [r["text"] for r in store.all("SELECT text FROM utterances WHERE kind='answer'")]
+    assert answers == ["a fox"]
+    assert face.texts.count("That doesn't do anything right now.") == 2
