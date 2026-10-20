@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     bark_url: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    notify_with_snapshot: bool = False  # owner opt-in: attach one frame to Telegram (ADR-0011); default off
 
     # ---- P1 视觉验证(方案.md §4)----
     verify_mode: str = "presence"       # presence(P0 仅到场)| vision(P1 动作验证)

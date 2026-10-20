@@ -25,7 +25,8 @@ async def send(title: str, body: str, with_snapshot: bool = False) -> None:
     log.info("[通知] %s — %s", title, body)
     if settings.mock:
         return
-    snap = await snapshot() if with_snapshot else None
+    # Images leave the LAN only when the owner opts in (NOTIFY_WITH_SNAPSHOT=true, ADR-0011).
+    snap = await snapshot() if (with_snapshot and settings.notify_with_snapshot) else None
     try:
         async with httpx.AsyncClient() as c:
             if settings.bark_url:

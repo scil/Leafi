@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 
 import httpx
 
@@ -7,9 +8,22 @@ from .config import settings
 from .tts import synth
 
 log = logging.getLogger("speaker")
+LEASE_PATH = Path("data/leafi.lock")
+
+
+def _study_lease_held() -> bool:
+    """True while a Leafi study session holds the speech lease (lazy import: works without leafi)."""
+    try:
+        from leafi.core.lease import is_held
+    except ImportError:
+        return False
+    return is_held(LEASE_PATH)
 
 
 async def say(text: str) -> None:
+    if _study_lease_held():
+        log.info("study session holds the speech lease; not speaking (%d chars)", len(text))
+        return
     path = await synth(text)
     if settings.mock:
         log.info("[MOCK 喇叭] %s  (%s)", text, path)
