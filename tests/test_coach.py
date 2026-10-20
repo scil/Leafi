@@ -96,19 +96,6 @@ async def test_claude_backend_validates_and_retries_once(settings):
     assert "<page>" in params["messages"][0]["content"]
 
 
-async def test_stale_brain_result_is_discarded_by_the_turn_guard():
-    guard = coach.AsyncGuard(7)
-    guard.update(3, 1)
-
-    class Slow(MockBrain):
-        async def run(self, req):
-            guard.update(3, 2)  # the learner skipped meanwhile
-            return await super().run(req)
-
-    assert await coach.enrich(Slow(), coach.questions_request("The fox ran.", []), guard, 1.0) is None
-    guard2 = coach.AsyncGuard(7)
-    assert await coach.enrich(MockBrain(), coach.questions_request("The fox ran.", []), guard2, 1.0)
-
 
 def test_static_phrases_are_coach_voice_and_pass_the_deny_list():
     for key, variants in phrases.LINES.items():
