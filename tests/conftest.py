@@ -34,4 +34,5 @@ def settings(tmp_path, monkeypatch) -> Settings:
         brain_backend="mock",
         anthropic_api_key="",
         anki_url="http://127.0.0.1:8765",
+        page_diff_threshold=1.0,  # PIL-rendered pages differ by ~1.7; the desk camera default is 6.0 (P-3)
     )

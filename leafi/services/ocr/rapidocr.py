@@ -54,9 +54,25 @@ def to_result(res) -> OcrResult:
     return OcrResult(reading_order(lines))
 
 
+ROTATIONS = (90, 270, 180)  # P-3: a book lying sideways is the common case; upside down the rare one
+MIN_GOOD_LINES = 3  # fewer confident lines at 0° → try the rotations and keep the best
+
+
+def rotated(data: bytes, angle: int) -> bytes:
+    import io
+
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(data)).rotate(angle, expand=True)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=92)
+    return buf.getvalue()
+
+
 class RapidOcr:
     def __init__(self, settings) -> None:
         self.version = str(getattr(settings, "ocr_version", DEFAULT_VERSION) or DEFAULT_VERSION)
+        self.auto_rotate = bool(getattr(settings, "ocr_auto_rotate", True))
         self._engine = None
 
     def _load(self):
@@ -69,7 +85,21 @@ class RapidOcr:
         return await loop.run_in_executor(None, self._read, frame.data)
 
     def _read(self, data: bytes) -> OcrResult:
-        return to_result(self._load()(data))
+        """Read at 0°; when that yields fewer than MIN_GOOD_LINES confident lines and auto-rotation is on, read
+        the three other orientations too and keep the best (P-3: the desk book lay at 270°). Worst case is four
+        passes (~1.5 s each on this PC) once per page; a well-oriented page costs one pass."""
+        eng = self._load()
+        best = to_result(eng(data))
+        if not self.auto_rotate or best.good_lines >= MIN_GOOD_LINES:
+            return best
+        for angle in ROTATIONS:
+            res = to_result(eng(rotated(data, angle)))
+            res.rotation = angle
+            if (res.good_lines, res.confidence) > (best.good_lines, best.confidence):
+                best = res
+            if best.good_lines >= MIN_GOOD_LINES:
+                break  # the first orientation that reads like a page wins; no need to try the rest
+        return best
 
     async def barcodes(self, frame: Frame) -> list[str]:
         loop = asyncio.get_running_loop()

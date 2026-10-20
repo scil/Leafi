@@ -57,16 +57,20 @@ def split_number(lines: list[str]) -> tuple[int | None, list[str]]:
 
 class PageTracker:
     def __init__(self, store: Store, eye: Eye | None, ocr, settings, *, sleep=asyncio.sleep,
-                 settle_frames: int = 2, diff_threshold: float = 1.0, interval_s: float = 0.4) -> None:
-        # diff_threshold (mean grey diff at 64×64): two different text pages differ by ~1.7, a hand by ~40.
-        # Calibrate on real desk captures in prototype P-3.
+                 settle_frames: int = 2, diff_threshold: float | None = None, interval_s: float = 0.4) -> None:
+        # diff_threshold (mean grey diff at 64×64) defaults to PAGE_DIFF_THRESHOLD (6.0). Measured in P-3 on the
+        # desk camera (2026-10-20): consecutive stills of a still scene differ by 2.3–3.0 (sensor + JPEG noise),
+        # a hand or a person moving by 37–66; two different PIL-rendered pages differ by ~1.7, so tests pass 1.0.
+        # A quiet page turn in a wide shot (the page is ~20 % of the frame) stays below the noise and is caught
+        # by the learner's "next page", not by pixels.
         self.store = store
         self.eye = eye
         self.ocr = ocr
         self.settings = settings
         self._sleep = sleep
         self.settle_frames = settle_frames
-        self.diff_threshold = diff_threshold
+        self.diff_threshold = float(getattr(settings, "page_diff_threshold", 6.0)) if diff_threshold is None \
+            else diff_threshold
         self.interval_s = interval_s
         self.last: Frame | None = None
 

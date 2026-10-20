@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     tts_voice_en_edge: str = "en-US-JennyNeural"
     ocr_backend: str = "rapidocr"
     ocr_version: str = "PP-OCRv6"  # PP-OCRv6 (in the wheel) | PP-OCRv5 (doctor --download); prototype P-3
+    ocr_auto_rotate: bool = True  # P-3: the book lay sideways to the camera; try 90/180/270 when 0 reads poorly
+    page_diff_threshold: float = 6.0  # P-3: desk camera noise 2.3–3.0 between stills; a hand 37–66; rendered pages 1.7
     ocr_second_opinion: str = ""
     ocr_min_confidence: float = 0.85
     ocr_snap: str = "advisory"

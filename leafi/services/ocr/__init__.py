@@ -30,6 +30,12 @@ class OcrLine:
 @dataclass
 class OcrResult:
     lines: list[OcrLine] = field(default_factory=list)
+    rotation: int = 0  # degrees the frame was rotated before reading (0/90/180/270; P-3 auto-rotation)
+
+    @property
+    def good_lines(self) -> int:
+        """Lines a page could be built from: confident and longer than a page number or a stray glyph."""
+        return sum(1 for ln in self.lines if ln.conf >= 0.85 and len(ln.text) > 3)
 
     @property
     def confidence(self) -> float:

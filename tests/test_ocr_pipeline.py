@@ -71,3 +71,37 @@ async def test_rapidocr_reads_pil_fixture_pages_at_98_percent_words(settings):
         total += len(truth)
         correct += sum(1 for w in truth if w in got)
     assert correct / total >= 0.98
+
+
+class _OrientationEngine:
+    """Fake rapidocr engine: a landscape frame (the sideways desk book) yields one stray glyph; once the frame is
+    portrait (rotated 90/270) it yields the page lines. Mirrors P-3 on the real captures."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+
+    def __call__(self, data: bytes):
+        import io
+        from types import SimpleNamespace
+
+        from PIL import Image
+
+        w, h = Image.open(io.BytesIO(data)).size
+        self.calls.append((w, h))
+        box = [[0, 0], [10, 0], [10, 10], [0, 10]]
+        if w > h:
+            return SimpleNamespace(boxes=[box], txts=["mi"], scores=[0.9])
+        return SimpleNamespace(boxes=[box] * 4, txts=["Tom had a red kite.", "He ran up the hill.",
+                                                       "The wind was strong.", "1"], scores=[0.98, 0.97, 0.99, 1.0])
+
+
+async def test_rapidocr_tries_rotations_when_the_upright_read_is_poor(settings):
+    """P-3: the desk book lay sideways; 0° read only the overlay, 270° read the page."""
+    from leafi.services.ocr.rapidocr import RapidOcr
+
+    engine = _OrientationEngine()
+    backend = RapidOcr(settings)
+    backend._engine = engine
+    res = await backend.read(render(PAGES[0], number=1, width=1200))  # landscape render
+    assert res.rotation == 90 and res.good_lines == 3 and "red kite" in res.text
+    assert len(engine.calls) == 2  # 0° read poorly, the first rotation (90°) read the page, nothing more was tried

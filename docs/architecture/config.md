@@ -66,7 +66,9 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `ASR_HOTWORDS` | `off` | `off` · `lexicon`; on only after the biased-vs-unbiased comparison. P-1 (2026-10-20): hotwords work per stream with `modified_beam_search` and a `bpe.vocab` built from `tokens.txt` (`services/asr/sherpa.py`) |
 | `ASR_THREADS` | `4` | sherpa-onnx CPU threads (P-1: 12-word sentence 0.17 s at 2, 0.12 s at 4, 0.09 s at 8) |
 | `VAD_SILENCE_S` / `VAD_THRESHOLD` | `0.6` / `0.5` | Silero VAD (`models/vad/silero_vad.onnx`): silence that closes an utterance; speech probability threshold. Sentence completion is still `SENTENCE_PAUSE_S` |
-| `OCR_VERSION` | `PP-OCRv6` | `PP-OCRv6` (ships inside the rapidocr wheel) · `PP-OCRv5` (English recogniser, fetched by `doctor --download`); decided by prototype P-3 on desk captures |
+| `OCR_VERSION` | `PP-OCRv6` | `PP-OCRv6` (ships inside the rapidocr wheel) · `PP-OCRv5` (English recogniser, fetched by `doctor --download`); P-3 on desk captures (2026-10-20): v6 gave 6–8 confident lines where v5 gave 1–5 |
+| `OCR_AUTO_ROTATE` | `true` | when 0° yields < 3 confident lines, read 90/270/180 too and keep the best (the desk book lay at 270°); up to four passes of ~1.5 s once per page |
+| `PAGE_DIFF_THRESHOLD` | `6.0` | page-turn watcher: mean grey diff (64×64) that counts as motion. Desk camera noise 2.3–3.0, a hand 37–66 (P-3); rendered test pages differ by 1.7, so tests use 1.0 |
 | `OCR_SNAP` | `advisory` | `off` · `advisory` (candidates shown) · `auto` (not in v1) |
 | `STUDY_BRAIN_MODEL` | `claude-opus-5-5` | study track: cloud model for enrichment turns (ADR-0003); the habit track keeps its own `BRAIN_MODEL` in `agent/config.py` |
 | `BRAIN_MODEL_CHEAP` | `claude-haiku-5-5` | one-line habit phrases |

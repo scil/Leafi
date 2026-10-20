@@ -23,6 +23,11 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Trap: listening is paused while any Mouth plays (half-duplex, `core/hub.py::ListeningGate`); without an ASR model (`doctor` → `asr: missing …`) the voice Listener is not built and the console Listener takes over with a warning. The default PC input on the deployment PC is a Bluetooth hands-free headset mic (narrowband, starts ~1 s late); `input_device` in `devices.yml` takes a name fragment and picks WASAPI over MME when the name is ambiguous (P-6).
 - Check: `python -m leafi doctor` all `ok`; `scripts/proto/p6_capture.py --list` then `--seconds 3` shows rms > 0 while someone talks; `LEAFI_HW_TESTS=1 pytest tests/test_hardware.py` (Kokoro → Silero → Parakeet → alignment).
 
+## "Leafi can't read the page" / page turn not noticed / OCR garbage from the camera
+- Start: `leafi/services/ocr/rapidocr.py` (`_read`, `ROTATIONS`, `MIN_GOOD_LINES`), `leafi/study/page_tracker.py` (`frame_diff`, `settle`, `changed`), settings `OCR_VERSION`, `OCR_AUTO_ROTATE`, `PAGE_DIFF_THRESHOLD`.
+- Trap: the desk camera's noise floor is 2.3–3.0 grey levels and the stream has a burnt-in timestamp that OCR always reads; a sideways book reads as nothing at 0°; in the current wide shot the page is ~20 % of the frame and OCR is partial (TD-21). The printed page number may be a stray glyph.
+- Check: `scripts/proto/p3_ocr_compare.py --capture 3 --out cache/desk` then `--dir cache/desk` (silent snapshots); `LEAFI_HW_TESTS=1 pytest tests/test_hardware.py -k rotation`.
+
 ## "Leafi stopped by itself" / "I can't hear the microphone any more" / two sessions
 - Start: `leafi/study/session.py` (`_renew_loop`, `_listener_lost`, `listen`), `leafi/core/lease.py`, `leafi/services/asr/__init__.py::VoiceListener._pump`.
 - Invariant: a failed lease renewal (another launch took `data/leafi.lock` after the TTL expired, e.g. after a suspend) stops this session at its next renewal (≤ `LEASE_TTL_S`/3) with no more audio and summary `lease_lost=true` (TD-15); a dead Ear raises `ListenerLost` once, the session says so and continues on the console when one exists, else stops (`LISTENER_LOST`, TD-16). Replug = restart the session.
