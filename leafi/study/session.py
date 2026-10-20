@@ -138,8 +138,10 @@ class StudySession:
 
     async def run(self, *, book_title: str | None = None, page_text: str | None = None,
                   page_number: int | None = None) -> int:
-        records.close_stale_sessions(self.store)
+        # Exclusive ownership first: a rejected launch must not touch the live session (review 1 #2). Once we
+        # hold the lease, every other unfinished session belongs to a dead process and is stale.
         self.lease = speech_lease.acquire(self.settings.lease_path, self.settings.lease_ttl_s)
+        records.close_stale_sessions(self.store)
         self._renew = asyncio.create_task(self._renew_loop())
         mode = "voice" if self.voice else "text"
         self.session_id = self.store.insert("reading_sessions", started_at=now_iso(), mode=mode,

@@ -42,3 +42,27 @@ async def test_interrupted_session_is_closed_and_resumed_from_the_committed_curs
     st = ReadingState.from_json(PAGE, loads(reads[1]["reading_state"]))
     assert st.statuses().split()[:13] == ["C"] * 13  # resumed at old ccur 13, then "brown fox." read
     assert 1 in st.completed and 2 in st.completed
+
+
+async def test_a_rejected_second_launch_leaves_the_live_session_untouched(settings, monkeypatch):
+    from leafi.core import lease as speech_lease
+    from leafi.study import session as session_module
+    from tests import seed
+
+    store = Store(settings.db_path)
+    book, page, rev = seed.book_page(store, PAGE, source="manual")
+    live = seed.session(store, book)
+    read = seed.page_read(store, live, page, rev)
+    mid = seed.miscue(store, read, rev, PAGE, "hat")
+
+    def held(*a, **k):
+        raise speech_lease.LeaseHeld("speech lease held by pid 4242")
+
+    monkeypatch.setattr(session_module.speech_lease, "acquire", held)
+    second = StudySession(store=store, hub=Hub(faces={"c": RecordingFace()}, policy="none"), settings=settings,
+                          brain=MockBrain(), listener=ScriptedListener(["/stop"]))
+    with pytest.raises(speech_lease.LeaseHeld):
+        await second.run(book_title="Fixture", page_text=PAGE, page_number=1)
+    assert store.one("SELECT ended_at FROM reading_sessions WHERE id=?", (live,))["ended_at"] is None
+    assert seed.status_of(store, mid) == ("candidate", None)
+    assert store.one("SELECT COUNT(*) AS n FROM reading_sessions")["n"] == 1
