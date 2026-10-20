@@ -1,0 +1,133 @@
+"""Corrections (B5, ADR-0010 §3 and §6, ADR-0013 → Correction interaction).
+
+Applying a correction to revision r is ONE transaction: correction row; revision r+1 with the corrected
+span verified and the edit map; verified spans and the active ReadingState transformed; every miscue of
+the page (any revision) with status candidate/unsure/confirmed whose span maps onto the corrected span →
+invalidated(page_text_corrected); Difficulties recomputed; lexicon updated.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+from leafi.core.storage import Store, dumps, loads, now_iso
+from leafi.study import knowledge, lexicon, miscues, pages
+from leafi.study.alignment import ReadingState
+
+
+class StaleRevision(RuntimeError):
+    pass
+
+
+@dataclass
+class CorrectionResult:
+    correction_id: int
+    revision_id: int | None
+    invalidated: list[int]
+    state: ReadingState | None
+
+
+def locate(text: str, old_text: str, near: int | None = None, window: tuple[int, int] | None = None
+           ) -> tuple[int, int] | None:
+    """Nearest whole-word, case-insensitive occurrence of `old_text` to `near`, inside `window` if given."""
+    if not old_text.strip():
+        return None
+    pat = re.compile(r"(?<!\w)" + re.escape(old_text.strip()) + r"(?!\w)", re.IGNORECASE)
+    hits = [(m.start(), m.end()) for m in pat.finditer(text)]
+    if window is not None:
+        hits = [h for h in hits if window[0] <= h[0] and h[1] <= window[1]]
+    if not hits:
+        return None
+    if near is None:
+        return hits[0] if len(hits) == 1 else None
+    return min(hits, key=lambda h: (abs(h[0] - near), h[0]))
+
+
+def retokenize(state: ReadingState, old_text: str, new_text: str, edits: list[pages.Edit],
+               edited: tuple[int, int], revision_id: int) -> ReadingState:
+    """Re-tokenise the active ReadingState on the new revision (ADR-0013 → Correction interaction)."""
+    new = ReadingState.from_text(new_text, page_read_id=state.page_read_id, revision_id=revision_id)
+    by_span = {}
+    for t in state.tokens:
+        if not any(pages.overlaps(t.span, (e[0], e[1])) for e in edits):
+            by_span[pages.map_span(t.span, edits)] = t
+    touched: list[int] = []
+    for i, t in enumerate(new.tokens):
+        old = None if pages.overlaps(t.span, edited) else by_span.get(t.span)
+        if old is None:
+            touched.append(i)
+            continue
+        t.status, t.created_by = old.status, old.created_by
+    first_touched = min(touched) if touched else None
+
+    def map_cursor(c: int) -> int:
+        pos = state.tokens[c].start if c < state.n else len(old_text)
+        npos = pages.map_point(pos, edits, "start")
+        idx = next((i for i, t in enumerate(new.tokens) if t.start >= npos), new.n)
+        if first_touched is not None and idx > first_touched:
+            idx = first_touched
+        return idx
+
+    new.ccur = map_cursor(state.ccur)
+    new.pcur = max(new.ccur, map_cursor(state.pcur))
+    old_sent_of = {pages.map_span(t.span, edits): t.sentence_id for t in state.tokens}
+    for sid in new.sentence_ids():
+        idx = range(new.first_index(sid), new.last_index(sid) + 1)
+        if any(i in touched for i in idx):
+            continue
+        if all(old_sent_of.get(new.tokens[i].span) in state.completed for i in idx):
+            new.completed.add(sid)
+    new.turn_id = state.turn_id + 1
+    return new
+
+
+def apply_correction(store: Store, *, page_id: int, revision_id: int, char_start: int, char_end: int,
+                     new_text: str, source: str, utterance_id: int | None = None,
+                     state: ReadingState | None = None, book_id: int | None = None) -> CorrectionResult:
+    with store.transaction():
+        cur = pages.current_revision(store, page_id)
+        if cur is None or cur.id != revision_id:
+            raise StaleRevision(f"page {page_id}: correction against revision {revision_id}, current is "
+                                f"{cur.id if cur else None}")
+        old_seg = cur.text[char_start:char_end]
+        corr_id = store.insert("corrections", page_revision_id=cur.id, char_start=char_start, char_end=char_end,
+                               old_text=old_seg, new_text=new_text, source=source, utterance_id=utterance_id,
+                               created_at=now_iso())
+        text = cur.text[:char_start] + new_text + cur.text[char_end:]
+        edits = [[char_start, char_end, char_start, char_start + len(new_text)]]
+        edited_new = (char_start, char_start + len(new_text))
+        verified = pages.transform_verified(cur.spans_verified, edits) + [list(edited_new)]
+        new_rev = pages.insert_revision(store, page_id, text, "correction", verified, edits)
+
+        new_state = None
+        if state is not None:
+            new_state = retokenize(state, cur.text, text, edits, edited_new, new_rev)
+            if state.page_read_id is not None:
+                store.execute("UPDATE page_reads SET page_revision_id=?, reading_state=? WHERE id=?",
+                              (new_rev, dumps(new_state.to_json()), state.page_read_id))
+
+        revs = {r.id: r.rev for r in pages.chain(store, page_id)}
+        invalidated: list[int] = []
+        for m in store.all(
+            "SELECT m.id, m.page_revision_id, m.expected_char_span FROM miscues m "
+            "JOIN page_revisions pr ON pr.id = m.page_revision_id "
+            "WHERE pr.page_id=? AND m.status IN ('candidate','unsure','confirmed')", (page_id,)):
+            span = tuple(loads(m["expected_char_span"]))
+            mapped = pages.map_to_revision(store, page_id, span, revs[m["page_revision_id"]], cur.rev)
+            if pages.overlaps(mapped, (char_start, char_end)):
+                miscues.set_status(store, m["id"], "invalidated", reason="page_text_corrected")
+                invalidated.append(m["id"])
+        knowledge.recompute_difficulties(store)
+        if book_id is None:
+            book_id = store.one("SELECT book_id FROM pages WHERE id=?", (page_id,))["book_id"]
+        lexicon.add_correction(store, book_id, new_text)
+    return CorrectionResult(corr_id, new_rev, invalidated, new_state)
+
+
+def record_unlocated(store: Store, *, revision_id: int, old_text: str, new_text: str, source: str,
+                     utterance_id: int | None = None) -> int:
+    """A correction Leafi could not place: kept for the parent with `char_start = null`, no new revision."""
+    return store.insert("corrections", page_revision_id=revision_id, char_start=None, char_end=None,
+                        old_text=old_text, new_text=new_text, source=source, utterance_id=utterance_id,
+                        created_at=now_iso())
