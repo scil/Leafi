@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..config import settings
 from ..tasks import (
+    BUILTIN_PROMPT_KINDS,
     PHRASE_KINDS,
     SCORER_FIELDS,
     VERIFY_MODES,
@@ -39,6 +40,7 @@ def _meta() -> dict:
         "phraseKinds": list(PHRASE_KINDS),
         "scorerFields": list(SCORER_FIELDS),
         "presets": PRESETS,
+        "builtinPromptKinds": list(BUILTIN_PROMPT_KINDS),
         "globals": {
             "target_active_seconds": settings.target_active_seconds,
             "min_visible_active_seconds": settings.min_visible_active_seconds,
@@ -50,7 +52,7 @@ def _meta() -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CaremaKisTaskEditor/1.0"
+    server_version = "LeafiTaskEditor/1.0"
 
     def log_message(self, fmt, *args):  # 用项目的 logger,别往 stderr 刷原始格式
         log.info("%s %s", self.address_string(), fmt % args)

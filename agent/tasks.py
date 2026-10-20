@@ -21,6 +21,7 @@ import yaml
 
 from .config import settings
 from .vision.scorer import PRESETS, MotionScorer
+from .vision.vlm import PROMPTS
 
 log = logging.getLogger("tasks")
 
@@ -31,6 +32,15 @@ PHRASE_KINDS = ("opening", "retry", "arrived", "milestone", "done", "partial")
 REQUIRED_PHRASES = ("opening", "retry", "arrived")
 # 终裁提问里必须出现其中一句,否则等于放任模型去猜人是谁(红线 01)
 GUARD_PHRASES = ("不要识别", "不得识别", "只判断动作")
+
+
+def _has_guard(text: str) -> bool:
+    return any(g in text for g in GUARD_PHRASES)
+
+
+# 提问留空时可复用的内置 kind。自己也过一遍红线 01:vlm.py 里哪条提问漏了免责句,
+# 它就不算"可复用",省得留空反而绕过校验。
+BUILTIN_PROMPT_KINDS = tuple(k for k, v in PROMPTS.items() if _has_guard(v))
 # MotionScorer 认识的构造参数(除 fps_hint,那个由 verifier 传)
 SCORER_FIELDS = tuple(
     p for p in inspect.signature(MotionScorer).parameters if p != "fps_hint"
@@ -134,13 +144,20 @@ def validate(spec: TaskSpec) -> list[str]:
             errs.append(f"话术「{kind}」至少要有一条")
 
     if spec.verify in ("pose_dwell", "vlm_burst"):
-        if not (spec.vlm_kind or "").strip():
+        kind = (spec.vlm_kind or "").strip()
+        prompt = (spec.prompt or "").strip()
+        if not kind:
             errs.append("要做终裁的动作必须填 vlm_kind")
-        if not (spec.prompt or "").strip():
-            errs.append("终裁提问不能为空(问模型「这是不是在做该动作」)")
-        elif not any(g in spec.prompt for g in GUARD_PHRASES):
+        if prompt:
             # 红线 01:身份识别只在 Frigate 本地人脸做,不能让 VLM 去猜人是谁
-            errs.append("终裁提问里必须写明「不要识别或猜测人物身份」(红线 01)")
+            if not _has_guard(prompt):
+                errs.append("终裁提问里必须写明「不要识别或猜测人物身份」(红线 01)")
+        elif kind not in BUILTIN_PROMPT_KINDS:
+            # 留空 = 复用 vlm.py 的内置提问,那些已含免责句;kind 不认识就只能自己写
+            errs.append(
+                "终裁提问不能为空(问模型「这是不是在做该动作」);"
+                f"想留空复用内置提问,vlm_kind 得是 {'/'.join(BUILTIN_PROMPT_KINDS)} 之一"
+            )
 
     if spec.verify == "pose_dwell":
         if not spec.scorer:

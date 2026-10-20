@@ -61,7 +61,11 @@ async def verdict(
     """
     if not images_b64:
         return None
-    question = (prompt or "").strip() or PROMPTS[kind]
+    question = (prompt or "").strip() or PROMPTS.get(kind, "")
+    if not question:
+        # 没提问就没法问;当成"终裁不可用",而不是让 KeyError 炸穿整个会话
+        log.warning("没有终裁提问(kind=%r 不在内置 PROMPTS 里),跳过终裁", kind)
+        return None
     payload = {
         "model": settings.vlm_model,
         "stream": False,

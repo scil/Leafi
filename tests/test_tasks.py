@@ -91,6 +91,30 @@ def test_validate_accepts_a_good_spec():
     assert validate(_brush()) == []
 
 
+# ---------- 提问留空 = 复用内置(红线 01 仍要守住) ----------
+
+def test_builtin_prompt_kinds_all_carry_the_guard():
+    """能被复用的 kind 必须自带免责句,否则留空就等于绕过红线 01。"""
+    assert T.BUILTIN_PROMPT_KINDS, "至少要有一条可复用的内置提问"
+    for k in T.BUILTIN_PROMPT_KINDS:
+        assert any(g in PROMPTS[k] for g in T.GUARD_PHRASES)
+
+
+def test_empty_prompt_ok_for_builtin_kind():
+    from dataclasses import replace
+
+    ts = replace(_brush(), vlm_kind="brush", prompt="")
+    assert validate(ts) == []
+
+
+def test_empty_prompt_rejected_for_unknown_kind():
+    from dataclasses import replace
+
+    errs = validate(replace(_brush(), prompt=""))  # vlm_kind="wash",无内置
+    assert any("终裁提问不能为空" in e for e in errs)
+    assert any("brush" in e for e in errs), "错误里要点出哪些 kind 可以留空"
+
+
 def test_duplicate_names_rejected():
     errs = validate_all([_brush(), _brush()])
     assert any("重复" in e for e in errs["wash_hands"])

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>动作编辑 · Carema-Kis-AI</title>
+<title>动作编辑 · Leafi</title>
 <style>
 :root{
   --ground:#F5F7F4; --surface:#fff; --sunk:#EFF2EE; --ink:#16211D; --ink-2:#495A53;
@@ -138,8 +138,8 @@ const HELP = {
     burst_frames: '一共拍几张交给模型。',
     burst_interval_s: '两张之间隔多久。第一张到最后一张跨度 = <b>(张数 − 1) × 间隔</b>'
       + '(默认 8 张 × 4 秒 = 28 秒),要盖住动作可能发生的范围。',
-    vlm_kind: '内部标识,英文小写。用于归类与记录;<b>提问正文仍必须自己填</b>——'
-      + '校验要求每个终裁动作都写明"不识别身份",填了同样的 kind 也不会自动套用内置提问。'
+    vlm_kind: '内部标识,英文小写。填成<b>内置 kind</b> 时,下面的提问可以留空,直接复用内置那句;'
+      + '其它 kind 必须自己写提问。'
   }
 };
 
@@ -281,14 +281,18 @@ function renderForm(){
   }
 
   if (t.verify !== 'presence'){
+    const builtinKind = (META.builtinPromptKinds || []).includes((t.vlm_kind || '').trim());
     h += `<fieldset><legend>终裁 · 让本地模型看几张图确认一下</legend>
       <div class="explain">前面的计分只认<b>动作形状</b>,分不清手里拿的是牙刷还是勺子。
         ${t.verify === 'pose_dwell' ? '所以时长达标后' : '所以'}会把画面交给<b>本机</b>的视觉模型问一句,它说不是就不算数。
         模型跑在自己电脑上(Ollama),<b>图片不出家门</b>。</div>
-      ${field('vlm_kind','vlm_kind',{placeholder:'wash',hint:HELP.fields.vlm_kind})}
+      ${field('vlm_kind','vlm_kind',{placeholder:'wash',hint:HELP.fields.vlm_kind
+        + ' 内置 kind:' + (META.builtinPromptKinds || []).map(k => `<code>${k}</code>`).join('、')})}
       <div class="row"><label>问它什么</label>
         <textarea rows="4" data-p="prompt" placeholder="判断画面中的孩子是否在洗手(手在水池前搓洗)。只判断动作,不要识别或猜测人物身份。按 JSON 输出。">${esc(t.prompt)}</textarea>
-        <div class="hint"><b>必须写明「不要识别或猜测人物身份」</b>——这是红线:认人只能靠 Frigate 本地人脸,
+        <div class="hint">${builtinKind ? '当前 vlm_kind 是内置的,<b>留空即复用内置提问</b>(那句已含免责);要改口径就自己写。'
+          : '<b>这个 kind 没有内置提问,必须自己写。</b>'}<br>
+          写了就<b>必须写明「不要识别或猜测人物身份」</b>——这是红线:认人只能靠 Frigate 本地人脸,
           不能让模型去猜画面里是谁。没写会被拒绝保存。</div>
       </div></fieldset>`;
   }
@@ -316,7 +320,7 @@ function renderForm(){
       else if (n.type === 'number') v = n.value === '' ? null : Number(n.value);
       else v = n.value;
       set(p, v);
-      if (p === 'verify' || p === 'scorer.window_s') renderForm();
+      if (p === 'verify' || p === 'scorer.window_s' || p === 'vlm_kind') renderForm();
     };
   });
   const ps = el.querySelector('#preset');
