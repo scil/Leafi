@@ -19,7 +19,7 @@ from leafi.core.text import TOKENIZER_VERSION, words
 Edit = list[int]  # [old_start, old_end, new_start, new_end]
 MATCH_CONFIDENT = 0.9
 MATCH_MARGIN = 0.05
-MATCH_NEW_BELOW = 0.5
+MATCH_NEW_BELOW = 0.75  # count terms alone give unrelated pages ~0.3; first/last lines must agree
 
 
 # ---------------------------------------------------------------- spans and edit maps
@@ -215,7 +215,7 @@ def match_page(store: Store, book_id: int, observations: dict, printed_number: i
     """`(book_id, printed_number)` when a number was read with confidence; else score the observation sets.
 
     Below `MATCH_CONFIDENT` (0.9) or two candidates within `MATCH_MARGIN` → uncertain; below
-    `MATCH_NEW_BELOW` (0.5) for every stored page → a new page (plan Decision log).
+    `MATCH_NEW_BELOW` (0.75) for every stored page → a new page (plan Decision log).
     """
     if printed_number is not None:
         r = store.one("SELECT id FROM pages WHERE book_id=? AND printed_number=?", (book_id, printed_number))

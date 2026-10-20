@@ -237,11 +237,22 @@ class StudySession:
                     return await self._after_page_found()
             if self.page_tracker is not None:
                 found = await self.page_tracker.find(self.book_id, req.number)
+                if found.status == "uncertain":  # PAGE_UNCERTAIN: assessment suspended until confirmed
+                    self.flags.transitions.append("PAGE_UNCERTAIN")
+                    await self.say(found.message)
+                    ans = await self._yes_no()
+                    if ans is None:
+                        return WRAP
+                    if ans:
+                        found = self.page_tracker.confirm(found, found.page_id)
+                    else:
+                        await self.say("Which page is it? Type /page N.")
                 if found.status == "ready":
                     self.page_id, self.rev = found.page_id, pages.revision(self.store, found.revision_id)
                     self._start_page_read(None)
                     return await self._after_page_found()
-                await self.say(found.message)
+                if found.status != "uncertain":
+                    await self.say(found.message)
             else:
                 await self.line("ask_page_text")
             u = await self.listen(self.settings.study_idle_s)
