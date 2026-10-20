@@ -130,7 +130,8 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 - [x] 2026-10-19 Codex design review round 1 (gpt-6-astra, reasoning high): `reviews/2026-10-19-codex-design-review-1.md`; resolved by ADR-0009/0010/0011 and the revised data model, flows, security, performance, testing docs.
 - [x] 2026-10-19 Codex design review round 2: `reviews/2026-10-19-codex-design-review-2.md`; resolved by ADR-0012 and amendments to ADR-0004/0006/0009/0010/0011, data model, flows, security, config, this plan.
 - [x] 2026-10-19 Codex design review round 3: `reviews/2026-10-19-codex-design-review-3.md`; the recurring class (interacting prose rules) resolved structurally by ADR-0013 (one algorithm, pseudocode) superseding ADR-0009/0012; F5–F8 and the two §1 leftovers fixed in ADR-0010 §6/§9, ADR-0011, data model, flows, reliability.
-- [ ] Codex design review round 4 (confirming, narrow).
+- [x] 2026-10-19 Codex design review round 4: `reviews/2026-10-19-codex-design-review-4.md`; hand execution exposed a cost-ordering bug (insertion cheaper than substitution) and gaps in completion, `/back`, control precedence and CHECK; ADR-0013 revised with exact costs, boundaries, completion history, control precedence, candidate settlement and an exhaustive CHECK partition; ADR-0010 §6 scope fixed; glossary/data-model/flow aligned.
+- [ ] Codex design review round 5 (final confirming round; findings after it are recorded as implementation decisions, not re-reviewed).
 - [ ] Opus implements S0, S1, S2 (mock + fixtures), S3 shells.
 - [ ] Tests green; commit; docs updated after change.
 - [ ] Hardware steps on the PC: P-1, P-2, P-3; S2/S3 real backends; acceptance 1 with the camera.
@@ -169,6 +170,7 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 | 2026-10-19 | Anki: `anki_item_key` + outbox replaces `anki_note_id`; review answers `pending→sent→acked`, never replayed; parent edits win via last-acked hashes | codex round 2 §2.8, §3.3–3.4 → ADR-0004 amendment |
 | 2026-10-19 | Drain applied once by the listening gate; `play()` returns at estimated end; Brain deadline 12 s everywhere | codex round 2 §2.9 |
 | 2026-10-19 | Review prompts are kept with the reports under `docs/plans/active/reviews/` for reruns | — |
+| 2026-10-19 | ADR-0013 revised after round 4: insert 1.2 > substitute 1.0 so terminal substitutions become candidates; boundary penalty 0.5 keeps stray trailing words out of the next sentence; unique tie-break; internal gaps > 3 = `line_skipped` (unread, no candidates); candidates stay attempted at completion; `completed` set prevents duplicate events; `/back N` defined; control precedence (stop > page > back > skip) with candidate settlement; self_corrected = next utterance, else reread; corrections invalidate candidate/unsure/confirmed only; knowledge-item difficulties formula; exhaustive CHECK partition | codex round 4 |
 | 2026-10-19 | Reading algorithm stated once as pseudocode (ADR-0013): acceptance rule with singleton-at-cursor accumulation; ties resolved toward advance (identical sentences read twice = progress; `/back N`); sentence completion by `sentence_reached`, pause/typed line end, or control; practice-before-CHECK; a matching retry withdraws in voice and text alike; interrupted sessions close candidates as `unsure(interrupted)` and offer resume; CHECK outcomes correct/incorrect/unavailable; one Difficulty formula; `forget --book` defined | codex round 3 F1–F8, §1 → ADR-0013, ADR-0010 §6/§9 |
 
 ## Outcomes & retrospective

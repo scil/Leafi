@@ -31,10 +31,11 @@ stateDiagram-v2
 
 Additional state: `LISTENER_LOST` (selected Ear gone; continue in text mode when the console exists). Input routing by state, controls, `/back N`, reposition and completion events: ADR-0013.
 
-**Global transitions (every state except WRAP):**
-- `stop` (spoken ≤ 6 words matching the command grammar while listening; typed `/stop` or a Face key at any time, including during playback, which cancels the current `say()` first) → WRAP.
-- `skip` → leaves PRACTICE/EXPLAIN/CHECK/REPOSITION back to READ without recording a judgement; bumps `turn_id` so pending async results are discarded.
-- `page turned` (Eye frame-diff settles on a new page, or `/page N`, or spoken "page twelve") → FIND_PAGE; any provisional alignment is discarded, committed observations stay.
+**Global transitions (every state except WRAP)** — precedence and the records each one writes are defined in ADR-0013 → Control precedence:
+- `stop` (spoken while listening; typed `/stop` or a Face key at any time, including during playback, which cancels the current `say()` first) → completes the current sentence as read, open candidates → `unsure(skipped)` → WRAP.
+- `skip` → PRACTICE: current candidate `unsure(skipped)`; READ: completes the sentence as read and moves to the next; CHECK/EXPLAIN/REVIEW_DUE: leaves with no record. Bumps `turn_id`.
+- `/back N` → reopens N sentences (ADR-0013 → `/back N`).
+- `page turned` (Eye frame-diff settles on a new page, `/page N`, spoken "next page") → completes the current sentence as read, open candidates → `unsure(skipped)`, no practice → FIND_PAGE.
 - `idle timeout` (`STUDY_IDLE_S`, default 180) → WRAP with `summary.idle=true`.
 - `page uncertain` (camera lost, OCR failed, or a frame-diff without a confident match) → PAGE_UNCERTAIN; assessment is suspended; utterances are still stored with `kind=reading` but produce no observations until the page is confirmed.
 

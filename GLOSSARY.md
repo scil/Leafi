@@ -105,7 +105,7 @@ A substituted or deleted Observation that may be a reading problem. It becomes c
 _Avoid_: error, mistake, wrong (in copy shown to the child)
 
 **Miscue**:
-A Candidate miscue and its later status. Only confirmed Miscues count toward Difficulties.
+A Candidate miscue and its later status (confirmed, unsure, withdrawn, invalidated). Confirmed Miscues count fully toward Difficulties; unsure ones only as low-weight "watch" evidence across several sessions (ADR-0013).
 
 **Practice**:
 A Leafi-led repeat of a word after a Candidate miscue: model it, let the learner retry at most twice, offer skip, record the outcome.
