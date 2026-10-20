@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     pron_backend: str = "openpronounce"
     pron_auto_judge: bool = False
     brain_backend: str = "claude"
-    brain_model: str = "claude-opus-5-5"
+    study_brain_model: str = "claude-opus-5-5"  # STUDY_BRAIN_MODEL; the habit track keeps BRAIN_MODEL
     brain_model_cheap: str = "claude-haiku-5-5"
     brain_deadline_s: float = 12.0
     brain_local_model: str = ""

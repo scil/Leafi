@@ -65,7 +65,7 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `PRON_AUTO_JUDGE` | `false` | automatic pronunciation judgement; on only after the evaluation threshold in ADR-0011 |
 | `ASR_HOTWORDS` | `off` | `off` · `lexicon`; on only after the biased-vs-unbiased comparison |
 | `OCR_SNAP` | `advisory` | `off` · `advisory` (candidates shown) · `auto` (not in v1) |
-| `BRAIN_MODEL` | `claude-opus-5-5` | cloud model for enrichment turns (ADR-0003) |
+| `STUDY_BRAIN_MODEL` | `claude-opus-5-5` | study track: cloud model for enrichment turns (ADR-0003); the habit track keeps its own `BRAIN_MODEL` in `agent/config.py` |
 | `BRAIN_MODEL_CHEAP` | `claude-haiku-5-5` | one-line habit phrases |
 | `BRAIN_DEADLINE_S` | `12` | overall deadline per Brain call, 1 retry |
 | `BRAIN_LOCAL_MODEL` | `` (empty) | Ollama fallback, deferred (ADR-0011) |
@@ -92,6 +92,4 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 
 `devices.yml` values may use `${VAR:-default}` for optional variables (empty allowed); a plain `${VAR}` is required.
 
-**Shared name:** `BRAIN_MODEL` is read by both tracks; the habit `.env` may set it to a Haiku model for one-line phrases (plan Surprises, until T2).
-
-Removed names: none yet. Renamed: the repository path in `SPEAKER_SRC_DIR` examples changed from `Carema-Kis-AI` to `Leafi` (2026-10-19).
+Removed names: `BRAIN_MODEL` no longer configures the study track (2026-10-20, replaced by `STUDY_BRAIN_MODEL`; the habit track still reads it). Renamed: the repository path in `SPEAKER_SRC_DIR` examples changed from `Carema-Kis-AI` to `Leafi` (2026-10-19).

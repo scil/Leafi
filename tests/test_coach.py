@@ -102,3 +102,17 @@ def test_static_phrases_are_coach_voice_and_pass_the_deny_list():
         for v in variants:
             assert phrases.safe(v), (key, v)
     assert phrases.safe_or("That was wrong.", "practice_again") in phrases.LINES["practice_again"]
+
+
+def test_study_brain_uses_study_brain_model_not_the_habit_brain_model(monkeypatch):
+    """The habit track's BRAIN_MODEL (a Haiku model on this PC) must not leak into the study Brain."""
+    from leafi.core.config import Settings
+
+    monkeypatch.setenv("BRAIN_MODEL", "claude-haiku-4-5")
+    monkeypatch.delenv("STUDY_BRAIN_MODEL", raising=False)
+    s = Settings(_env_file=None)
+    assert s.study_brain_model == "claude-opus-5-5"
+    params = ClaudeBrain(s).request_params(BrainRequest(Intent.ENCOURAGE, "The fox ran home."))
+    assert params["model"] == "claude-opus-5-5"
+    monkeypatch.setenv("STUDY_BRAIN_MODEL", "claude-sonnet-5-5")
+    assert ClaudeBrain(Settings(_env_file=None)).model == "claude-sonnet-5-5"

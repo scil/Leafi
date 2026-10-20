@@ -19,7 +19,7 @@ log = logging.getLogger("leafi.brain.claude")
 
 class ClaudeBrain:
     def __init__(self, settings, client=None) -> None:
-        self.model = settings.brain_model
+        self.model = settings.study_brain_model
         self.deadline_s = float(settings.brain_deadline_s)
         self._key = settings.anthropic_api_key
         self._client = client
@@ -77,4 +77,4 @@ def status(settings) -> tuple[str, str]:
         return "missing package", "uv pip install --python .venv anthropic==0.120.2"
     if not settings.anthropic_api_key:
         return "disabled", "ANTHROPIC_API_KEY empty: static Coach-voice phrases only"
-    return "ok", f"model {settings.brain_model}"
+    return "ok", f"model {settings.study_brain_model}"
