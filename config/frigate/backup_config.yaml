@@ -1,4 +1,4 @@
-# Carema-Kis-AI · Frigate P0 模板
+# Leafi · Frigate template (habit track)
 # 摄像头到货后:填好 .env(CAM_IP/CAM_USER/CAM_PASSWORD/TAPO_CLOUD_PASSWORD)→ docker compose restart frigate
 mqtt:
   host: mosquitto

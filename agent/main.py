@@ -47,7 +47,7 @@ async def amain(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Carema-Kis-AI P0 agent")
+    p = argparse.ArgumentParser(description="Leafi habit track (scheduled reminders and verification)")
     p.add_argument("--now", choices=task_names(), help="立即执行一次指定任务(联调用)")
     p.add_argument("--mock", action="store_true", help="mock 模式:喇叭/通知只打日志")
     p.add_argument("--say", metavar="TEXT", help="仅向喇叭播报一段任意文本后退出(测试用)")

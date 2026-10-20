@@ -17,3 +17,8 @@ tools/go2rtc/*.txt
 tools/go2rtc/*.jpg
 
 *.pt
+
+# Leafi study track
+models/
+.scratch/
+data/evals/
