@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -99,7 +100,7 @@ class _EdgeRecorder:
         _EdgeRecorder.texts.append(text)
 
     async def save(self, path):
-        open(path, "wb").write(b"\x00" * 600)
+        Path(path).write_bytes(b"\x00" * 600)
 
 
 async def test_edge_backend_redacts_before_sending(settings, monkeypatch):
