@@ -24,7 +24,8 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 
 - A change under `leafi/` or `agent/` MUST pass the full pytest suite before being reported done.
 - A change to alignment, corrections or storage MUST add a regression test (`docs/engineering/testing.md` → never mocked).
-- A design change MUST be reviewed by codex before code (`codex-review` skill; `-c model="gpt-6-astra"` is accepted as of 2026-10-19).
+- A design change MUST be reviewed by codex before code (`codex-review` skill; `gpt-6-astra` works).
+- A new Ear/Mouth device or pairing MUST be measured before a design relies on it, and again after firmware or go2rtc upgrades (`docs/hardware/README.md`).
 
 ## Architecture rules
 
@@ -43,14 +44,13 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 - go2rtc API source strings may not contain spaces; pad silence into the file in `tts.py`, not via `#raw=`. Instance: 2026-08-07.
 - `.env` is reread only when the Frigate container is recreated (`scripts\win\apply-env.bat`). Instance: 2026-08.
 - Xiaomi camera needs internet to fetch P2P keys per connection; do not firewall it. Instance: 2026-08-07.
-- The `anthropic` package here is 0.120 (pre-1.x); check `fallbacks` / `output_config.format` support before using them (TD-1).
+- `anthropic` here is 0.120 (pre-1.x): no `fallbacks` (TD-1).
 
 ## Pointers
 
 - What to build and in what order: `docs/plans/active/2026-10-19-leafi-book-study.md` (Progress first, then Decision Log).
 - Why things are the way they are: `docs/adr/`; vocabulary: `GLOSSARY.md`; requirements and states: `docs/product.md`.
 - Where a fact lives: `docs/ownership-map.md`. A symptom: search `docs/engineering/code-locator.md`, do not read it whole.
-- Prior-art evidence for the stack: `docs/research/2026-10-19-prior-art-book-study.md`.
 - Hardware bring-up and the human console: Obsidian vault `scil/Leafi/` (owner's), buttons call `scripts/win/*`.
 
 ## Agent skills

@@ -12,6 +12,10 @@ Runner and command: `pytest.ini` + `.venv\Scripts\python -m pytest -q` (asyncio 
 | Privacy | httpx transport recorder with canaries; `LEAFI_NO_NETWORK=1` subprocess run | `tests/test_privacy.py` |
 | Hardware / models | real sherpa-onnx, RapidOCR on fixture images and desk photos, Kokoro, OpenPronounce | `@pytest.mark.hardware`, run with `LEAFI_HW_TESTS=1` |
 
+## Hardware measurement before reliance
+
+pytest cannot tell how a real device behaves. A new device, a new Ear/Mouth combination or a new path to an existing device gets a `scripts/proto/` probe that measures its duplex behaviour, latency and microphone recovery, and its `docs/hardware/` datasheet row, before any design depends on it; rerun the probe after a camera firmware update or a go2rtc rebuild. The rules, the row format and the matrix: `docs/hardware/README.md`. Probes that make the camera speak run only with the owner present (`--i-am-present`).
+
 ## Never mocked
 
 `alignment`, `corrections`/revisions, `storage` (temp file), `pages.current_text()` precedence, the speech lease.
