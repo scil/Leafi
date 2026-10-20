@@ -79,3 +79,28 @@ def test_leafi_miscue_status_and_reason_enums_are_enforced(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         store.insert("knowledge_items", kind="flashcard", language="en", key="x", anki_item_key="k",
                      created_at=now_iso(), updated_at=now_iso())
+
+
+def test_close_stale_sessions(tmp_path):
+    """A crashed session (ended_at null) is closed on the next start: open candidates → unsure(interrupted),
+    tokens settled, reading state kept, summary.interrupted = true (ADR-0013 → Interrupted session)."""
+    from leafi.core.storage import dumps, loads
+    from leafi.study import records
+    from leafi.study.alignment import ReadingState, align
+    from tests import seed
+
+    store = Store(tmp_path / "leafi.db")
+    text = "The dog ran far."
+    book, page, rev = seed.book_page(store, text, source="manual")
+    sid = seed.session(store, book)
+    read = seed.page_read(store, sid, page, rev)
+    st, _, _ = align(ReadingState.from_text(text), ["The", "dog", "red"], 1)
+    store.execute("UPDATE page_reads SET reading_state=? WHERE id=?", (dumps(st.to_json()), read))
+    mid = seed.miscue(store, read, rev, text, "ran")
+    assert records.close_stale_sessions(store) == [sid]
+    assert seed.status_of(store, mid) == ("unsure", "interrupted")
+    s = store.one("SELECT * FROM reading_sessions WHERE id=?", (sid,))
+    assert s["ended_at"] is not None and loads(s["summary"])["interrupted"] is True
+    kept = ReadingState.from_json(text, loads(store.one("SELECT reading_state FROM page_reads")["reading_state"]))
+    assert kept.statuses() == "P P S U" and (kept.pcur, kept.ccur) == (3, 3)
+    assert records.close_stale_sessions(store) == []
