@@ -26,9 +26,13 @@ stateDiagram-v2
     WRAP --> [*]
 ```
 
+Additional states from ADR-0012: `REPOSITION` (no anchor after two unanchored utterances: Leafi asks for the first words of the learner's line; no assessment) and `LISTENER_LOST` (selected Ear gone; continue in text mode when the console exists).
+
+**Input routing is by state** (ADR-0012 §7): READ → alignment; PRACTICE → retry match of the practised word; CHECK → local keyword comparison; REVIEW_DUE → `again`/`good` (`/again`, `/good`); EXPLAIN/CORRECT → that state's grammar. Controls apply everywhere; one that does not apply here is a spoken no-op ("not now").
+
 **Global transitions (every state except WRAP):**
-- `stop` (spoken ≤ 6 words matching the command grammar, typed `/stop`, or Face button) → WRAP. During playback, `stop` cancels the current `say()` first.
-- `skip` → leaves PRACTICE/EXPLAIN/CHECK back to READ without recording a judgement.
+- `stop` (spoken ≤ 6 words matching the command grammar while listening; typed `/stop` or a Face key at any time, including during playback, which cancels the current `say()` first) → WRAP.
+- `skip` → leaves PRACTICE/EXPLAIN/CHECK/REPOSITION back to READ without recording a judgement; bumps `turn_id` so pending async results are discarded.
 - `page turned` (Eye frame-diff settles on a new page, or `/page N`, or spoken "page twelve") → FIND_PAGE; any provisional alignment is discarded, committed observations stay.
 - `idle timeout` (`STUDY_IDLE_S`, default 180) → WRAP with `summary.idle=true`.
 - `page uncertain` (camera lost, OCR failed, or a frame-diff without a confident match) → PAGE_UNCERTAIN; assessment is suspended; utterances are still stored with `kind=reading` but produce no observations until the page is confirmed.
@@ -46,9 +50,9 @@ sequenceDiagram
     participant H as Hub (say → Faces, TTS → Mouths)
     L->>Lis: reads
     Lis-->>S: Utterance(words, times, conf|None, audio_ref|None)
-    S->>A: align(window, utterance, committed_cursor)
-    A-->>S: AlignResult(observations, provisional_cursor, committed_cursor)
-    S->>S: store utterance, observations; candidate miscues for substituted/deleted
+    S->>A: align(reading_state, utterance)
+    A-->>S: AlignResult(new_state, observations, sentence_completed?)
+    S->>S: store utterance, observations, reading_state; new candidates; withdraw reconciled candidates (self-correction, reread)
     alt sentence end reached and no candidates
         S->>H: say(local encouragement or nothing)
     else sentence end reached with candidates
@@ -63,13 +67,13 @@ sequenceDiagram
             opt PRON_AUTO_JUDGE and audio_ref
                 S->>S: pronunciation.score → evidence=acoustic
             end
-            S->>S: practices row; miscue → withdrawn | unsure | confirmed
+            S->>S: practices row; after the sequence: matched → withdrawn; else unsure; confirmed only with acoustic evidence
         end
     end
-    opt Brain enrichment (async, revision-guarded)
-        S->>B: explanation / question request (redacted, ≤ 3 sentences)
+    opt Brain enrichment (async, turn-guarded)
+        S->>B: explanation / question request (redacted page window, target, intent enum)
         B-->>S: result or unavailable
-        S->>S: apply only if (session, page_revision) unchanged
+        S->>S: apply only if (session, page_revision, turn_id) unchanged
     end
 ```
 
@@ -79,8 +83,8 @@ The Brain is never on the path between the end of an utterance and the first spo
 
 1. Utterance classified as `correction` (grammar: "the book says X not Y" / "it's X not Y" / typed `/fix Y X`); ambiguous cases ask once ("Do you mean the word is X?").
 2. Locate `old_text` in the current revision near the cursor (nearest occurrence within the reread window); if not found, ask the learner to point at the line (read it) and retry once; else give up politely and record a `corrections` row with `char_start=null` for the parent.
-3. One transaction (ADR-0010 §3): correction row, new revision with the span verified, lexicon update. Miscues whose token is inside the span → `invalidated (page_text_corrected)`.
-4. Re-align the current sentence against the new revision; thank the learner in the Coach voice; continue.
+3. One transaction (ADR-0010 §3, §6): correction row; new revision with the span verified and the edit map; `spans_verified` and the reading state transformed through the map (tokens inside the edited span → `unattempted`); miscues inside the span → `invalidated (page_text_corrected)`; lexicon update; Difficulties recomputed.
+4. The reading state now points at the new revision; the learner continues from the committed cursor; Leafi thanks them in the Coach voice.
 
 ## Handling "I don't understand" (B6)
 
@@ -90,7 +94,7 @@ The Brain is never on the path between the end of an utterance and the first spo
 
 ## Comprehension check (B7)
 
-At `CHECK`: Brain generates ≤ 2 questions with expected keywords from the page window; `unavailable` → skip CHECK silently (no Difficulty). Answers are judged by the Brain with the keywords; a missed answer records an `encounters` row (`trigger=check`), never a miscue. Page text is data: a page containing instructions ("ignore the previous…") is quoted inside a delimited block and the response is validated against the schema; `tests/test_prompt_injection.py` holds fixed scenarios.
+At `CHECK`: the Brain generates ≤ 2 questions, each with acceptable answers as keyword sets, from the committed page window; `unavailable` → skip CHECK silently (no Difficulty). **The learner's answer stays local** (ADR-0011): it is normalised and compared with the keyword sets (all keywords of at least one acceptable answer present → correct); anything else is `uncertain` and Leafi gives the answer in the Coach voice without judgement; only a clear miss records an `encounters` row (`trigger=check`), never a miscue. Page text is data: a page containing instructions ("ignore the previous…") is quoted inside a delimited block and the response is validated against the schema; `tests/test_prompt_injection.py` holds fixed scenarios.
 
 ## Wrap (B8, B9)
 

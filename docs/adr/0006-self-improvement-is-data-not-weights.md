@@ -24,6 +24,13 @@ Option 2 for v1, with three loops:
 
 A fourth, cheap loop: every session appends text-only transcripts of coach turns to `data/evals/` so a future prompt eval can be built from real sessions (`claude-api build-eval`).
 
+## Amendment (2026-10-19, codex reviews)
+
+- Loop 1 is now expressed through page revisions with verified spans (ADR-0010): only the corrected span is trusted, not the whole page; `pages.text_truth` no longer exists.
+- Loop 2 is advisory in v1 (ADR-0011): OCR snap proposes candidates, ASR hotwords stay off until a biased-vs-unbiased comparison is recorded.
+- Loop 3 counts only `confirmed` miscues fully and `unsure` ones as low-weight "watch" items (ADR-0012 §6).
+- The transcript loop is opt-in (`EVAL_TRANSCRIPTS=false` by default) and text-only.
+
 ## Consequences
 
 - No training pipeline, no GPU schedule, no privacy question about audio datasets.

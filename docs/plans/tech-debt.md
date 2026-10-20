@@ -3,7 +3,7 @@
 | id | Item | Owner | Grade | Trigger to pay |
 |---|---|---|---|---|
 | TD-1 | `anthropic` SDK is pinned at 0.120.2: it has `output_config` and `thinking` but no `fallbacks` parameter (checked 2026-10-19), so refusal fallback is application-owned. Upgrade to 1.x (httpx2) is a separate ticket once a reason exists. | brain | C | a feature that needs 1.x; run `/claude-api upgrade python` in its own commit |
-| TD-9 | Habit track attaches one camera frame to the parent's Telegram notification (`agent/notify.py`); the study track forbids images leaving the LAN. Owner to decide keep / disable by default. | owner | B | owner's answer; if disabled, `NOTIFY_WITH_SNAPSHOT=false` default and a test |
+| TD-9 | Resolved 2026-10-19 (ADR-0011 amendment): habit snapshot becomes opt-in `NOTIFY_WITH_SNAPSHOT` (default false); implementation + test in S1. Owner may flip it in `.env`. | habits | — | done when S1 lands |
 | TD-10 | Frigate/MQTT host ports and host go2rtc RTSP 2554 are bound without auth (merged into TD-3 scope: all supporting services, not only Frigate). | deployment | C | any non-PC device on the LAN |
 | TD-2 | No linter/formatter configured (ruff). | repo | C | first `leafi/` commit adds `ruff` to `requirements-dev.txt` and a `[tool.ruff]` table |
 | TD-3 | Frigate (15000) and MQTT (18830) are host-mapped without auth. | deployment | C | when any device outside the PC joins the LAN services |

@@ -6,7 +6,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 
 ## Boundaries
 
-- MUST NOT send images, audio, face labels or the learner's name to any cloud service; every outbound call is in the egress table of `docs/architecture/quality-attributes/security.md` (ADR-0011), text only. Enforced by: `tests/test_privacy.py` (canary recorder + no-network run).
+- MUST NOT send images, audio, face labels, the learner's name or the learner's own words to any cloud service; every outbound call is in the egress table of `docs/architecture/quality-attributes/security.md` (ADR-0011), text only. The one opt-in: the habit track's parent snapshot when the owner sets `NOTIFY_WITH_SNAPSHOT=true`. Enforced by: `tests/test_privacy.py` (canary recorder + no-network run).
 - MUST NOT commit `.env`, `data/`, `cache/`, `models/`, `config/frigate/go2rtc_homekit.yml` (gitignored; keep it so). Enforced by: `.gitignore`.
 - MUST NOT replace `tools/go2rtc/go2rtc.exe` with a stock build; read `tools/go2rtc/PATCHES.md` first. Enforced by: advisory.
 - MUST NOT play audio on the camera speaker during tests or unasked (it is in a child's home); use `--mock` or `SPEAKER_BACKEND=local`. Enforced by: advisory.
@@ -30,7 +30,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 
 - `leafi.core` imports nothing from `leafi.devices`, `leafi.services`, `leafi.study`; tracks never import adapters or backends directly (ADR-0002/0003). Enforced by: `tests/test_architecture.py`.
 - Page text is read through `pages.current_text()`; corrections add revisions and invalidate with a reason, never delete (ADR-0010). Enforced by: `tests/test_corrections.py`.
-- Alignment yields observations and a committed cursor; a candidate miscue becomes "wrong" only with practice or acoustic evidence; ≤ 2 retries, skip always (ADR-0009). Enforced by: `tests/test_alignment.py`, `tests/test_practice.py`.
+- Alignment keeps a reading state across utterances; candidates reconcile; a miscue is `confirmed` only with acoustic evidence, otherwise `unsure`; ≤ 2 retries, skip always (ADR-0009, ADR-0012). Enforced by: `tests/test_alignment.py`, `tests/test_practice.py`.
 - Zero mouths is valid: `hub.say()` returns with text shown on Faces; half-duplex listening gate; one speaker at a time (ADR-0002, ADR-0011). Enforced by: `tests/test_hub.py`.
 
 ## Conventions that differ from defaults

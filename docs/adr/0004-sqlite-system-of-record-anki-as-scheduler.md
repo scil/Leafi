@@ -25,9 +25,15 @@ The learner's books, pages, miscues and knowledge items must be stored and revie
 
 Option 3. Deck `Leafi`, note type `问答题` (fields `正面`/`背面`) in the bilingual English-first layout the `anki-cards` skill already uses; tag `leafi::<book-slug>` plus `lib::` style topic tags. Push happens at session wrap; a review turn at session start reads `findCards "deck:Leafi is:due"`, asks through the Faces/Mouths, and answers with `answerCards`.
 
+## Amendment (2026-10-19, codex review rounds 1–2)
+
+- The link is `knowledge_items.anki_item_key` (uuid) + tag `leafi-id::<key>` on the note; Anki ids live in `anki_outbox` (`anki_note_id`, `card_ids`) and never on `knowledge_items`. Before any `addNote`, `findNotes "tag:leafi-id::<key>"` dedupes a lost acknowledgement.
+- Review answers have states `pending → sent (unknown) → acked | failed`; a `sent` answer is never replayed automatically; reconciliation calls `getReviewsOfCards` and marks `acked` when a review later than `sent_at` exists, else the answer is shown to the parent as unknown.
+- Parent edits win: Leafi updates a note field only when its remote value equals the value Leafi last acknowledged (hash stored in the outbox); otherwise the field is left and the conflict logged for the parent.
+
 ## Consequences
 
-- Anki absent → items queue (null `anki_note_id`) and are pushed later; review turn is skipped.
+- Anki absent → items queue in `anki_outbox` and are pushed later; review turn is skipped.
 - Card copy must follow the `anki-cards` skill's no-redundancy and short-card rules; `study/knowledge.py` owns the card builder.
 - The habit track's `data/sessions.db` stays separate until T2.
 

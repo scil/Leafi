@@ -69,7 +69,8 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `BRAIN_MODEL_CHEAP` | `claude-haiku-5-5` | one-line habit phrases |
 | `BRAIN_DEADLINE_S` | `12` | overall deadline per Brain call, 1 retry |
 | `BRAIN_LOCAL_MODEL` | `` (empty) | Ollama fallback, deferred (ADR-0011) |
-| `REDACT_TERMS` | `` | comma-separated terms removed from cloud payloads (learner name, school) |
+| `REDACT_TERMS` | `` | comma-separated terms removed from cloud payloads (learner name, school); set by `python -m leafi setup --redact "…"`; `doctor` warns when empty |
+| `NOTIFY_WITH_SNAPSHOT` | `false` | habit track only: attach one frame to the parent's Telegram notification (owner opt-in, ADR-0011) |
 | `STUDY_IDLE_S` | `180` | idle timeout to WRAP |
 | `SAY_TIMEOUT_S` | `20` | per `say()` call |
 | `EVAL_TRANSCRIPTS` | `false` | opt-in text-only transcripts under `data/evals/` |

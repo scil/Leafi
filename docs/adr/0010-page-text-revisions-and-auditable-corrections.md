@@ -17,6 +17,13 @@ The first data model identified a page by a hash of its first twelve OCR words a
 4. **Assessments reference what they assessed.** `utterances.page_revision_id`, `miscues.utterance_id`, `miscues.expected_token_index` (token index in that revision), `miscues.status (candidate|confirmed|unsure|withdrawn|invalidated)`, `miscues.invalidated_reason`. A correction that covers a miscue's token marks it `invalidated` with reason `page_text_corrected`; nothing is deleted.
 5. **Asynchronous results carry their revision.** Any result produced after a delay (Brain explanation, OCR second pass) is applied only if `(session_id, page_revision_id)` still matches the current state; otherwise it is discarded and logged.
 
+## Amendment (2026-10-19, codex review round 2)
+
+6. **Spans and transforms.** Spans are half-open Unicode code-point offsets `[start, end)`. Each revision records `tokenizer_version` and an `edit_map` (list of `[old_start, old_end, new_start, new_end]`) from its parent. Applying a correction transforms, through the edit map and in the same transaction: the revision's `spans_verified`, the active `ReadingState` (token statuses and cursors re-tokenised; tokens inside the edited span reset to `unattempted`), and marks miscues whose `expected_token_index` falls inside the edited span as `invalidated (page_text_corrected)`; Difficulties are recomputed afterwards. Assessments referencing older revisions keep their original indices (they are immutable evidence) and are read through the revision they name.
+7. **Manual text.** `--page-text <file>` (or `/page N --text <file>`) creates a `manual` revision with every span verified and `printed_number` from `--page N` (else null); later pages need an Eye or another explicit text.
+8. **Turn-scoped async guard.** The guard in §5 is `(session_id, page_revision_id, turn_id)`; see ADR-0012 §7.
+9. **The one sanctioned deletion.** `python -m leafi forget --session <id>` deletes that session's utterances, observations, practices and miscues (cascade), nulls `corrections.utterance_id` (the correction and its revision stay), keeps `reading_sessions.summary` counts, and recomputes Difficulties. No other path deletes evidence.
+
 ## Consequences
 
 - Three tables instead of one for page text; reads go through `pages.current_text()` and never through `page_revisions` directly.

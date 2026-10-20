@@ -32,22 +32,31 @@ class Eye(Protocol):
 class Ear(Protocol):
     def listen(self) -> AsyncIterator[AudioChunk]: ...      # 16 kHz mono int16
 class Mouth(Protocol):
-    async def play(self, clip: AudioClip) -> None: ...
+    drain_s: float                                          # read once by the listening gate after play()
+    async def play(self, clip: AudioClip) -> None: ...      # returns at estimated playback end
+    async def stop(self) -> None: ...                       # cancel current playback
 class Face(Protocol):
     async def show(self, msg: Display) -> None: ...        # Display(kind: say|status|listening|alert, text, lang)
 class Listener(Protocol):
-    async def next_utterance(self, timeout_s: float) -> Utterance | None: ...
-class Presence(Protocol): ...
+    async def next_utterance(self, timeout_s: float) -> Utterance | None: ...   # Utterance.audio_ref is None for typed input
+    async def pause(self) -> None: ...                      # discard buffered audio
+    async def resume(self, after_s: float = 0.0) -> None: ...
+class Presence(Protocol):
+    def subscribe(self, fn: Callable[[PresenceEvent], None]) -> Callable[[], None]: ...
 class Notifier(Protocol):
-    async def notify(self, title: str, body: str, frame: bytes | None = None) -> None: ...
+    async def notify(self, title: str, body: str) -> None: ...   # text only (ADR-0011)
+class Synthesizer(Protocol):                                # implemented by services/tts; injected into the Hub
+    async def synth(self, text: str, lang: str, *, slow: bool = False) -> AudioClip: ...
 
-class Hub:
-    @classmethod
-    def from_yaml(cls, path, settings) -> "Hub": ...        # disables devices with missing options, never raises for them
-    mouths: list[Mouth]; faces: list[Face]; eyes: list[Eye]; listeners: list[Listener]; notifiers: list[Notifier]
-    async def say(self, text: str, lang: str = "en", *, slow: bool = False) -> None: ...   # Faces first, then TTS → Mouths per policy, timeout
-    def listener(self) -> Listener: ...                     # voice listener if an Ear + ASR exist, else console
+class Hub:                                                  # constructed by leafi/app.py (composition root)
+    def __init__(self, *, mouths, faces, eyes, listeners, notifiers, synthesizer, policy, primary_mouth): ...
+    async def say(self, text: str, lang: str = "en", *, slow: bool = False) -> None: ...   # Faces first, then TTS → Mouths per policy, SAY_TIMEOUT_S, never raises for a device error
+    async def stop_speaking(self) -> None: ...
+    def listener(self) -> Listener: ...                     # the configured study.listener, else console
+    def eye(self) -> Eye | None: ...                        # the configured study.eye
 ```
+
+`leafi/app.py` reads `devices.yml`, expands `${VAR}`, asks `leafi.devices.registry` for adapter factories (a device with a missing option is disabled with a warning), builds services from the registries, composes voice Listeners (Ear + VAD + ASR) when an Ear and an ASR backend exist, and constructs the Hub. `python -m leafi devices` prints the result.
 
 Acceptance: `python -m leafi devices` prints the parsed table; `say()` with 0/1/2 mouths; console device echoes.
 
@@ -55,17 +64,20 @@ Acceptance: `python -m leafi devices` prints the parsed table; `say()` with 0/1/
 
 Deliverables: `leafi/study/{books,pages,alignment,miscues,coach,session,knowledge,anki,review,corrections,lexicon,phrases}.py`, `leafi/services/{brain,tts}/` with `mock` + real backends (brain: Claude via official SDK; TTS: Kokoro + edge; both lazily imported), `python -m leafi study --text --book "<title>" --page-text <file>`.
 
-Key behaviours (revised after codex review round 1; ADR-0009, ADR-0010, ADR-0011 govern):
-- `alignment.align(window: list[Token], utterance: Utterance, committed_cursor: int, *, reread_back=6, unsure_below=0.5) -> AlignResult(observations, provisional_cursor, committed_cursor)`: bounded semi-global alignment; observations are matched/substituted/deleted spans and insertion events anchored between tokens; unattempted suffix never deleted; rereads not penalised; commitment rule per ADR-0009 §3.
-- Candidate miscues from substituted/deleted observations; practice = model-and-repeat, ≤ 2 retries, skip always; outcomes `withdrawn | unsure | confirmed`; text mode records `practiced` with `evidence=none`.
-- Intent classification: control grammar only for utterances ≤ 6 words (`stop`, `skip`, `next page`, `page N`, `I don't understand`, `what does X mean`, `the book says X not Y`); typed `/stop /skip /page N /fix Y X /explain X`; everything else is reading. Brain is not used for intent in v1.
+Key behaviours (revised after codex review rounds 1–2; ADR-0009 as amended by ADR-0012, ADR-0010, ADR-0011 govern):
+- `alignment.align(state: ReadingState, utterance: Utterance, *, reread_back=6, anchor_min=…, unsure_below=0.5) -> AlignResult(state, observations, sentence_completed: bool, unanchored: bool)`: pure; reading state kept across utterances (per-token status, committed cursor, turn id); bounded window with cursor-relative costs and tie handling; free prefix only in the reread region; unattempted suffix never deleted; reconciliation withdraws candidates (self-correction, reread); reposition flow after two unanchored utterances; sentence completion by cursor or by pause + last-two-tokens rule (ADR-0012 §1–5).
+- Candidate miscues from substituted/deleted observations; practice = model-and-repeat, ≤ 2 retries, skip always; after the sequence: any match → `withdrawn (practice)`, otherwise `unsure`; `confirmed` only with acoustic evidence; text mode ends as `unsure` with a `practices` row `(practiced, evidence=none)` (ADR-0012 §6).
+- Input routing by state (ADR-0012 §7): READ → alignment; PRACTICE → retry; CHECK → local keyword comparison; REVIEW_DUE → `again`/`good`. Controls: spoken grammar for utterances ≤ 6 words while listening (`stop`, `skip`, `next page`, `page N`, `I don't understand`, `what does X mean`, `the book says X not Y`); typed `/stop /skip /page N /fix Y X /explain X /again /good`; a control that does not apply in the current state is a spoken no-op. Cancel during playback = console/Face only (ADR-0012 §8). Brain is not used for intent in v1; learner free text never leaves the LAN.
+- Async Brain results carry `(session_id, page_revision_id, turn_id)`; skip/stop/state change/new sentence bumps `turn_id`; stale results are discarded.
+- `--page-text <file> [--page N]` creates a fully verified `manual` revision (ADR-0010 §7).
+- `agent/notify.py`: snapshot attachment gated by `NOTIFY_WITH_SNAPSHOT` (default false) + one test; `agent/speaker.py`: speech-lease check. These are the only changes to `agent/`.
 - Immediate coach lines come from `study/phrases.py` (Coach voice, static, deny-list checked). The Brain is enrichment only (explain, questions, better line when in time), async, 12 s deadline, revision-guarded, strict schema + action allow-list; unavailable → skip without a Difficulty.
 - Page identity and revisions per ADR-0010; corrections in one transaction; miscues invalidated with reason.
 - Anki: deck `Leafi`, model `问答题`, tag `leafi-id::<uuid>` for dedupe, `anki_outbox`, learner-chosen ease (again/good); stateful fake AnkiConnect server in tests (lost-ack mode, parent edits).
 - Speech lease `data/leafi.lock` held by the session; `agent/speaker.py` gains a 5-line check that logs instead of speaking while the lease is held (the only change to `agent/`).
 - Storage per `data-model.md`; `export --session <id>` JSON (counts and items, no learner free text); `forget --session <id>`.
 
-Acceptance script (`tests/test_study_text_mode.py`): a scripted console listener reads a fixture page with one substitution, one mid-sentence skip, a hesitation split across two utterances, a reread of three words, one correction utterance, one "what does X mean", a `/skip` during practice, answers one comprehension question (Brain mock), then `/stop`; assertions on observations, candidate→practiced transitions, correction revision chain and invalidation, knowledge items + encounters, Anki outbox through the fake (including one lost ack), summary counts, lease released.
+Acceptance script (`tests/test_study_text_mode.py`): a scripted console listener reads a fixture page with one substitution, one mid-sentence skip, a hesitation split across two utterances, a reread of three words, one correction utterance, one "what does X mean", a `/skip` during practice, answers one comprehension question (Brain mock), then `/stop`; assertions on observations and the persisted reading state, candidate → `unsure` with a `practiced/evidence=none` row (and one self-corrected candidate → `withdrawn`), correction revision chain with edit map, span transform and invalidation, knowledge items + encounters, Anki outbox through the fake (including one lost ack deduped by tag and one `sent` review answer never replayed), summary counts, lease released.
 
 ### S2 — See the book (B1, B2)
 
@@ -77,7 +89,7 @@ Acceptance: fixture pages rendered with PIL are OCR'd to ≥ 98 % word accuracy 
 
 Deliverables: `leafi/devices/local_pc.py` (Ear via `sounddevice`, Mouth via ffplay/sounddevice, Face console), optional `go2rtc_camera` Ear (ffmpeg pulls `rtsp://127.0.0.1:2554/<stream>` audio → 16 kHz PCM) gated by prototype P-2, `leafi/services/asr/{sherpa,mock}.py` with Silero VAD and Parakeet TDT v2 int8 (timestamps; hotwords if P-1 confirms), `leafi/services/pronunciation/{openpronounce,mock}.py`, Practice loop with slow TTS modelling and re-scoring, `doctor` downloads.
 
-Acceptance: hardware-marked tests with Kokoro-synthesised fixture audio: correct reading → all `read`; one substituted word → that word `mispronounced`; practice retry resolves it. Turn latency bench ≤ 1.5 s on the PC.
+Acceptance: hardware-marked tests with Kokoro-synthesised fixture audio: a correct reading → every token committed, no candidates; one substituted word → a `substituted` observation and a candidate at that token; a practice retry that matches → `withdrawn (practice)`, one that disagrees twice → `unsure` (never `confirmed` while `PRON_AUTO_JUDGE` is off). End-to-audible local feedback ≤ 1.5 s on the PC speaker, ≤ 2.5 s on the camera (performance.md). These tests prove plumbing, not tutoring accuracy; the child-speech evaluation (P-4) is separate.
 
 ### Out of this plan (ADR-0011): S4 device breadth (ESP32/Wyoming/Tapo) and S5 habits-on-the-Hub get their own plans once the loop is proven with the v1 device set (console, PC, Xiaomi Eye+Mouth).
 
@@ -117,7 +129,8 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 - [x] 2026-10-19 Docs set written (product, glossary, architecture, ADR-0001…0008, engineering, ownership map, this plan).
 - [x] 2026-10-19 Rename to Leafi in README, CLAUDE/AGENTS, code strings, Frigate template, `.env.example`, `.env`, vault console (commit 8204ac1).
 - [x] 2026-10-19 Codex design review round 1 (gpt-6-astra, reasoning high): `reviews/2026-10-19-codex-design-review-1.md`; resolved by ADR-0009/0010/0011 and the revised data model, flows, security, performance, testing docs.
-- [ ] Codex design review round 2 (narrow: the resolutions).
+- [x] 2026-10-19 Codex design review round 2: `reviews/2026-10-19-codex-design-review-2.md`; resolved by ADR-0012 and amendments to ADR-0004/0006/0009/0010/0011, data model, flows, security, config, this plan.
+- [ ] Codex design review round 3 (confirming).
 - [ ] Opus implements S0, S1, S2 (mock + fixtures), S3 shells.
 - [ ] Tests green; commit; docs updated after change.
 - [ ] Hardware steps on the PC: P-1, P-2, P-3; S2/S3 real backends; acceptance 1 with the camera.
@@ -150,7 +163,12 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 | 2026-10-19 | Composition root `leafi/app.py`; `Synthesizer` protocol in core; audio ownership on `Utterance.audio_ref`; half-duplex listening gate; speech lease between processes | codex review B1/B2/A5/B3/D5 → overview.md, device-routing.md |
 | 2026-10-19 | Three latency budgets (ack 0.3 s, local feedback 1.5 s PC / 2.5 s camera, enrichment 6 s); Brain off the fast path | codex review A6 → performance.md |
 | 2026-10-19 | `anthropic` pinned at 0.120.2 (has `output_config`, no `fallbacks`); application-owned fallback | codex review E7 → TD-1 |
-| 2026-10-19 | Codex review prompt: the file `scratchpad/codex-design-review-prompt.md` content is reproduced in the review report's header for reruns | — |
+| 2026-10-19 | Reading state across utterances; reconciliation withdraws candidates; reposition flow; sentence completion by cursor or pause; `confirmed` only with acoustic evidence; input routing by state; turn-scoped async guard; cancel during playback via console/Face | codex round 2 §3–4 → ADR-0012 |
+| 2026-10-19 | Half-open code-point spans, tokenizer version, edit maps; corrections transform verified spans and reading state atomically; `forget --session` is the one sanctioned deletion | codex round 2 §2.10, §3.2 → ADR-0010 amendment |
+| 2026-10-19 | Habit snapshot = owner opt-in `NOTIFY_WITH_SNAPSHOT` (default false); learner free text never leaves the LAN; comprehension judged locally; `REDACT_TERMS` via `leafi setup` | codex round 2 §2.1–2.2, §3.5 → ADR-0011 amendment |
+| 2026-10-19 | Anki: `anki_item_key` + outbox replaces `anki_note_id`; review answers `pending→sent→acked`, never replayed; parent edits win via last-acked hashes | codex round 2 §2.8, §3.3–3.4 → ADR-0004 amendment |
+| 2026-10-19 | Drain applied once by the listening gate; `play()` returns at estimated end; Brain deadline 12 s everywhere | codex round 2 §2.9 |
+| 2026-10-19 | Review prompts are kept with the reports under `docs/plans/active/reviews/` for reruns | — |
 
 ## Outcomes & retrospective
 

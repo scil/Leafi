@@ -4,7 +4,7 @@
 
 1. **Images, faces, poses never leave the LAN.** Book pages are images. OCR, vision judge and barcode decoding run locally. Enforced by: egress tests below; the `Notifier` port carries text only.
 2. **The learner's voice stays local by default.** ASR and pronunciation scoring are local; audio is not persisted unless `AUDIO_KEEP_CLIPS=true`. Enforced by: config default + `tests/test_storage.py` retention test.
-3. **Cloud payloads carry no identity.** Local redaction of `REDACT_TERMS` (learner name, school, any term the parent adds) before any cloud call; free-form learner speech goes to the Brain only redacted and only as intent + target; page text goes as the selected window (≤ 3 sentences). Enforced by: canary test below.
+3. **Cloud payloads carry no identity and no learner text.** The Claude payload is exactly: the redacted page window (≤ 3 sentences), candidate words, an intent enum + target word/phrase from the page, counts-only summary, fixed coach instructions (ADR-0011). Learner free text never leaves the LAN in v1 (intents are rule-based; comprehension answers are compared locally). `REDACT_TERMS` (set with `python -m leafi setup --redact`) is defence in depth against identity printed or handwritten on a page. Enforced by: canary test below.
 4. **Cameras never enter the bathroom**; the study camera points at the desk. Enforced by: advisory (physical).
 5. **Child-transparent and child-controlled.** Leafi says when it listens and looks; the Face shows the listening state; `stop` and `skip` work in every state; at most 2 retries per word; no persistent Difficulty without corroboration (ADR-0009). Enforced by: `tests/test_practice.py`, `tests/test_session_controls.py`.
 
@@ -12,7 +12,7 @@
 
 | Destination | Payload | Module | Switch |
 |---|---|---|---|
-| Claude API | redacted page window, miscue words, intent enum + target, counts-only summary | `leafi/services/brain/claude.py` | `ANTHROPIC_API_KEY` |
+| Claude API | redacted page window, candidate words, intent enum + target from the page, counts-only summary, fixed instructions — never learner free text | `leafi/services/brain/claude.py` | `ANTHROPIC_API_KEY` |
 | edge-tts | text to speak | `leafi/services/tts/edge.py` | `TTS_BACKEND_ZH` |
 | Open Library | ISBN digits | `leafi/services/catalog/openlibrary.py` | `BOOK_LOOKUP` |
 | Bark / Telegram | text | `leafi/devices/notifiers.py` | `BARK_URL`, `TELEGRAM_*` |
@@ -21,7 +21,7 @@
 
 Everything else stays on the LAN. OpenPronounce is configured with an offline reference voice (Kokoro) and pre-provisioned checkpoints; gTTS is off.
 
-**Habit-track exception.** `agent/notify.py` can attach one frame to the parent's Telegram chat (the owner's 2026-08 design). The study track never does; whether the habit track keeps it is the owner's open decision (TD-9).
+**Habit-track parent snapshot.** `agent/notify.py` attaches one frame to the parent's Telegram chat only when the owner sets `NOTIFY_WITH_SNAPSHOT=true` (default false; ADR-0011 amendment). The study track never attaches one.
 
 Enforcement: `tests/test_privacy.py` — (a) an `httpx` transport recorder wrapped around every client the study loop can create, run under a text-mode session seeded with canaries (learner name, school, a handwritten label in the page fixture, audio bytes); every outbound body is asserted canary-free and every host is in the table above; (b) a subprocess run with `LEAFI_NO_NETWORK=1` (any non-loopback connect raises) must complete a text-mode session and a pronunciation score on a fixture clip.
 

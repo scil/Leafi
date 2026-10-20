@@ -27,7 +27,9 @@ Everything else is LAN-only. Enforcement: `tests/test_privacy.py` installs an `h
 
 Identity redaction: configurable identifiers (`REDACT_TERMS`, the learner's name and school by default) are replaced locally before any cloud payload; free-form learner questions go to the Brain only after redaction, and page text goes only as the selected window.
 
-**Habit track exception (owner's earlier decision):** `agent/notify.py` may attach one frame to the parent's Telegram when `TELEGRAM_*` is configured. This is recorded as the owner's accepted exception until the owner decides otherwise (tech-debt TD-9); the study track never uses it, and the `Notifier` port has no frame parameter.
+**Habit-track parent snapshot.** The repository boundary (AGENTS.md) governs: images do not leave the LAN. `agent/notify.py` attaches a frame to the parent's Telegram only when the owner sets `NOTIFY_WITH_SNAPSHOT=true` in `.env` (default `false`, a 3-line change plus a test in S1). The owner's 2026-08 design is thereby kept as an explicit opt-in on their own phone, not as a default. The `Notifier` port has no frame parameter; the study track never attaches one.
+
+**Learner text never reaches the cloud in v1.** Intents are rule-based; explanation targets are words/phrases of the page or "this sentence"; comprehension answers are compared locally with the Brain-generated keywords (conservative match: all keywords of at least one acceptable answer, after normalisation) and an ambiguous answer is `unavailable` (no Difficulty). The Claude payload is therefore: the redacted page window (≤ 3 sentences), candidate words, an intent enum + target, counts-only summary, and the fixed coach instructions. `REDACT_TERMS` is defence in depth against identity inside page text (a handwritten name) and is populated by `python -m leafi setup --redact "<name>,<school>"`; `doctor` warns when it is empty.
 
 Pronunciation backend: reference synthesis is Kokoro (offline); gTTS is disabled by configuration; model checkpoints are provisioned by `doctor`, never downloaded at inference; inference must pass with `LEAFI_NO_NETWORK=1`.
 

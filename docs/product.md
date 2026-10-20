@@ -58,7 +58,7 @@ Leafi is a household AI agent. It does family tasks through whatever hardware th
 |---|---|---|
 | T1 | Scheduled Tasks with presence / pose-and-dwell / vision-judge Verifiers, parent notifications, weekly report. | Implemented (`agent/`) |
 | T2 | Habits run on the Hub instead of talking to go2rtc directly; one config, one database — its own future plan with a migration policy (codex review A7). | Proposed |
-| T3 | Whether the habit track keeps attaching one frame to the parent's Telegram notification (the study track never does). | Candidate — owner's decision (TD-9) |
+| T3 | The habit track attaches one frame to the parent's Telegram notification only when the owner sets `NOTIFY_WITH_SNAPSHOT=true` (default off); the study track never does. | Accepted (ADR-0011 amendment) |
 
 ## Non-goals
 

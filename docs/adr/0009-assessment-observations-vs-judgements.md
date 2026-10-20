@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: accepted, amended by 0012
 date: 2026-10-19
 supersedes: 0007
 ---
+
+> Amended by ADR-0012 (same day, codex review round 2): §2's per-utterance commitment becomes commitment over a reading state kept across utterances; §2's "no new observation on reread" becomes "no new candidate"; §4's "retry again disagrees → confirmed" is withdrawn: `confirmed` needs acoustic evidence, otherwise `unsure`.
 
 # Alignment produces observations with a committed cursor; a pronunciation judgement needs acoustic evidence
 

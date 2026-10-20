@@ -13,6 +13,6 @@ Objective: a study session never ends because a model or device failed; it degra
 | Process crash mid-session | `reading_sessions.ended_at` null; next start closes it with `summary="interrupted"` | `tests/test_storage.py::test_close_stale_sessions` |
 | go2rtc speaker push rejected (space in src, codec) | logged with the src string; no retry storm (one retry) | existing `agent/speaker.py` behaviour, to be kept in the adapter |
 
-Timeouts: `say()` 20 s; Brain 30 s; OCR 15 s; ASR per utterance 10 s after VAD stop; Anki 10 s.
+Timeouts: `say()` 20 s; Brain 12 s overall with 1 retry (`BRAIN_DEADLINE_S`); OCR 15 s; ASR per utterance 10 s after VAD stop; Anki 10 s.
 
 Backups: `data/*.db` are copied by the user's normal backup; `python -m leafi export --session <id>` writes a JSON summary for the parent (no audio).
