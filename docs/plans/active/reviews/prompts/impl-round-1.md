@@ -1,0 +1,5 @@
+Review the code change in the file .scratch/review/impl-review.diff (a unified diff of the new Leafi study track: leafi/ package, two small changes in agent/, tests/). Read only the files the diff touches plus, for the rules they must satisfy, docs/adr/0013-reading-algorithm-v1.md, docs/adr/0010-page-text-revisions-and-auditable-corrections.md, docs/adr/0011-egress-policy-and-v1-scope.md, docs/adr/0004-sqlite-system-of-record-anki-as-scheduler.md and docs/architecture/data-model.md. Do not explore the rest of the repository.
+
+Find correctness defects: places where the code deviates from ADR-0013's pseudocode and session rules, from ADR-0010, from ADR-0004, and from ADR-0011; concurrency/async problems in the Hub; SQLite transaction and migration bugs; tests that pass without testing the rule; and anything that could make Leafi tell a child a word was wrong without evidence. Ignore style.
+
+Output: numbered findings, most severe first, each with file:line from the diff, the defect in two sentences, how to reproduce or a failing test sketch, and the fix. End with a one-line verdict: ready / not ready for the owner's first text-mode session.

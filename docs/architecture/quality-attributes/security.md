@@ -13,7 +13,7 @@
 | Destination | Payload | Module | Switch |
 |---|---|---|---|
 | Claude API | redacted page window, candidate words, intent enum + target from the page, counts-only summary, fixed instructions — never learner free text | `leafi/services/brain/claude.py` | `ANTHROPIC_API_KEY` |
-| edge-tts | text to speak | `leafi/services/tts/edge.py` | `TTS_BACKEND_ZH` |
+| edge-tts | Leafi-authored lines only, after `REDACT_TERMS` redaction; a line that embeds learner-originated text (a typed correction, a learner answer) is marked local-only and is shown on Faces / spoken by a local backend, never sent to a cloud TTS | `leafi/services/tts/edge.py` | `TTS_BACKEND_ZH`, `TTS_BACKEND_EN` |
 | Open Library | ISBN digits | `leafi/services/catalog/openlibrary.py` | `BOOK_LOOKUP` |
 | Bark / Telegram | text | `leafi/devices/notifiers.py` | `BARK_URL`, `TELEGRAM_*` |
 | Xiaomi cloud | P2P keys, by go2rtc, outside Leafi | — | — |
