@@ -14,7 +14,7 @@ Runner and command: `pytest.ini` + `.venv\Scripts\python -m pytest -q` (asyncio 
 
 ## Hardware measurement before reliance
 
-pytest cannot tell how a real device behaves. A new device, a new Ear/Mouth combination or a new path to an existing device gets a `scripts/proto/` probe that measures its duplex behaviour, latency and microphone recovery, and its `docs/hardware/` datasheet row, before any design depends on it; rerun the probe after a camera firmware update or a go2rtc rebuild. The rules, the row format and the matrix: `docs/hardware/README.md`. Probes that make the camera speak run only with the owner present (`--i-am-present`).
+pytest cannot tell how a real device behaves. A new device, a new Ear/Mouth combination or a new path to an existing device gets a `scripts/probes/` probe that measures its duplex behaviour, latency and microphone recovery, and its `docs/hardware/` datasheet row, before any design depends on it; rerun the probe after a camera firmware update or a go2rtc rebuild. The rules, the row format and the matrix: `docs/hardware/README.md`. Probes that make the camera speak run only with the owner present (`--i-am-present`).
 
 ## Never mocked
 

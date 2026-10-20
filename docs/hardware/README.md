@@ -10,7 +10,7 @@ The one home for what a device or a combination of devices was **measured** to d
 
 ## Rules
 
-- **Measure before relying.** A new device, a new Ear/Mouth combination, or a new path to an existing device (a different bridge, protocol or adapter) gets its duplex behaviour, latency and microphone recovery measured with a `scripts/proto/` probe, and its datasheet row written, before any design or ADR depends on it. Unmeasured fields stay in the datasheet's *Unmeasured* list; a design that needs one names the probe that will fill it.
+- **Measure before relying.** A new device, a new Ear/Mouth combination, or a new path to an existing device (a different bridge, protocol or adapter) gets its duplex behaviour, latency and microphone recovery measured with a `scripts/probes/` probe, and its datasheet row written, before any design or ADR depends on it. Unmeasured fields stay in the datasheet's *Unmeasured* list; a design that needs one names the probe that will fill it.
 - **Re-measure after an upgrade.** A camera firmware update, a go2rtc rebuild or upgrade (`tools/go2rtc/PATCHES.md`), a Bluetooth or driver change, or a new headset invalidates that device's rows until the probe is rerun. Record the new run as a new row; mark the old one superseded, do not delete it.
 - **Audible probes need the owner.** A probe that plays sound on the camera runs only when the owner says they are present (`--i-am-present`); silent probes (`p2`, `p3`, `p6`) may run any time.
 

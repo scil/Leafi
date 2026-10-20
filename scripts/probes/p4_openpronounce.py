@@ -7,8 +7,8 @@ expected word, a near-miss, an unrelated word). The parent-labelled child-speech
 `PRON_AUTO_JUDGE` is a separate protocol (docs/engineering/pronunciation-evaluation.md).
 
 Run (nothing is played anywhere):
-    $env:LEAFI_NO_NETWORK="1"; .venv\\Scripts\\python scripts/proto/p4_openpronounce.py
-    $env:LEAFI_NO_NETWORK="1"; .venv\\Scripts\\python scripts/proto/p4_openpronounce.py --eval data/evals/retries.csv
+    $env:LEAFI_NO_NETWORK="1"; .venv\\Scripts\\python scripts/probes/p4_openpronounce.py
+    $env:LEAFI_NO_NETWORK="1"; .venv\\Scripts\\python scripts/probes/p4_openpronounce.py --eval data/evals/retries.csv
 The second form scores a parent-labelled retry set (columns: expected, path, label ∈ ok|wrong|unclear) and
 prints the false-correction table per threshold (docs/engineering/pronunciation-evaluation.md).
 """

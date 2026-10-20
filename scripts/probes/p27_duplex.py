@@ -10,9 +10,9 @@ at `--push-at` seconds, prints rms per second for both, and transcribes the came
 after playback. Owner protocol: count aloud slowly ("one … twenty", about one word a second) from the start,
 about 1 m from the camera.
 
-    .venv\\Scripts\\python scripts/proto/p27_duplex.py --i-am-present --mic DJI --clip silence
+    .venv\\Scripts\\python scripts/probes/p27_duplex.py --i-am-present --mic DJI --clip silence
         speaker channel opens but plays silence: microphone lost → hold-to-talk mute, not echo cancellation
-    .venv\\Scripts\\python scripts/proto/p27_duplex.py --i-am-present --mic DJI --clip 2
+    .venv\\Scripts\\python scripts/probes/p27_duplex.py --i-am-present --mic DJI --clip 2
         plays "Let's try that word once more." (announce it first)
 """
 

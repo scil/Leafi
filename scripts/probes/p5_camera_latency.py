@@ -6,12 +6,12 @@ AUDIBLE IN THE CHILD'S HOME. Run only when the owner says so, with the owner nex
 truncated at the start or the end.
 
 Two ways to time it (host go2rtc running, camera online):
-    .venv\\Scripts\\python scripts/proto/p5_camera_latency.py --i-am-present --auto
+    .venv\\Scripts\\python scripts/probes/p5_camera_latency.py --i-am-present --auto
         The camera microphone records its own speaker through rtsp://127.0.0.1:2554/<stream> (P-2 showed it
         hears the room): the script pushes each clip, finds the audible onset and offset in the recording, and
         prints end-to-audible latency (±0.3 s: the RTSP pull starts ~0.8 s late and that offset is estimated
         from the pull's own wall clock) and the heard duration against the clip duration (truncation).
-    .venv\\Scripts\\python scripts/proto/p5_camera_latency.py --i-am-present
+    .venv\\Scripts\\python scripts/probes/p5_camera_latency.py --i-am-present
         Manual: press Enter to push, Enter again when you hear it, then answer the truncation question. Needs a
         real interactive console (the app's Terminal panel handed `input()` an EOF on 2026-10-20).
 Without `--i-am-present` it only prepares the clips and prints the push command it would send.

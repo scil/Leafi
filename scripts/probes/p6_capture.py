@@ -4,7 +4,7 @@ Questions (plan → Prototypes): device selection (name / index / default), whet
 mono int16 from the default device or resampling is ours, overflow signalling, unplug/replug, and capture
 under model load. Captures a few seconds into memory, prints numbers, writes nothing, plays nothing.
 
-Run:  .venv\\Scripts\\python scripts/proto/p6_capture.py [--device NAME_OR_INDEX] [--seconds 3] [--load]
+Run:  .venv\\Scripts\\python scripts/probes/p6_capture.py [--device NAME_OR_INDEX] [--seconds 3] [--load]
 """
 
 from __future__ import annotations

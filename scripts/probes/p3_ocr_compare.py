@@ -6,8 +6,8 @@ captures (camera offline) it runs on PIL-rendered fixture pages so the two pipel
 
 Owner, to take the captures (silent; nothing is pushed to the camera):
     scripts\\win\\go2rtc-host.bat
-    .venv\\Scripts\\python scripts/proto/p3_ocr_compare.py --capture 3 --out cache/desk     (3 stills, 4 s apart, both widths)
-    .venv\\Scripts\\python scripts/proto/p3_ocr_compare.py --dir cache/desk                 (compare v5/v6, print the report)
+    .venv\\Scripts\\python scripts/probes/p3_ocr_compare.py --capture 3 --out cache/desk     (3 stills, 4 s apart, both widths)
+    .venv\\Scripts\\python scripts/probes/p3_ocr_compare.py --dir cache/desk                 (compare v5/v6, print the report)
 Ground truth: put `<image stem>.txt` next to a capture (the page's text, one line per printed line) to get
 word accuracy; otherwise only line counts, confidence, timing and the page number are reported.
 Keep the captures out of git unless the owner agrees (book text may be copyrighted); the report prints a hash.

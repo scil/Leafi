@@ -16,7 +16,7 @@ One row per fact type → owner → layer → enforced by → reading rule. Node
 | Config semantics | `docs/architecture/config.md` + `.env.example` + `config/devices.yml` | 2 | pydantic validation; `python -m leafi devices` | |
 | Runtime flows | `docs/architecture/flows/*.md` | 2 | the session test that walks each | one diagram per flow |
 | Deployment topology | `docs/architecture/deployment.md` | 2 | `docker-compose.yml`, `scripts/win/*.bat` are the facts | |
-| Measured device facts (duplex, mic suppression and recovery, latency, pads, SNR and ASR accuracy, capture lag, failure modes) and the Ear × Mouth matrix | `docs/hardware/<device>.md`, `docs/hardware/combinations.md` | 2 | each row names its probe in `scripts/proto/`; rule in `docs/hardware/README.md` | ADRs keep decisions and link here; tech-debt rows keep the work; the plan's Progress keeps the dated narrative |
+| Measured device facts (duplex, mic suppression and recovery, latency, pads, SNR and ASR accuracy, capture lag, failure modes) and the Ear × Mouth matrix | `docs/hardware/<device>.md`, `docs/hardware/combinations.md` | 2 | each row names its probe in `scripts/probes/`; rule in `docs/hardware/README.md` | ADRs keep decisions and link here; tech-debt rows keep the work; the plan's Progress keeps the dated narrative |
 | Security, reliability, performance | `docs/architecture/quality-attributes/*.md` | 2 | privacy test; fallback tests; bench scripts | |
 | Consequential decisions | `docs/adr/NNNN-*.md` (short format + status, ADR-0015; 0001–0014 MADR) | 2 | status ∈ proposed/accepted/deprecated/superseded; never edit accepted | supersede, do not rewrite |
 | Directory responsibilities | `docs/engineering/repo-map.md` | 2 | path-exists check (manual until CI) | |

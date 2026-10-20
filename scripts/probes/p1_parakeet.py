@@ -4,7 +4,7 @@ Questions (plan → Prototypes): token→word reconstruction, timing granularity
 behaviour on silence, whether hotwords apply with `modified_beam_search` for `model_type="nemo_transducer"`,
 and CPU latency against the 0.6 s budget (performance.md). Throwaway: prints a report, writes nothing.
 
-Run:  .venv\\Scripts\\python scripts/proto/p1_parakeet.py   (needs models/asr/… and models/tts/… from `doctor`)
+Run:  .venv\\Scripts\\python scripts/probes/p1_parakeet.py   (needs models/asr/… and models/tts/… from `doctor`)
 Audio comes from Kokoro (local) and the tarball's test wav; nothing is played anywhere.
 """
 

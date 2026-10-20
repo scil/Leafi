@@ -30,7 +30,7 @@ only proved the plumbing: OpenPronounce 0.3.0 runs offline on the GPU with Leafi
 ## Scoring the set (agent, offline)
 
 ```
-$env:LEAFI_NO_NETWORK="1"; .venv\Scripts\python scripts/proto/p4_openpronounce.py --eval data/evals/retries.csv
+$env:LEAFI_NO_NETWORK="1"; .venv\Scripts\python scripts/probes/p4_openpronounce.py --eval data/evals/retries.csv
 ```
 
 The script scores every labelled clip against `expected`, writes `data/evals/scores.csv`

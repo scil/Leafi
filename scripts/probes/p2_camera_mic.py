@@ -7,7 +7,7 @@ locally; pass `--keep` to write the 16 kHz wav under cache/ for listening (never
 
 Owner's command (host go2rtc running, camera online):
     scripts\\win\\go2rtc-host.bat
-    .venv\\Scripts\\python scripts/proto/p2_camera_mic.py --seconds 8      (then read a sentence aloud ~1 m away)
+    .venv\\Scripts\\python scripts/probes/p2_camera_mic.py --seconds 8      (then read a sentence aloud ~1 m away)
 """
 
 from __future__ import annotations
