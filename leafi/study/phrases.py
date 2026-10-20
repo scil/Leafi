@@ -1,0 +1,65 @@
+"""Static Coach-voice lines (coach and teammate: equal, funny, never scolding, never babyish).
+
+Every immediate line comes from here; the Brain only enriches. Lines shown to the child pass `safe()`, a
+short deny-list of shaming words; a Brain line that fails it falls back to the static phrase.
+"""
+
+from __future__ import annotations
+
+import itertools
+import re
+
+DENY = re.compile(r"\b(wrong|stupid|dumb|lazy|bad|fail(ed|ure)?|terrible|silly|idiot|careless|mistake)\b",
+                  re.IGNORECASE)
+
+LINES: dict[str, list[str]] = {
+    "hello": ["Hey teammate! Book open? Let's read.", "Ready when you are. Let's read together."],
+    "ask_title": ["Which book are we reading today? Type its title."],
+    "confirm_title": ["Is this \"{title}\"? (yes / no)"],
+    "ask_page_text": ["I can't see the page. Type /page N --text <file> with the page text."],
+    "page_ready": ["Page {page} is ready. Read it aloud whenever you like.", "Got page {page}. Off you go!"],
+    "continue_offer": ["Last time we stopped on page {page}. Continue from there? (yes / no)"],
+    "sentence_done": ["Nice!", "Smooth.", "Got it.", ""],
+    "practice_intro": ["Let's try \"{word}\" together.", "Quick one: \"{word}\". Listen first."],
+    "practice_retry": ["Your turn - say \"{word}\". (skip is fine too)"],
+    "practice_again": ["Let's hear it once more.", "One more go?"],
+    "practice_withdrawn": ["Yes, that's it!", "There it is!"],
+    "practice_unsure": ["Okay, we'll come back to that one.", "No problem, moving on."],
+    "practice_idle": ["We'll leave that one for later."],
+    "unanchored": ["I lost my place - where are you reading?"],
+    "reposition": ["Read me the first few words of your line, and I'll find it."],
+    "line_skipped": ["Looks like we hopped over a line. That's okay."],
+    "explain_wait": ["Good question! Let me think about \"{target}\"."],
+    "explain_unavailable": ["I can't explain that one right now - let's keep reading, and I'll save it."],
+    "correction_thanks": ["Thanks for fixing my reading! \"{new}\" it is.", "Good catch - I've got \"{new}\" now."],
+    "correction_not_found": ["I couldn't find \"{old}\" near here. Can you read me that line?"],
+    "correction_saved": ["I'll save that for your parent to check."],
+    "check_intro": ["Page done! Quick question:"],
+    "check_answer": ["{answer}"],
+    "check_correct": ["Exactly!", "Spot on."],
+    "after_check": ["Turn the page when you're ready (/page N), or say stop."],
+    "review_intro": ["Before we start - {count} quick review card(s)."],
+    "review_prompt": ["Remember this one? \"{front}\" (good / again)"],
+    "noop": ["That doesn't do anything right now."],
+    "idle": ["Let's take a break. See you next time!"],
+    "bye": ["Great session, teammate. See you next time!"],
+    "lease_held": ["Another Leafi session is speaking right now."],
+    "playback_stop_hint": ["Tip: type /stop any time, even while I'm talking."],
+}
+
+_counters: dict[str, itertools.count] = {}
+
+
+def safe(line: str) -> bool:
+    return not DENY.search(line)
+
+
+def say(key: str, **kw: object) -> str:
+    """A static line, rotating through the variants deterministically."""
+    variants = LINES[key]
+    n = next(_counters.setdefault(key, itertools.count()))
+    return variants[n % len(variants)].format(**kw)
+
+
+def safe_or(line: str | None, key: str, **kw: object) -> str:
+    return line if line and safe(line) else say(key, **kw)

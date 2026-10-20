@@ -72,6 +72,8 @@ class ConsoleDevice:
     # ---- Face
     async def show(self, msg: Display) -> None:
         self.shown.append(msg)
+        if msg.kind == "listening":  # the prompt itself is the listening indicator on a terminal
+            return
         out = self._stdout or sys.stdout
         prefix = {"say": "Leafi", "status": "  ·", "listening": "  ~", "alert": "  !"}[msg.kind]
         try:

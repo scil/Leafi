@@ -52,7 +52,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_study(args: argparse.Namespace) -> int:
-    from leafi.study.runner import run_study
+    from leafi.runner import run_study
 
     settings = _settings()
     return asyncio.run(run_study(settings, args))
