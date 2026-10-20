@@ -97,6 +97,11 @@ class PresenceEvent:
     t: float
 
 
+class ListenerLost(RuntimeError):
+    """The selected Ear stopped delivering audio (device unplugged, driver error, capture ended). Raised by a
+    voice Listener's `next_utterance`; the session answers with `LISTENER_LOST` (flows/reading-session.md)."""
+
+
 # ---------------------------------------------------------------- ports
 
 

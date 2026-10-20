@@ -31,12 +31,16 @@ class Settings(BaseSettings):
     asr_backend: str = "sherpa"
     asr_model_dir: Path = Path("models/asr/parakeet-tdt-0.6b-v2-int8")
     asr_hotwords: str = "off"
+    asr_threads: int = 4  # P-1: 12-word sentence 0.17 s at 2 threads, 0.12 s at 4, 0.09 s at 8 (CPU)
+    vad_silence_s: float = 0.6  # Silero: silence that closes an utterance (sentence completion is SENTENCE_PAUSE_S)
+    vad_threshold: float = 0.5
     tts_backend_en: str = "kokoro"
     tts_backend_zh: str = "edge"
     tts_voice_en_kokoro: str = "af_heart"
     tts_voice_zh_edge: str = "zh-CN-YunxiNeural"
     tts_voice_en_edge: str = "en-US-JennyNeural"
     ocr_backend: str = "rapidocr"
+    ocr_version: str = "PP-OCRv6"  # PP-OCRv6 (in the wheel) | PP-OCRv5 (doctor --download); prototype P-3
     ocr_second_opinion: str = ""
     ocr_min_confidence: float = 0.85
     ocr_snap: str = "advisory"
@@ -114,3 +118,15 @@ def env_lookup(name: str, settings: Settings | None = None, env_file: Path | Non
 
 def hardware_tests_enabled() -> bool:
     return os.environ.get("LEAFI_HW_TESTS") == "1"
+
+
+def export_for_libraries(values: dict[str, str], *, force: set[str] = frozenset()) -> dict[str, str]:
+    """Some third-party libraries (OpenPronounce, Hugging Face hub, phonemizer) are configured only through
+    the process environment. This is the one place in `leafi/` that writes it: a name already set by the
+    owner wins unless it is in `force` (offline switches). Returns the effective values."""
+    out = {}
+    for name, value in values.items():
+        if name in force or not os.environ.get(name):
+            os.environ[name] = value
+        out[name] = os.environ[name]
+    return out

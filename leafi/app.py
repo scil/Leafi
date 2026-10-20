@@ -119,4 +119,13 @@ def _compose_voice_listener(settings: Settings, ear: Ear | None, warnings: list[
         warnings.append(f"voice listener off: asr {settings.asr_backend} {state} {detail}".strip())
         return None
     recognizer = asr.REGISTRY.create(settings.asr_backend, settings)
-    return asr.VoiceListener(ear, recognizer, pause_s=settings.sentence_pause_s)
+    vad = None
+    if settings.asr_backend != "mock":
+        from leafi.services.asr import vad as vad_module
+
+        state, detail = vad_module.status(settings)
+        if state == "ok":
+            vad = vad_module.create(settings, threshold=settings.vad_threshold, min_silence_s=settings.vad_silence_s)
+        else:
+            warnings.append(f"Silero VAD {state} ({detail}); using the energy end-pointer")
+    return asr.VoiceListener(ear, recognizer, pause_s=settings.sentence_pause_s, vad=vad)
