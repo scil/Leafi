@@ -14,4 +14,4 @@ Memory: ASR + TTS + OCR resident ≤ 4 GB RAM; wav2vec2 scorer loads on first us
 
 Timeouts that bound stalls: `say()` 20 s per call (hung Mouth cancelled), Brain 12 s overall deadline with at most 1 retry, OCR 15 s, ASR 10 s after VAD stop, Anki 10 s.
 
-Prototype P-5 (before S3): Kokoro → prepared clip → camera, measuring audible start/end and truncation for a word and a full line.
+Measured end-to-audible per device and per Ear × Mouth pair: `docs/hardware/` (P-5 put the camera at 2.7–3.3 s, over its 2.5 s budget; TD-24).

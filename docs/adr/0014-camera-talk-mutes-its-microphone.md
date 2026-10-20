@@ -13,6 +13,8 @@ ADR-0011 and `docs/architecture/flows/device-routing.md` make v1 reading half-du
 
 ## Evidence
 
+The runs below are the evidence as recorded for this decision. Current values, their versions and any later re-measurement live in `docs/hardware/xiaomi-camera-069a01.md`; read numbers there.
+
 **Source (go2rtc v1.9.14, the base of our patched build; upstream master checked 2026-10-20, unchanged in this respect).** The `xiaomi/miss` producer holds one P2P connection. Microphone packets arrive on cs2 channel 2 and `Producer.Start` forwards every one to the `recvonly` receiver unconditionally; speaker packets leave on channel 3. Talk is opened by `AddTrack` with a bare `cmdSpeakerStartReq` (0x106, no parameters) followed by a fixed 1 s sleep; `cmdSpeakerStop` (0x108) is never sent. Nothing in go2rtc mutes or drops the microphone. Our two local patches (`tools/go2rtc/PATCHES.md`) touch only cs2 payload copying and buffer overflow.
 
 **Measurement (`scripts/proto/p27_duplex.py`, camera `chuangmi.camera.069a01`, owner counting aloud ~1 m from the camera, PC headset microphone as reference, 30 s pull, push at 12 s).** Resolution is about one second: the playback window is placed from HTTP acceptance and the adapter's sleep, the track offset is estimated from wall time minus decoded duration (which also counts teardown), and the muted track is not digitally zero (peak |x| 2–5, the same as the room floor between counted words), so mute edges show only where speech borders them.
