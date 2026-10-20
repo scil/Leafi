@@ -224,18 +224,33 @@ class Hub:
             self._playing = dict(targets)
             tasks = {name: asyncio.create_task(self._play(name, m, clip)) for name, m in targets.items()}
             self._play_tasks = list(tasks.values())
-            remaining = max(0.0, deadline - loop.time())
-            done, pending = await asyncio.wait(tasks.values(), timeout=remaining)
-            for name, task in tasks.items():
-                if task in pending:
-                    log.warning("mouth %s exceeded say timeout; cancelling", name)
-                    task.cancel()
-                    await self._stop_mouth(name, targets[name])
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-            self._playing = {}
-            self._play_tasks = []
+            try:
+                remaining = max(0.0, deadline - loop.time())
+                done, pending = await asyncio.wait(tasks.values(), timeout=remaining)
+                for name, task in tasks.items():
+                    if task in pending:
+                        log.warning("mouth %s exceeded say timeout; cancelling", name)
+                        await self._stop_mouth(name, targets[name])
+                        task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+            except asyncio.CancelledError:
+                # The caller was cancelled mid-playback: stop every device and reap the play tasks before the
+                # lock is released and listening can reopen (review 1 #6).
+                for name, task in tasks.items():
+                    if not task.done():
+                        await self._stop_mouth(name, targets[name])
+                        task.cancel()
+                await asyncio.gather(*tasks.values(), return_exceptions=True)
+                raise
+            finally:
+                self._playing = {}
+                self._play_tasks = []
             return max((float(getattr(m, "drain_s", 0.0)) for m in targets.values()), default=0.0)
+
+    def max_drain_s(self) -> float:
+        """Drain of the Mouths the policy would use; the gate waits this long after an interrupted line."""
+        return max((float(getattr(m, "drain_s", 0.0)) for m in self._target_mouths().values()), default=0.0)
 
     async def _play(self, name: str, mouth: Mouth, clip) -> None:
         try:
@@ -273,14 +288,18 @@ class ListeningGate:
     def __init__(self, listener: Listener) -> None:
         self.listener = listener
         self.is_open = True
+        self._lock = asyncio.Lock()
 
     async def speak(self, hub: Hub, text: str, lang: str = "en", *, slow: bool = False,
                     local_only: bool = False) -> None:
-        await self.listener.pause()
-        self.is_open = False
-        drain = 0.0
-        try:
-            drain = await hub.say(text, lang, slow=slow, local_only=local_only)
-        finally:
-            await self.listener.resume(after_s=drain)
-            self.is_open = True
+        # pause → speak → drain → resume is one serialised operation, so a queued line never plays while
+        # listening has been reopened by the previous one (review 1 #9).
+        async with self._lock:
+            await self.listener.pause()
+            self.is_open = False
+            drain: float | None = None
+            try:
+                drain = await hub.say(text, lang, slow=slow, local_only=local_only)
+            finally:
+                await self.listener.resume(after_s=hub.max_drain_s() if drain is None else drain)
+                self.is_open = True

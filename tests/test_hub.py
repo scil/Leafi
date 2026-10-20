@@ -220,3 +220,32 @@ async def test_local_only_flag_reaches_the_synthesizer_and_failure_still_shows_t
     await hub.say("Thanks! Zorblat it is.", local_only=True)
     assert synth.calls == [("Thanks! Zorblat it is.", "en", True)]
     assert hub.faces["f"].texts == ["Thanks! Zorblat it is."]
+
+
+async def test_cancelling_say_stops_the_mouth_before_listening_reopens(tmp_path):
+    """Review 1 #6: cancellation of a speaking task must stop playback and drain before the gate reopens."""
+    log: list = []
+    mouth = FakeMouth(hang=True, drain_s=0.6, log=log)
+    listener = ScriptedListener([], log=log)
+    hub = hub_with(tmp_path, {"cam": mouth})
+    gate = ListeningGate(listener)
+    task = asyncio.create_task(gate.speak(hub, "a long line"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert mouth.stopped >= 1
+    assert ("end", "mouth") in log
+    assert log.index(("end", "mouth")) < log.index(("resume", 0.6))
+    assert not hub._play_tasks and not hub._lock.locked()
+
+
+async def test_concurrent_speech_keeps_the_gate_closed_until_the_last_line_drains(tmp_path):
+    """Review 1 #9: pause/speak/drain/resume is one serialised operation."""
+    log: list = []
+    listener = ScriptedListener([], log=log)
+    hub = hub_with(tmp_path, {"pc": FakeMouth(play_s=0.05, drain_s=0.2, log=log)})
+    gate = ListeningGate(listener)
+    await asyncio.gather(gate.speak(hub, "one"), gate.speak(hub, "two"))
+    assert log == [("pause",), ("start", "mouth"), ("end", "mouth"), ("resume", 0.2),
+                   ("pause",), ("start", "mouth"), ("end", "mouth"), ("resume", 0.2)]
