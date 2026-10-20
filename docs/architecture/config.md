@@ -84,6 +84,7 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `BRAIN_BACKEND` | `claude` | `claude` · `ollama` (deferred) · `mock`; an empty `ANTHROPIC_API_KEY` means static phrases only |
 | `BOOK_LOOKUP` | `off` | `off` · `openlibrary` (ISBN digits only, egress table) |
 | `TTS_VOICE_ZH_EDGE` / `TTS_VOICE_EN_EDGE` | `zh-CN-YunxiNeural` / `en-US-JennyNeural` | edge-tts voices |
+| `PAGE_POLL_S` | `1.0` | how often the session checks the Eye for a physical page turn |
 | `SENTENCE_PAUSE_S` | `1.2` | voice: silence that completes a sentence near its end (ADR-0013 completion (ii)) |
 | `REVIEW_KNOWN_INTERVAL_DAYS` / `REVIEW_MAX_CARDS` | `21` / `5` | `learning→known` interval; cards per review turn |
 | `LEASE_TTL_S` | `60` | speech-lease expiry, renewed every third of it |

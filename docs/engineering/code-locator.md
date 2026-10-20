@@ -38,6 +38,11 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Trap: control precedence wins everywhere, even when the page text says "stop" or the practised word is "skip" (ADR-0013 "skip always"); only a spoken utterance longer than 6 words is never a control; `/back N` counts from the sentence just read when `pcur` sits at a sentence start or at the page end (`alignment.back`).
 - Check: `tests/test_practice.py`, `tests/test_session_controls.py`.
 
+## "/stop does nothing while Leafi is talking" / "page turned but Leafi kept the old page"
+- Start: `leafi/study/session.py` (`say`, `_during_playback`, `listen`, `_watch_page`), `leafi/core/hub.py` (`stop_speaking`, `skip_current`), `leafi/study/page_tracker.py::changed`.
+- Invariant: the console is read by one persistent task also during playback; `/stop` cancels speech and is routed to the current state; an Eye page turn becomes `/page`. Text mode has no Eye.
+- Check: `tests/test_control_dispatch.py`.
+
 ## "duplicate Anki cards" / "review answer lost"
 - Start: `leafi/study/anki.py` (`sync_outbox`, `answer`, `reconcile`), table `anki_outbox`, `review_answers`.
 - Invariant: dedupe by tag `leafi-id::<anki_item_key>` before every add; a `sent` answer is never replayed; parent edits win.

@@ -139,6 +139,8 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 - [x] 2026-10-20 02:00 The two `agent/` changes (`NOTIFY_WITH_SNAPSHOT`, speech-lease check) and the privacy tests (canary recorder, `LEAFI_NO_NETWORK=1` subprocess runs) — 5986698, c2fe701.
 - [x] 2026-10-20 02:30 S2 partial (OCR mock + RapidOCR, page tracker, book identification, catalog, go2rtc Eye/Mouth vs a fake go2rtc server) and S3 shells (ASR/VoiceListener, pronunciation, local PC) — 81a2d6f, b96c9c4.
 - [x] 2026-10-20 02:50 Tests green: 62 → 218 passed, 3 hardware-marked skipped; ruff clean on `leafi/` and new tests; docs updated.
+- [x] 2026-10-20 Follow-ups: `/back N` boundary rule (31e30bc), `STUDY_BRAIN_MODEL` split (d77444c).
+- [x] 2026-10-20 Codex implementation review 1 (`reviews/2026-10-20-codex-implementation-review-1.md`, 20 findings): each reproduced with a failing test at its seam, then fixed — #1 8c6ce02, #2 3a95912, #3 d4eb905, #4 271ebaf, #5 2c0ec2a, #6+#9 cb5eb8f, #7+#20 8a2c8c9, #8 c68e3fe, #10 0d490a8, #11 066e786, #12 already 31e30bc, #13 b300e53, #14 ef17d66, #15 c55323b, #16 2c713c0, #17 78469e9, #18 5569843, #19 1e11fac. Tests 224 → 249 passed.
 - [ ] Hardware steps on the PC: P-1, P-2, P-3, P-4, P-5, P-6; install `requirements-study.txt`; run `LEAFI_HW_TESTS=1`; S2/S3 real backends (OpenPronounce wiring, Silero VAD, camera Ear); acceptance 1 with the camera.
 - [ ] codex-review loop on the implementation diff (`-c model="gpt-6-astra"`), plan step 5.
 
@@ -159,6 +161,9 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 - 2026-10-20 `stop` / page turn with `pcur` at the start of an unread sentence completes that sentence by (iii), so all its tokens count as `unread` in the summary (literal ADR-0013).
 - 2026-10-20 Windows: `os.kill(pid, 0)` would terminate the process; the lease's liveness check uses `OpenProcess` + `GetExitCodeProcess`.
 - 2026-10-20 PowerShell `Add-Content`/`Set-Content` and Python `Path.write_text` write CRLF on this machine; files were normalised to LF before commit.
+- 2026-10-20 (review 1) Findings #7 and #20 had no seam to fail at: the session had no console consumer and no page watcher, so their first red was a missing parameter (`control_source`, `PAGE_POLL_S`); the behavioural tests (`tests/test_control_dispatch.py`) were written first and went green only with the dispatcher. Every other finding failed on behaviour before its fix.
+- 2026-10-20 (review 1 #20) Two PIL-rendered text pages differ by only ~1.7 mean grey levels at 64×64 (a hand over the page ~40), so the frame-diff threshold was lowered from 6.0 to 1.0; real-camera noise must be measured in P-3 before relying on it.
+- 2026-10-20 (review 1 #19) 60 random brute-force cases did not hit the missing deletion-only boundary charge; 300 slightly larger ones do (the old DP fails them), so the regression uses those.
 
 ## Decision log
 
@@ -213,6 +218,14 @@ Re-running any slice is safe: storage migrations are versioned; model downloads 
 | 2026-10-20 | `leafi/runner.py` (not `study/`) builds the session, because it uses the composition root | architecture rule 2 (tracks never import `leafi.app`) |
 | 2026-10-20 | Speech lease: wall-clock expiry 60 s (`LEASE_TTL_S`), renewed every 20 s; stale or dead-pid leases are taken over | device-routing.md "pid + expiry" |
 | 2026-10-20 | Study-track env names added: `BRAIN_BACKEND`, `TTS_VOICE_ZH_EDGE`, `TTS_VOICE_EN_EDGE`, `SENTENCE_PAUSE_S`, `REVIEW_KNOWN_INTERVAL_DAYS`, `REVIEW_MAX_CARDS`, `LEASE_TTL_S`, `DATA_DIR`, `CACHE_DIR`, `MODELS_DIR`, `DEVICES_FILE`, `BOOK_LOOKUP` (config.md) | defaults in `leafi/core/config.py` |
+| 2026-10-20 | Review 1 #1: the TTS service routes a local-only line to the first local backend of any language, else raises `LocalOnlyUnavailable` (text stays on Faces, no audio); the session marks `correction_thanks` and `correction_not_found` local-only — the only lines that embed learner text; page-derived targets are redacted by the edge backend | security.md egress rule (decided by the coordinator); smallest set of lines |
+| 2026-10-20 | Review 1 #4: schema step 2 `anki_outbox.attempted_fields` (hashes written before the first `addNote`); a dedupe hit with no attempted record takes `{}` as baseline, so every remote field counts as the parent's | parent edits win |
+| 2026-10-20 | Review 1 #5: at a CHECK question every control is dispatched first; spoken one-word `yes`/`no`/`good`/`again` are answers there, typed `/good` etc. are no-ops | a child may answer "yes" |
+| 2026-10-20 | Review 1 #7/#20: one persistent read task per input (reading Listener, console control source, Eye page watcher); typed input during playback other than `/stop`/`/skip` waits for the next listen; the page watcher runs only while a page read is open; `PAGE_POLL_S` = 1.0 s; frame-diff threshold 1.0 | nothing is cancelled or lost; FIND_PAGE owns the camera |
+| 2026-10-20 | Review 1 #10: the 6-word spoken-control limit now applies to "the book says X not Y" as well | one grammar limit, as decided |
+| 2026-10-20 | Review 1 #13: an empty typed line is a line end only: not stored, no alignment, no `seq` | it carries no words |
+| 2026-10-20 | Review 1 #15: a single sentence longer than 900 characters is cut at a word boundary for the Brain window | keep enrichment available |
+| 2026-10-20 | Review 1 #17: `set_status` recomputes Difficulties for transitions to confirmed/unsure/invalidated; `add_encounter` for explain/check | only those change the formula inputs |
 | 2026-10-20 | Study Brain model is `STUDY_BRAIN_MODEL` (default `claude-opus-5-5`); `BRAIN_MODEL` stays the habit track's; `BRAIN_MODEL_CHEAP` unchanged | the shared name made the study Brain run the habit's Haiku 4.5 on this PC; no `agent/` change needed |
 | 2026-10-20 | Deviations in this run: review logic lives in `study/anki.py` (Anki calls) + `StudySession.review_due` (the turn) instead of `study/review.py`; no `services/vision/` (the habit track keeps its own); no `frigate_presence` adapter and no `whisper` ASR backend; `doctor --download` prints the commands only; the fake AnkiConnect is a stateful httpx transport, the fake go2rtc a real loopback server; P-1 not run (no model download) | out of this run's scope or smallest working form; each is a follow-up, none changes an ADR |
 

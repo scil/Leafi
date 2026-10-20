@@ -319,8 +319,7 @@ def _reference_best(text: str, words: list[str], pcur: int = 0):
     """Enumerate every ADR-0013 path (branch and bound) and score it from the ADR text alone:
     ops + jump + 0.5 for every sentence the path enters (aligns or deletes a token in) with < 2 aligned."""
     from leafi.core.text import norm
-    from leafi.study.alignment import (
-        C_BOUND, C_DEL, C_INS, C_JUMP, OP_DEL, OP_INS, OP_SUB, _opcost)
+    from leafi.study.alignment import C_BOUND, C_DEL, C_INS, C_JUMP, OP_DEL, OP_INS, OP_SUB, _opcost
 
     st = ReadingState.from_text(text)
     toks, n, m = st.tokens, st.n, len(words)
