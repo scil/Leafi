@@ -1,0 +1,4 @@
+Confirming code review. Round-1 findings: docs/plans/active/reviews/2026-10-20-codex-implementation-review-1.md. The fixes are the diff .scratch/review/impl-review-2.diff. Read that diff and only the files it touches, plus ADR-0013, ADR-0010, ADR-0011, security.md (egress table incl. the cloud-TTS rule), ADR-0004 and data-model.md.
+1. For each round-1 finding 1-20: fixed / partially / not fixed, citing the hunk and the test that proves it (or why it does not).
+2. New defects introduced by the fixes (control dispatcher, ListeningGate serialisation, stable miscue ids, edit-map affinity, atomic transactions): file:line, defect, repro or failing-test sketch, fix.
+3. Verdict: ready / not ready for the owner's first text-mode session, with the single most important reason if not ready.
