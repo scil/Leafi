@@ -116,3 +116,18 @@ def test_item_and_its_outbox_add_are_created_atomically(store):
     item = knowledge.upsert_item(store, "word", "blew")
     assert store.one("SELECT COUNT(*) AS n FROM knowledge_items")["n"] == 1
     assert store.one("SELECT COUNT(*) AS n FROM anki_outbox WHERE knowledge_item_id=?", (item,))["n"] == 1
+
+
+def test_difficulties_follow_the_mutation_that_changed_their_evidence(store):
+    """Review 1 #17: no explicit recompute — the status change / encounter write updates Difficulties."""
+    b, p, r = seed.book_page(store, TEXT)
+    for _ in range(3):
+        s = seed.session(store, b)
+        read = seed.page_read(store, s, p, r)
+        seed.miscue(store, read, r, TEXT, "trees", status="unsure", reason="disagreed")
+    assert _rows(store) == {("trees", "watch"): pytest.approx(0.9, abs=1e-3)}
+    assert knowledge.practice_order(store, [(1, "wind"), (5, "trees")]) == [(5, "trees"), (1, "wind")]
+    item = knowledge.upsert_item(store, "word", "blew")
+    for _ in range(2):
+        knowledge.add_encounter(store, item, session_id=seed.session(store, b), trigger="explain")
+    assert store.one("SELECT kind FROM difficulties WHERE knowledge_item_id=?", (item,))["kind"] == "knowledge"

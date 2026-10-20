@@ -6,6 +6,7 @@ parent's `forget` commands.
 from __future__ import annotations
 
 from leafi.core.storage import Store, dumps, now_iso
+from leafi.study import knowledge
 
 FORWARD = {
     "candidate": {"confirmed", "unsure", "withdrawn", "invalidated"},
@@ -48,7 +49,10 @@ def set_status(store: Store, miscue_id: int, status: str, *, reason: str | None 
     if score is not None:
         cols["score"] = score
     sets = ", ".join(f"{k}=?" for k in cols)
-    store.execute(f"UPDATE miscues SET {sets} WHERE id=?", (*cols.values(), miscue_id))
+    with store.transaction():  # evidence and the Difficulties that depend on it change together (review 1 #17)
+        store.execute(f"UPDATE miscues SET {sets} WHERE id=?", (*cols.values(), miscue_id))
+        if status in ("confirmed", "unsure", "invalidated"):
+            knowledge.recompute_difficulties(store)
 
 
 def open_for_read(store: Store, page_read_id: int) -> list[int]:

@@ -41,12 +41,15 @@ def upsert_item(store: Store, kind: str, key: str, language: str = "en", sense_h
 def add_encounter(store: Store, item_id: int, *, session_id: int | None, trigger: str,
                   context_sentence: str = "", revision_id: int | None = None, explanation_en: str | None = None,
                   explanation_zh: str | None = None, example: str | None = None) -> int:
-    enc = store.insert("encounters", knowledge_item_id=item_id, session_id=session_id,
-                       page_revision_id=revision_id, context_sentence=context_sentence,
-                       explanation_en=explanation_en, explanation_zh=explanation_zh, example=example,
-                       trigger=trigger, created_at=now_iso())
-    store.execute("UPDATE knowledge_items SET updated_at=? WHERE id=?", (now_iso(), item_id))
-    _queue_update_if_pushed(store, item_id)
+    with store.transaction():  # the encounter and the Difficulties it feeds change together (review 1 #17)
+        enc = store.insert("encounters", knowledge_item_id=item_id, session_id=session_id,
+                           page_revision_id=revision_id, context_sentence=context_sentence,
+                           explanation_en=explanation_en, explanation_zh=explanation_zh, example=example,
+                           trigger=trigger, created_at=now_iso())
+        store.execute("UPDATE knowledge_items SET updated_at=? WHERE id=?", (now_iso(), item_id))
+        _queue_update_if_pushed(store, item_id)
+        if trigger in ("explain", "check"):
+            recompute_difficulties(store)
     return enc
 
 
