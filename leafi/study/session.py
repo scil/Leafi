@@ -577,6 +577,13 @@ class StudySession:
             self._end_page_read()
 
     async def _read_utterance(self, u: Utterance) -> str | None:
+        if u.typed and not u.words:  # an empty typed line is a line end, never an alignment (review 1 #13)
+            sid = pause_completes(self.state) if u.line_end else None
+            if sid is not None:
+                nxt = await self._complete(sid, "pause")
+                if nxt and nxt != "BACK":
+                    return nxt
+            return CHECK if self.state.page_complete() else None
         self.seq += 1
         uid = self._store_utterance(u, "reading")
         ws = [w.text for w in u.words]

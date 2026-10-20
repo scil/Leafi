@@ -110,3 +110,15 @@ async def test_controls_in_check_are_dispatched_not_graded(settings):
     answers = [r["text"] for r in store.all("SELECT text FROM utterances WHERE kind='answer'")]
     assert answers == ["a fox"]
     assert face.texts.count("That doesn't do anything right now.") == 2
+
+
+async def test_an_empty_typed_line_completes_a_near_complete_sentence(settings):
+    """Review 1 #13: Enter on an empty line is a typed line end (ADR-0013 completion (ii)), never alignment."""
+    store, face, s, _ = await _run(settings, ["The dog ran", "", "/stop"])
+    assert store.one("SELECT tokens_unread FROM page_reads")["tokens_unread"] == 4  # "far" + "The cat sat"
+
+
+async def test_empty_lines_never_trigger_reposition(settings):
+    store, face, s, _ = await _run(settings, ["The", "", "", "/stop"])
+    assert not any("first few words" in t for t in face.texts)
+    assert store.all("SELECT * FROM observations WHERE utterance_id IN (SELECT id FROM utterances WHERE text='')") == []
