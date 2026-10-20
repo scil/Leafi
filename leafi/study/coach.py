@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from leafi.core.storage import Store
 from leafi.core.text import norm, words
 from leafi.core.text import redact as core_redact
-from leafi.services.brain import BrainRequest, Intent
+from leafi.services.brain import MAX_WINDOW_CHARS, BrainRequest, Intent
 from leafi.study import knowledge
 from leafi.study.alignment import ReadingState
 from leafi.study.stopwords import STOPWORDS
@@ -35,9 +35,17 @@ def sentence_text(page_text: str, state: ReadingState, sid: int) -> str:
     return page_text[a: b + (tail.end() if tail else 0)].strip()
 
 
-def page_window(page_text: str, state: ReadingState, sids: list[int], max_sentences: int = 3) -> str:
-    chosen = [s for s in sids if s in state.sentence_ids()][-max_sentences:]
-    return " ".join(sentence_text(page_text, state, s) for s in chosen)
+def page_window(page_text: str, state: ReadingState, sids: list[int], max_sentences: int = 3,
+                max_chars: int = MAX_WINDOW_CHARS) -> str:
+    """At most 3 sentences and `max_chars` characters (earliest sentences dropped first, then the last one cut
+    at a word boundary), so a valid page never makes an invalid BrainRequest (review 1 #15)."""
+    chosen = [sentence_text(page_text, state, s) for s in sids if s in state.sentence_ids()][-max_sentences:]
+    while len(chosen) > 1 and len(" ".join(chosen)) > max_chars:
+        chosen.pop(0)
+    window = " ".join(chosen)
+    if len(window) > max_chars:
+        window = window[:max_chars].rsplit(" ", 1)[0]
+    return window
 
 
 def find_on_page(state: ReadingState, phrase: str) -> str | None:

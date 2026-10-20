@@ -781,8 +781,13 @@ class StudySession:
         window = coach.page_window(self.rev.text, self.state, self._window_sids())
         data = None
         if self.brain is not None and window:
-            req = coach.explain_request(window, target, self.settings.redact_list())
-            data = await coach.enrich(self.brain, req, self.guard, self.settings.brain_deadline_s)
+            try:
+                req = coach.explain_request(window, target, self.settings.redact_list())
+            except (TypeError, ValueError):
+                log.warning("explain request not built; unavailable")
+                req = None
+            if req is not None:
+                data = await coach.enrich(self.brain, req, self.guard, self.settings.brain_deadline_s)
         kind = "word" if target and " " not in target else "phrase"
         item = knowledge.upsert_item(self.store, kind, target or sentence)
         if data:
@@ -833,8 +838,13 @@ class StudySession:
         window = coach.page_window(self.rev.text, self.state, sorted(self.state.completed))
         data = None
         if self.brain is not None and window:
-            req = coach.questions_request(window, self.settings.redact_list())
-            data = await coach.enrich(self.brain, req, self.guard, self.settings.brain_deadline_s)
+            try:
+                req = coach.questions_request(window, self.settings.redact_list())
+            except (TypeError, ValueError):
+                log.warning("questions request not built; CHECK skipped")
+                req = None
+            if req is not None:
+                data = await coach.enrich(self.brain, req, self.guard, self.settings.brain_deadline_s)
         if data:
             await self.line("check_intro")
             leave = False

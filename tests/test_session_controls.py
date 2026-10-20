@@ -136,3 +136,14 @@ async def test_page_command_with_text_works_the_same_in_practice_and_check(setti
                           "p.id = pr.page_id JOIN page_revisions rev ON rev.id = pr.page_revision_id ORDER BY pr.id")
         assert [(r["printed_number"], r["text"]) for r in reads] == [(1, PAGE), (2, "Second page here.")], db
         assert all(r["ended_at"] for r in reads), db
+
+
+async def test_a_very_long_sentence_never_crashes_enrichment(settings):
+    """Review 1 #15: the Brain window is bounded to 900 characters; request errors fall back."""
+    long_page = " ".join(["elephant"] * 110) + "."
+    store = Store(settings.db_path)
+    brain = MockBrain()
+    s = StudySession(store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none"), settings=settings,
+                     brain=brain, listener=ScriptedListener([long_page, "what does elephant mean", "/stop"]))
+    await s.run(book_title="Long", page_text=long_page, page_number=1)
+    assert brain.requests and all(len(r.window) <= 900 for r in brain.requests)
