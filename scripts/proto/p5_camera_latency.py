@@ -43,8 +43,11 @@ def start_pull(url: str, seconds: float) -> tuple[subprocess.Popen, float]:
     return proc, time.perf_counter()
 
 
-def onset_offset(pcm: bytes, floor_s: float = 1.0) -> tuple[float | None, float | None, float, float]:
-    """First and last 20 ms window above 8× the noise floor (floor = rms of the first `floor_s`)."""
+def onset_offset(pcm: bytes, floor_s: float = 1.0, search_from_s: float = 0.0,
+                 floor_from_s: float = 0.0) -> tuple[float | None, float | None, float, float]:
+    """First and last 20 ms window above 8× the noise floor. The floor is the rms over `floor_s` starting at
+    `floor_from_s` (take the second right before the push: a Bluetooth headset is noisy while it starts), and
+    only windows after `search_from_s` count."""
     import numpy as np
 
     x = np.frombuffer(pcm, dtype="<i2").astype("float32")
@@ -54,8 +57,10 @@ def onset_offset(pcm: bytes, floor_s: float = 1.0) -> tuple[float | None, float 
         return None, None, 0.0, 0.0
     frames = x[: n * win].reshape(n, win)
     rms = np.sqrt((frames * frames).mean(axis=1))
-    floor = max(2.0, float(rms[: int(floor_s * 50)].mean()))
+    f0 = int(floor_from_s * 50)
+    floor = max(2.0, float(rms[f0: f0 + int(floor_s * 50)].mean()))
     loud = np.where(rms > 8 * floor)[0]
+    loud = loud[loud >= int(search_from_s * 50)]
     if not len(loud):
         return None, None, floor, float(rms.max())
     return loud[0] * win / RATE, (loud[-1] + 1) * win / RATE, floor, float(rms.max())
@@ -107,6 +112,92 @@ async def auto(cam, service, stream: str, rtsp: str) -> None:
         await asyncio.sleep(2.0)
 
 
+def _dump_profile(pcm: bytes, push_at: float, text: str) -> None:
+    """Per-100 ms rms from the push onward, and the wav under cache/ (the camera hisses while the talk channel
+    is open, so the first loud window is not necessarily the first word)."""
+    import numpy as np
+
+    from leafi.core.audio import write_wav
+
+    x = np.frombuffer(pcm, dtype="<i2").astype("float32")
+    start = int(push_at * RATE)
+    seg = x[start:]
+    n = len(seg) // (RATE // 10)
+    prof = [int(np.sqrt((seg[i * RATE // 10:(i + 1) * RATE // 10] ** 2).mean())) for i in range(n)]
+    print(f"  rms per 100 ms after the push ({text[:12]!r}): {prof}")
+    stem = "".join(c for c in text[:12] if c.isalnum()) or "clip"
+    path = Path("cache") / f"p5-mic-{stem}.wav"
+    write_wav(path, pcm, RATE)
+    print(f"  recording kept at {path} (push at {push_at:.2f}s)")
+
+
+class MicRecorder:
+    """PC microphone capture with wall-clock stamps per block (the camera mutes its own mic during talkback)."""
+
+    def __init__(self, device, rate: int = RATE, block_s: float = 0.05) -> None:
+        import sounddevice as sd
+
+        self.rate = rate
+        self.block = int(rate * block_s)
+        self.chunks: list[bytes] = []
+        self.stamps: list[float] = []
+        self._stream = sd.RawInputStream(samplerate=rate, channels=1, dtype="int16", device=device,
+                                         blocksize=self.block, callback=self._cb)
+
+    def _cb(self, indata, frames, time_info, status) -> None:
+        self.stamps.append(time.perf_counter())
+        self.chunks.append(bytes(indata))
+
+    def __enter__(self):
+        self._stream.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stream.stop()
+        self._stream.close()
+
+    def time_of(self, offset_s: float) -> float:
+        """Wall time at which the sample at `offset_s` into the recording was captured (block arrival stamps)."""
+        idx = min(len(self.stamps) - 1, int(offset_s * self.rate / self.block))
+        within = offset_s - idx * self.block / self.rate
+        return self.stamps[idx] - self.block / self.rate + within
+
+
+async def mic_timed(cam, service, device) -> None:
+    print("| line | clip s | push→accepted s | end-to-audible s (±0.1) | heard s | note |")
+    print("|---|---|---|---|---|---|")
+    for text in LINES:
+        clip = await service.synth(text, "en")
+        cam.source_for(await cam.prepare(clip))
+        with MicRecorder(device) as mic:
+            await asyncio.sleep(3.0)  # noise floor, and the Bluetooth headset's ~1 s start
+            t_push = time.perf_counter()
+            play = asyncio.create_task(cam.play(clip))
+            accepted = None
+            while not play.done():
+                await asyncio.sleep(0.01)
+                if accepted is None and cam._current_src is not None:
+                    accepted = time.perf_counter() - t_push
+            await play
+            await asyncio.sleep(3.0)
+            pcm = b"".join(mic.chunks)
+            got_s = len(pcm) / (2 * RATE)
+            push_at = max(0.0, got_s - (time.perf_counter() - t_push))  # offset of the push in the recording
+            on, off, floor, peak = onset_offset(pcm, floor_s=1.0, search_from_s=push_at, floor_from_s=max(0.0, push_at - 1.0))
+            _dump_profile(pcm, push_at, text)
+            if on is None or not mic.stamps:
+                print(f"| {text} | {clip.duration_s:.2f} | {accepted} | not heard | - | floor {floor:.0f} peak {peak:.0f} |")
+            else:
+                audible = mic.time_of(on) - t_push
+                heard = off - on
+                note = "ok" if heard >= clip.duration_s - 0.25 else f"TRUNCATED by {clip.duration_s - heard:.2f}s"
+                if heard > clip.duration_s + 0.6:
+                    note = "longer than the clip (echo or another sound)"
+                print(f"| {text} | {clip.duration_s:.2f} | {accepted:.2f} | {audible:.2f} | {heard:.2f} | {note}; "
+                      f"floor {floor:.0f} peak {peak:.0f} |")
+        await asyncio.sleep(2.0)
+
+
 async def manual(cam, service) -> None:
     for text in LINES:
         t0 = time.perf_counter()
@@ -135,6 +226,8 @@ async def main() -> None:
     ap.add_argument("--auto", action="store_true", help="time the speaker through the camera microphone")
     ap.add_argument("--rtsp", default="rtsp://127.0.0.1:2554")
     ap.add_argument("--only", type=int, help="play only this line (1-based); the owner wants the text first")
+    ap.add_argument("--mic", nargs="?", const="default",
+                    help="time the speaker with the PC microphone (sounddevice name/index; default input)")
     a = ap.parse_args()
     if a.only:
         LINES[:] = [LINES[a.only - 1]]
@@ -154,7 +247,14 @@ async def main() -> None:
             src = cam.source_for(await cam.prepare(clip))
             print(f"(dry run) '{text}' clip {clip.duration_s:.2f}s would POST {cam.url}/api/streams?dst={cam.stream}&src={src}")
         return
-    if a.auto:
+    if a.mic:
+        from leafi.devices.local_pc import LocalPcDevice
+
+        import sounddevice as sd
+
+        device = LocalPcDevice("pc", {"input_device": a.mic})._resolve_device(sd)
+        await mic_timed(cam, service, device)
+    elif a.auto:
         await auto(cam, service, settings.stream_name, a.rtsp)
     else:
         await manual(cam, service)
