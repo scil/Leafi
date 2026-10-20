@@ -405,12 +405,14 @@ def open_candidates(state: ReadingState) -> list[int]:
 
 
 def back(state: ReadingState, n: int = 1) -> ReadingState:
-    """`/back N`: reopen the current sentence and N−1 before it."""
+    """`/back N`: reopen `cur` and N−1 before it; `cur` = the sentence containing `pcur − 1` when `pcur` is at a
+    sentence start or at `n`, else the sentence containing `pcur` (ADR-0013 → `/back N`)."""
     st = copy.deepcopy(state)
     if st.n == 0:
         return st
     ids = st.sentence_ids()
-    cur = st.current_sentence() if st.pcur < st.n else ids[-1]
+    at_boundary = st.pcur >= st.n or (st.pcur > 0 and st.sentence_start(st.pcur) == st.pcur)
+    cur = st.tokens[st.pcur - 1].sentence_id if at_boundary and st.pcur > 0 else st.tokens[st.pcur].sentence_id
     pos = ids.index(cur)
     target = ids[max(0, pos - (max(1, n) - 1))]
     for sid in ids[ids.index(target): pos + 1]:

@@ -122,9 +122,32 @@ def test_back_two_reopens_current_and_the_one_before():
     r.read("I can see it")
     r.read("I can see it")
     assert r.cursors == (8, 8)
-    st = back(r.state, 2)  # current = sentence 3 (pcur=8), so sentences 2..3 reopen
-    assert st.statuses() == "C C C C U U U U U U"
-    assert (st.pcur, st.ccur) == (4, 4) and st.completed == {1}
+    st = back(r.state, 2)  # pcur=8 is a sentence start, so cur = sentence 2; sentences 1..2 reopen
+    assert st.statuses() == "U U U U U U U U U U"
+    assert (st.pcur, st.ccur) == (0, 0) and st.completed == set()
+
+
+def test_back_one_right_after_completion_reopens_the_sentence_just_read():
+    r = Reader("The dog ran. The cat sat.")
+    r.read("The dog ran.")
+    assert r.cursors == (3, 3) and r.state.completed == {1}
+    st = back(r.state, 1)
+    assert st.statuses() == "U U U U U U"
+    assert (st.pcur, st.ccur) == (0, 0) and st.completed == set()
+
+
+def test_back_one_mid_sentence_reopens_the_sentence_containing_pcur():
+    r = Reader("The dog ran. The cat sat.")
+    r.read("The dog ran.")
+    r.read("The cat")
+    st = back(r.state, 1)
+    assert st.statuses() == "C C C U U U"
+    assert (st.pcur, st.ccur) == (3, 3) and st.completed == {1}
+
+
+def test_back_at_page_start_reopens_the_first_sentence():
+    st = back(ReadingState.from_text("The dog ran. The cat sat."), 1)
+    assert (st.pcur, st.ccur) == (0, 0) and st.statuses() == "U U U U U U"
 
 
 def test_e_trailing_word_is_an_insertion_not_a_substitution_in_the_next_sentence():

@@ -35,7 +35,7 @@ Search this file for the symptom or the user's words; read only the matching ent
 
 ## "practice never ends" / "skip did nothing" / controls
 - Start: `leafi/study/session.py` (`practice`, `_practise_word`, `_read_control`, `_depart`), `leafi/study/controls.py`.
-- Trap: a spoken control that equals the page text at the cursor is read, not executed; `/back 1` right after a completed sentence reopens the next sentence (use `/back 2`).
+- Trap: a spoken control that equals the page text at the cursor is read, not executed; `/back N` counts from the sentence just read when `pcur` sits at a sentence start or at the page end (`alignment.back`).
 - Check: `tests/test_practice.py`, `tests/test_session_controls.py`.
 
 ## "duplicate Anki cards" / "review answer lost"

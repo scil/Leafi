@@ -76,6 +76,5 @@ async def test_stop_during_practice_settles_every_open_candidate(settings):
 
 
 async def test_back_during_practice_aborts_it_and_reopens(settings):
-    # After completion pcur sits in the next sentence, so `/back 2` is what reopens the practised one.
-    rows, _, _ = await _run(settings, ["The dig ran far.", "/back 2", "The dog ran far.", "/stop"])
+    rows, _, _ = await _run(settings, ["The dig ran far.", "/back", "The dog ran far.", "/stop"])
     assert rows == {"dog": ("unsure", "skipped", "none")}

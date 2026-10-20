@@ -80,3 +80,24 @@ async def test_back_from_check_returns_to_read(settings):
                                    brain=MockBrain(unavailable=True))
     assert s.flags.transitions.count("CHECK") == 2
     assert s.flags.transitions.count("READ") == 2
+
+
+def _first_obs_token(store, text):
+    rows = store.all("SELECT id FROM utterances WHERE text=? AND kind='reading' ORDER BY id", (text,))
+    return store.one("SELECT MIN(token_start) AS t FROM observations WHERE utterance_id=?", (rows[-1]["id"],))["t"]
+
+
+async def test_back_right_after_completion_reopens_the_sentence_just_read(settings):
+    script = ["The dog ran far.", "/back", "The dog ran far.", "The cat sat.", "/stop"]
+    store, face, s, _ = await _run(settings, script, brain=MockBrain(unavailable=True))
+    assert store.one("SELECT COUNT(*) AS n FROM utterances WHERE text='The dog ran far.'")["n"] == 2
+    assert _first_obs_token(store, "The dog ran far.") == 0  # re-read aligned against sentence 1 again
+    assert store.one("SELECT tokens_unread FROM page_reads")["tokens_unread"] == 0
+
+
+async def test_back_during_practice_reopens_the_practised_sentence(settings):
+    script = ["The dog red far.", "/back", "The dog ran far.", "The cat sat.", "/stop"]
+    store, face, s, _ = await _run(settings, script, brain=MockBrain(unavailable=True))
+    assert _miscues(store) == {"ran": ("unsure", "skipped")}  # open candidate of the aborted practice
+    assert _first_obs_token(store, "The dog ran far.") == 0
+    assert store.one("SELECT tokens_unread FROM page_reads")["tokens_unread"] == 0
