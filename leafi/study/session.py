@@ -448,7 +448,7 @@ class StudySession:
         if kind == "skip":
             self.state, sid, cands = skip_read(self.state)
             for i in cands:
-                mid = miscues.open_for_token(self.store, self.read_id, i)
+                mid = self._miscue_at(i)
                 if mid:
                     miscues.set_status(self.store, mid, "unsure", reason="skipped")
             self.state = settle(self.state, cands)
@@ -516,11 +516,12 @@ class StudySession:
             for e in events:
                 if isinstance(e, CandidateCreated):
                     tok = st.tokens[e.token_index]
-                    miscues.create(self.store, observation_id=obs_ids[e.observation_index], page_read_id=self.read_id,
-                                   revision_id=self.rev.id, expected=e.expected, token_index=e.token_index,
-                                   char_span=tok.span, heard=e.heard)
+                    tok.miscue_id = miscues.create(
+                        self.store, observation_id=obs_ids[e.observation_index], page_read_id=self.read_id,
+                        revision_id=self.rev.id, expected=e.expected, token_index=e.token_index,
+                        char_span=tok.span, heard=e.heard)
                 elif isinstance(e, CandidateWithdrawn):
-                    mid = miscues.open_for_token(self.store, self.read_id, e.token_index)
+                    mid = st.tokens[e.token_index].miscue_id
                     if mid:
                         miscues.set_status(self.store, mid, "withdrawn", reason=e.reason)
             self.state = st
@@ -544,13 +545,13 @@ class StudySession:
         items = [(i, self.state.tokens[i].text) for i in cands]
         plan, rest = coach.practice_plan(self.store, items)
         for i, _ in rest:
-            mid = miscues.open_for_token(self.store, self.read_id, i)
+            mid = self._miscue_at(i)
             if mid:
                 miscues.set_status(self.store, mid, "unsure", reason="not_practised")
             self.state = settle(self.state, [i])
         self._save_state()
         for i, word in plan:
-            mid = miscues.open_for_token(self.store, self.read_id, i)
+            mid = self._miscue_at(i)
             if mid is None:
                 self.state = settle(self.state, [i])
                 continue
@@ -632,8 +633,16 @@ class StudySession:
             return "none", None
         return ("acoustic", result.score) if result is not None else ("none", None)
 
+    def _miscue_at(self, i: int) -> int | None:
+        """The open candidate at token i of the current state (by stable reference, not by index)."""
+        mid = self.state.tokens[i].miscue_id
+        if mid is None:
+            return None
+        row = self.store.one("SELECT status FROM miscues WHERE id=?", (mid,))
+        return mid if row and row["status"] == "candidate" else None
+
     def _token_of(self, mid: int) -> int:
-        return self.store.one("SELECT expected_token_index FROM miscues WHERE id=?", (mid,))["expected_token_index"]
+        return next(i for i, t in enumerate(self.state.tokens) if t.miscue_id == mid)
 
     def _sentence_of_token(self, mid: int) -> str:
         i = self._token_of(mid)

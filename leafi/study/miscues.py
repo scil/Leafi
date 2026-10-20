@@ -51,12 +51,6 @@ def set_status(store: Store, miscue_id: int, status: str, *, reason: str | None 
     store.execute(f"UPDATE miscues SET {sets} WHERE id=?", (*cols.values(), miscue_id))
 
 
-def open_for_token(store: Store, page_read_id: int, token_index: int) -> int | None:
-    r = store.one("SELECT id FROM miscues WHERE page_read_id=? AND expected_token_index=? AND status='candidate' "
-                  "ORDER BY id DESC LIMIT 1", (page_read_id, token_index))
-    return r["id"] if r else None
-
-
 def open_for_read(store: Store, page_read_id: int) -> list[int]:
     return [r["id"] for r in store.all("SELECT id FROM miscues WHERE page_read_id=? AND status='candidate' "
                                        "ORDER BY expected_token_index", (page_read_id,))]

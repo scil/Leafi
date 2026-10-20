@@ -36,6 +36,7 @@ class Tok:
     sentence_id: int
     status: Status = "unattempted"
     created_by: int | None = None  # utterance seq that created the candidate at this token
+    miscue_id: int | None = None  # the candidate's miscue row; stable across corrections (review 1 #3)
 
     @property
     def span(self) -> tuple[int, int]:
@@ -65,6 +66,7 @@ class ReadingState:
         return {
             "status": [t.status for t in self.tokens],
             "created_by": [t.created_by for t in self.tokens],
+            "miscue_id": [t.miscue_id for t in self.tokens],
             "pcur": self.pcur, "ccur": self.ccur, "completed": sorted(self.completed),
             "turn_id": self.turn_id, "page_read_id": self.page_read_id, "revision_id": self.revision_id,
         }
@@ -72,8 +74,9 @@ class ReadingState:
     @classmethod
     def from_json(cls, text: str, data: dict) -> ReadingState:
         st = cls.from_text(text, page_read_id=data.get("page_read_id"), revision_id=data.get("revision_id"))
-        for t, s, c in zip(st.tokens, data["status"], data["created_by"], strict=True):
-            t.status, t.created_by = s, c
+        ids = data.get("miscue_id") or [None] * len(st.tokens)
+        for t, s, c, mid in zip(st.tokens, data["status"], data["created_by"], ids, strict=True):
+            t.status, t.created_by, t.miscue_id = s, c, mid
         st.pcur, st.ccur = data["pcur"], data["ccur"]
         st.completed = set(data["completed"])
         st.turn_id = data["turn_id"]
@@ -443,6 +446,7 @@ def resumed(state: ReadingState) -> ReadingState:
     for i, t in enumerate(st.tokens):
         t.status = "committed" if i < c else "unattempted"
         t.created_by = None
+        t.miscue_id = None
     st.pcur = st.ccur = c
     st.completed = {sid for sid in st.sentence_ids() if st.last_index(sid) < c}
     return st

@@ -58,7 +58,7 @@ def retokenize(state: ReadingState, old_text: str, new_text: str, edits: list[pa
         if old is None:
             touched.append(i)
             continue
-        t.status, t.created_by = old.status, old.created_by
+        t.status, t.created_by, t.miscue_id = old.status, old.created_by, old.miscue_id
     first_touched = min(touched) if touched else None
 
     def map_cursor(c: int) -> int:
