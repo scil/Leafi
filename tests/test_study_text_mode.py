@@ -183,19 +183,24 @@ async def test_stop_mid_sentence_completes_it_and_settles_open_candidates(run):
     assert pr["tokens_unread"] == 3  # "by the door" completed as read by the stop
 
 
-async def test_control_word_that_is_page_text_is_read_not_executed(run, settings):
-    store = Store(settings.db_path)
-    script = ["Stop", "and look.", "stop"]
+async def test_control_precedence_wins_over_page_text_except_beyond_six_words(run, settings):
+    """Review 1 #10 (reverses the 2026-10-20 page-text-precedence choice): "stop" on a page that begins with
+    "Stop" stops; an utterance longer than the control grammar's 6 words is reading."""
+    page = "Stop and look both ways. Then stop at home and rest."
 
-    async def go():
+    async def go(db, script):
+        store = Store(settings.data_dir / db)
         hub = Hub(faces={"c": RecordingFace()}, policy="none")
         s = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(),
                          listener=ScriptedListener(script))
-        return await s.run(book_title="Signs", page_text="Stop and look. Then go home.", page_number=1)
+        await s.run(book_title="Signs", page_text=page, page_number=1)
+        return store, [r["kind"] for r in store.all("SELECT kind FROM utterances ORDER BY id")]
 
-    await go()
-    kinds = [r["kind"] for r in store.all("SELECT kind FROM utterances ORDER BY id")]
-    assert kinds == ["reading", "reading", "control"]
+    store, kinds = await go("a.db", ["Stop"])  # the expected first word is "Stop": still the command
+    assert kinds == ["control"]
+    assert loads(store.one("SELECT summary FROM reading_sessions")["summary"])["stopped"] is True
+    store, kinds = await go("b.db", ["Stop and look both ways then stop", "/stop"])  # 7 words: reading
+    assert kinds == ["reading", "control"]
 
 
 

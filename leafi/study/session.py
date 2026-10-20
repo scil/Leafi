@@ -18,7 +18,7 @@ from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate
 from leafi.core.ports import Display, Utterance
 from leafi.core.storage import Store, dumps, loads, now_iso
-from leafi.core.text import norm, typed_utterance, words
+from leafi.core.text import typed_utterance, words
 from leafi.study import (
     anki,
     books,
@@ -483,24 +483,10 @@ class StudySession:
 
     # ------------------------------------------------------------ READ
 
-    def _reads_as_page(self, u: Utterance) -> bool:
-        """A spoken control phrase that is also the expected text at the cursor is reading, not a command."""
-        ws = [x for x in (norm(w) for w in words(u.text)) if x]
-        st = self.state
-        if not ws or st is None:
-            return False
-        for i in range(max(0, st.pcur - 2), min(st.n, st.pcur + 3)):
-            if [t.norm for t in st.tokens[i:i + len(ws)]] == ws:
-                return True
-        return False
-
     def _control(self, u: Utterance, *, reading: bool) -> Control | None:
-        ctl = controls.parse(u.text)
-        if ctl is None or ctl.typed:
-            return ctl
-        if reading and self._reads_as_page(u):
-            return None
-        return ctl
+        """Control precedence wins everywhere (ADR-0013 "skip always"); the only reading exception is the
+        grammar's own limit: a spoken utterance longer than 6 words is never a control (review 1 #10)."""
+        return controls.parse(u.text)
 
     async def read(self) -> str:
         idle = 0.0
@@ -700,7 +686,7 @@ class StudySession:
                 await self.line("practice_idle")
                 return None
             ctl = controls.parse(u.text)
-            if ctl is not None and norm(u.text) != norm(word):
+            if ctl is not None:
                 self._store_utterance(u, "control")
                 if ctl.kind == "stop":
                     await self._depart()

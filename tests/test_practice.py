@@ -78,3 +78,13 @@ async def test_stop_during_practice_settles_every_open_candidate(settings):
 async def test_back_during_practice_aborts_it_and_reopens(settings):
     rows, _, _ = await _run(settings, ["The dig ran far.", "/back", "The dog ran far.", "/stop"])
     assert rows == {"dog": ("unsure", "skipped", "none")}
+
+
+async def test_skip_always_wins_even_when_skip_is_the_practised_word(settings):
+    """Review 1 #10: ADR-0013 "skip always" — saying "skip" while practising `skip` is the control."""
+    store = Store(settings.db_path)
+    s = StudySession(store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none"), settings=settings,
+                     brain=MockBrain(unavailable=True), listener=ScriptedListener(["Do not slip lines.", "skip", "/stop"]))
+    await s.run(book_title="P", page_text="Do not skip lines.", page_number=1)
+    (row,) = store.all("SELECT status, unsure_reason FROM miscues")
+    assert (row["status"], row["unsure_reason"]) == ("unsure", "skipped")

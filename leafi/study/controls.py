@@ -85,15 +85,13 @@ def parse_typed(text: str) -> Control | None:
 
 def parse_spoken(text: str) -> Control | None:
     ws = words(text)
-    if not ws or len(ws) > MAX_SPOKEN_WORDS + 4:  # "the book says X not Y" may run longer
+    if not ws or len(ws) > MAX_SPOKEN_WORDS:  # longer utterances are reading, never commands
         return None
     flat = " ".join(norm(w) for w in ws)
     for pat, kind in _SPOKEN:
         m = pat.match(flat)
         if not m:
             continue
-        if kind not in ("fix",) and len(ws) > MAX_SPOKEN_WORDS:
-            return None
         if kind == "page":
             n = _to_int(m.group(1))
             return Control("page", n=n) if n is not None else None
