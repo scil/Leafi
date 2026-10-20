@@ -1,0 +1,4 @@
+# Development tools. Lint: .venv\Scripts\python -m ruff check leafi tests
+ruff==0.17.1
+pytest>=9.1
+pytest-asyncio>=1.4

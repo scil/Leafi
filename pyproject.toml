@@ -1,0 +1,21 @@
+# Minimal project metadata for tooling only; the install path stays requirements*.txt.
+[project]
+name = "leafi"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["tools", "config/frigate", ".claude", "cache", "data", "models"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
+# ASYNC240: small cache/SQLite file operations stay synchronous by design (plan Decision log).
+ignore = ["E501", "B008", "ASYNC240"]
+
+[tool.ruff.lint.per-file-ignores]
+# Legacy habit track: lint only what is touched (TD-5).
+"agent/**" = ["E", "W", "B", "UP", "I"]
+"scripts/**" = ["E", "W", "B", "UP", "I"]
+"tests/test_*.py" = ["B011"]

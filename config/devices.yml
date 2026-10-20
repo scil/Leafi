@@ -1,0 +1,35 @@
+# Leafi devices (schema v1, docs/architecture/config.md). ${VAR} expands from .env; ${VAR:-default} is
+# optional. A device whose required ${VAR} is missing is disabled with a warning, so a laptop without the
+# camera still runs text mode. Check with: .venv\Scripts\python -m leafi devices
+version: 1
+voice_policy: all          # all | primary | none   (`study --text` forces none unless --voice-policy)
+primary_mouth: desk_cam
+devices:
+  - name: desk_cam
+    adapter: go2rtc_camera
+    capabilities: [eye, mouth]          # ear is opt-in once prototype P-2 verifies the mic path
+    options:
+      go2rtc_url: ${GO2RTC_URL}
+      stream: ${STREAM_NAME}
+      audio_codec: ${SPEAKER_AUDIO_CODEC:-opus}
+      src_dir: ${SPEAKER_SRC_DIR}       # the go2rtc instance's view of local_dir (no spaces allowed)
+      local_dir: cache/tts/camera
+      snapshot_width: 1920
+  - name: pc
+    adapter: local_pc
+    capabilities: [ear, mouth]          # Face comes from the console; ear needs sounddevice (S3, P-6)
+    options:
+      input_device: default
+  - name: console
+    adapter: console
+    capabilities: [listener, face]      # typed input; always safe to leave on
+  - name: parent_phone
+    adapter: notifier
+    capabilities: [notifier]
+    options:
+      bark_url: ${BARK_URL:-}
+      telegram_bot_token: ${TELEGRAM_BOT_TOKEN:-}
+      telegram_chat_id: ${TELEGRAM_CHAT_ID:-}
+study:
+  eye: desk_cam            # the one Eye used for pages
+  listener: pc             # the one voice Listener; falls back to console when no ASR model exists

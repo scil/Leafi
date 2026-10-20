@@ -1,0 +1,17 @@
+# Book-study track (leafi/). Versions resolved for py3.12 / Windows on 2026-10-19
+# (docs/research/2026-10-19-prior-art-book-study.md §1). Install with:
+#   uv pip install --python .venv -r requirements.txt -r requirements-study.txt
+# Heavy model packages are only needed for S2/S3 hardware steps; text mode needs
+# rapidfuzz, pillow and the packages in requirements.txt.
+rapidfuzz==3.14.6        # alignment similarity (ADR-0013 sim)
+pillow>=12.0             # page fixtures, frame-diff settle
+numpy>=2.0
+anthropic==0.120.2       # Brain (cloud, text only); pinned per TD-1
+sherpa-onnx==1.13.8      # ASR (Parakeet TDT v2 int8) + Silero VAD   [S3, lazy]
+kokoro-onnx==0.6.1       # TTS en                                    [S3, lazy]
+onnxruntime==1.31.0
+rapidocr==3.10.0         # OCR (PP-OCRv5/v6 ONNX)                    [S2, lazy]
+zxing-cpp==3.1.1         # ISBN barcode                              [S2, lazy]
+openpronounce==0.3.0     # pronunciation (offline reference voice)   [S3, lazy]
+sounddevice==0.5.6       # PC microphone                             [S3, lazy]
+websockets>=13           # xiaozhi adapter (future plan)
