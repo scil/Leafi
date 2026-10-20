@@ -71,7 +71,9 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `BRAIN_LOCAL_MODEL` | `` (empty) | Ollama fallback, deferred (ADR-0011) |
 | `REDACT_TERMS` | `` | comma-separated terms removed from cloud payloads (learner name, school); set by `python -m leafi setup --redact "…"`; `doctor` warns when empty |
 | `NOTIFY_WITH_SNAPSHOT` | `false` | habit track only: attach one frame to the parent's Telegram notification (owner opt-in, ADR-0011) |
-| `STUDY_IDLE_S` | `180` | idle timeout to WRAP |
+| `STUDY_IDLE_S` | `180` | idle timeout to WRAP (READ/CHECK/REVIEW_DUE only) |
+| `PRACTICE_RETRY_S` | `10` | voice: no retry within this → `unsure(idle)`, next candidate |
+| `CHECK_ANSWER_S` | `20` | voice: no answer within this → `unavailable` |
 | `SAY_TIMEOUT_S` | `20` | per `say()` call |
 | `EVAL_TRANSCRIPTS` | `false` | opt-in text-only transcripts under `data/evals/` |
 | `LEAFI_NO_NETWORK` | unset | `1` makes any non-loopback connect raise (tests) |
