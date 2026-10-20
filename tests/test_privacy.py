@@ -3,6 +3,7 @@ the real Claude backend, notifier and Anki client; (b) subprocess runs with LEAF
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -15,6 +16,7 @@ import httpx
 from leafi.core.hub import Hub
 from leafi.core.ports import AudioRef, Utterance, Word
 from leafi.core.storage import Store
+from leafi.core.text import typed_utterance
 from leafi.devices.notifiers import NotifierDevice
 from leafi.services import brain as brain_service
 from leafi.study import anki
@@ -187,9 +189,36 @@ async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatc
 
     monkeypatch.setattr(edge_tts, "Communicate", Recorder)
     settings.redact_terms = f"{NAME},{SCHOOL},{LABEL}"
-    mouth = FakeMouth()
-    hub = Hub(faces={"f": RecordingFace()}, mouths={"cam": mouth}, policy="all",
-              synthesizer=tts.create(settings, en="edge", zh="edge"))
+    class GatedConsole:
+        """Types the next line only after Leafi shows "listening" (like a person at the console)."""
+
+        is_voice = False
+
+        def __init__(self, lines):
+            self.lines = list(lines)
+            self.ready = asyncio.Event()
+
+        async def next_utterance(self, timeout_s):
+            await self.ready.wait()
+            self.ready.clear()
+            return typed_utterance(self.lines.pop(0) if self.lines else "/stop")
+
+        async def pause(self):
+            return None
+
+        async def resume(self, after_s=0.0):
+            return None
+
+    class ListeningFace(RecordingFace):
+        async def show(self, msg):
+            await super().show(msg)
+            if msg.kind == "listening":
+                console.ready.set()
+
+    mouth = FakeMouth(play_s=0.02)
+    service = tts.create(settings, en="edge", zh="mock")  # a local backend exists for local-only lines
+    face = ListeningFace()
+    hub = Hub(faces={"f": face}, mouths={"cam": mouth}, policy="all", synthesizer=service)
     learner_word = "Zorblatt"
     script = [
         f"This book belongs to {NAME}",
@@ -197,11 +226,16 @@ async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatc
         f"/fix belongs {learner_word}",                  # learner-typed correction text → local-only line
         "/stop",
     ]
+    console = GatedConsole(script)
     session = StudySession(store=Store(settings.db_path), hub=hub, settings=settings,
-                           brain=brain_service.REGISTRY.create("mock", settings), listener=ScriptedListener(script))
-    await session.run(book_title="Canary book", page_text=PAGE, page_number=1)
-    assert spoken, "the edge backend was not exercised"
-    assert mouth.played
+                           brain=brain_service.REGISTRY.create("mock", settings), listener=console)
+    await asyncio.wait_for(session.run(book_title="Canary book", page_text=PAGE, page_number=1), 20)
+    assert "EXPLAIN" in session.flags.transitions and "CORRECT" in session.flags.transitions
+    assert any(t.startswith("Good question!") and "[name]" in t for t in spoken), spoken  # redacted, sent
+    local = [text for text, _, _ in service.backends["zh"].calls]
+    assert any(learner_word in t for t in local), local  # the correction line went to the local backend
+    assert any(learner_word in t for t in face.texts)  # and is shown on Faces
+    assert len(mouth.played) > 3
     for text in spoken:
         for c in [*CANARIES, learner_word]:
             assert c.lower() not in text.lower(), (c, text)
