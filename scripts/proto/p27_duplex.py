@@ -43,6 +43,18 @@ def per_second(pcm: bytes) -> list[int]:
     return [int(np.sqrt((x[i * RATE:(i + 1) * RATE] ** 2).mean())) for i in range(n)]
 
 
+def per_step(pcm: bytes, start_s: float, end_s: float, step_s: float = 0.1) -> list[tuple[float, int]]:
+    import numpy as np
+
+    x = np.frombuffer(pcm, dtype="<i2").astype("float32")
+    out, t = [], max(0.0, start_s)
+    while t + step_s <= min(end_s, len(x) / RATE):
+        seg = x[int(t * RATE):int((t + step_s) * RATE)]
+        out.append((t, int(np.sqrt((seg ** 2).mean()))))
+        t += step_s
+    return out
+
+
 def cut(pcm: bytes, start_s: float, end_s: float) -> bytes:
     a, b = max(0, int(start_s * RATE)) * 2, max(0, int(end_s * RATE)) * 2
     return pcm[a:b]
@@ -67,6 +79,8 @@ async def main() -> None:
     ap.add_argument("--mic", default="DJI", help="PC reference microphone (sounddevice name); 'none' to skip")
     ap.add_argument("--rtsp", default="rtsp://127.0.0.1:2554")
     ap.add_argument("--keep", action="store_true", help="write both tracks as wav under cache/")
+    ap.add_argument("--fine", action="store_true",
+                    help="rms per 100 ms around the end of playback (recovery edge; owner keeps a steady voice)")
     a = ap.parse_args()
 
     from leafi import app as composition
@@ -139,6 +153,11 @@ async def main() -> None:
         shift = (t_pull + startup) - pc_first
         pc_pcm = cut(pc_pcm, shift, shift + got) if shift >= 0 else b"\x00\x00" * int(-shift * RATE) + pc_pcm
         print("PC mic rms/s:    ", " ".join(f"{i}:{v}" for i, v in enumerate(per_second(pc_pcm))))
+    if a.fine:
+        pc_steps = dict(per_step(pc_pcm, play_off - 1.0, play_off + 2.5)) if pc_pcm else {}
+        print("t-play_off  camera  pc")
+        for t, v in per_step(pcm, play_off - 1.0, play_off + 2.5):
+            print(f"{t - play_off:+5.1f}s  {v:6d}  {pc_steps.get(t, '')}")
 
     rec = asr.REGISTRY.create("sherpa", settings)
     windows = [("before", 0.0, play_on), ("during", play_on, play_off), ("after", play_off, got)]
