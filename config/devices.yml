@@ -12,8 +12,8 @@ devices:
       go2rtc_url: ${GO2RTC_URL}
       stream: ${STREAM_NAME}
       audio_codec: ${SPEAKER_AUDIO_CODEC:-opus}
-      src_dir: ${SPEAKER_SRC_DIR}       # the go2rtc instance's view of local_dir (no spaces allowed)
-      local_dir: cache/tts/camera
+      src_dir: ${SPEAKER_SRC_DIR}/camera   # the go2rtc instance's view of local_dir (no spaces); SPEAKER_SRC_DIR
+      local_dir: cache/tts/camera          # is the habit track's cache/tts, so both end in /camera (P-5, 2026-10-20)
       snapshot_width: 1920
   - name: pc
     adapter: local_pc

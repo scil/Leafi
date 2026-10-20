@@ -44,8 +44,14 @@ class Go2rtcCamera:
         self.url = str(options["go2rtc_url"]).rstrip("/")
         self.stream = str(options["stream"])
         self.codec = str(options.get("audio_codec") or "opus")
-        self.src_dir = str(options.get("src_dir") or "").rstrip("/\\")
         self.local_dir = Path(options.get("local_dir") or "cache/tts/camera")
+        # src_dir is the go2rtc instance's path to local_dir. Empty → the host instance runs on this machine, so
+        # the absolute local_dir (forward slashes) is right. A basename mismatch is the P-5 bug of 2026-10-20
+        # (clips written to cache/tts/camera, pushed as cache/tts/…, go2rtc answered 500): warn at once.
+        self.src_dir = str(options.get("src_dir") or self.local_dir.resolve().as_posix()).rstrip("/\\")
+        if Path(self.src_dir).name != self.local_dir.name:
+            log.warning("device %s: src_dir %r does not name the same directory as local_dir %r; "
+                        "go2rtc will not find the clips", name, self.src_dir, str(self.local_dir))
         self.snapshot_width = int(options.get("snapshot_width") or 1920)
         self._transport = transport
         self._sleep = sleep

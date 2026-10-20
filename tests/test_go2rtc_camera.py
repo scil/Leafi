@@ -105,6 +105,31 @@ async def test_snapshot_failure_returns_none(tmp_path):
     assert await cam.snapshot() is None
 
 
+def test_shipped_devices_yml_maps_src_dir_onto_local_dir():
+    """P-5 (2026-10-20): clips were written to cache/tts/camera and pushed as cache/tts/…, go2rtc answered 500.
+    With the habit track's SPEAKER_SRC_DIR (…/cache/tts) both paths must end in the same directory name."""
+    from pathlib import Path
+
+    from leafi.core.hub import load_devices_config
+
+    env = {"GO2RTC_URL": "http://127.0.0.1:2984", "STREAM_NAME": "cam_xiaomi",
+           "SPEAKER_SRC_DIR": "E:/GitHub/scil/Leafi/cache/tts"}
+    cfg = load_devices_config(Path("config/devices.yml"), env.get)
+    cam = next(d for d in cfg.devices if d.adapter == "go2rtc_camera")
+    assert Path(cam.options["src_dir"]).name == Path(cam.options["local_dir"]).name == "camera"
+
+
+def test_src_dir_mismatch_is_warned_and_empty_src_dir_falls_back_to_local_dir(tmp_path, caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="leafi.go2rtc"):
+        Go2rtcCamera("c", {"go2rtc_url": "http://127.0.0.1:9", "stream": "s", "src_dir": "E:/x/cache/tts",
+                           "local_dir": str(tmp_path / "camera")})
+    assert any("does not name the same directory" in r.message for r in caplog.records)
+    cam = Go2rtcCamera("c", {"go2rtc_url": "http://127.0.0.1:9", "stream": "s", "local_dir": str(tmp_path / "camera")})
+    assert cam.src_dir == (tmp_path / "camera").resolve().as_posix()
+
+
 async def test_play_pads_the_clip_and_pushes_a_space_free_source(go2rtc, tmp_path):
     cam, sleeps = _cam(go2rtc, tmp_path)
     clip = _clip(tmp_path, 1.0)
