@@ -9,7 +9,7 @@ Start with [`AGENTS.md`](AGENTS.md) (rules and pointers), [`GLOSSARY.md`](GLOSSA
 | Track | State |
 |---|---|
 | Habits (`agent/`): scheduled reminders → presence → pose/vision verification → parent push, weekly report | Working; Xiaomi camera stream and speaker verified 2026-08-07; pose stream and dwell calibration still need live runs |
-| Book study (`leafi/`): hardware-agnostic core, text-mode study loop, OCR, voice | Text-mode loop working (S0, S1); OCR/page tracking with mock OCR and the go2rtc Eye/Mouth adapter tested against fakes (S2 partial); voice and real models pending hardware steps (S3) |
+| Book study (`leafi/`): hardware-agnostic core, text-mode study loop, OCR, voice | Text-mode loop working (S0, S1); real models installed and `doctor` all ok (Parakeet, Silero, Kokoro, RapidOCR, OpenPronounce); voice session runs on the PC microphone (S3 plumbing); camera prototypes P-2/P-3/P-5 wait for the camera to be online and the owner present |
 
 ## Prerequisites
 
@@ -28,8 +28,13 @@ uv pip install --python .venv -r requirements.txt
 .venv\Scripts\python -m agent.main --now brush_pm  # run one task now
 .venv\Scripts\python -m leafi devices              # parsed config/devices.yml and the Hub
 .venv\Scripts\python -m leafi doctor               # backends: ok / missing package / missing model / disabled / deferred
+.venv\Scripts\python -m leafi doctor --download    # fetch the missing models under models/ (the only sanctioned download)
 .venv\Scripts\python -m leafi study --text --mock --book "Fixture" --page-text tests/fixtures/pages/p1.txt --page 1
 #   typed study loop, no hardware, nothing spoken; drop --mock to use Claude (ANTHROPIC_API_KEY) and Anki
+.venv\Scripts\python -m leafi study --book "Fixture" --page-text tests/fixtures/pages/p1.txt --page 1 --mouth pc
+#   voice session on the PC microphone and speaker (Silero VAD + Parakeet); the console still takes /stop, /skip, /page N;
+#   --voice-policy none shows text only; without --mouth pc the camera speaker is used too (ask the owner first)
+$env:LEAFI_HW_TESTS="1"; .venv\Scripts\python -m pytest -q   # real-model plumbing tests (Kokoro, Parakeet, Silero, OpenPronounce)
 .venv\Scripts\python -m leafi export --session 1   # JSON summary for the parent (no audio, no learner free text)
 .venv\Scripts\python -m leafi forget --session 1   # parent deletion (ADR-0010 §9); also --book <id>
 ```

@@ -55,7 +55,7 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | Variable | Default | Meaning |
 |---|---|---|
 | `ASR_BACKEND` | `sherpa` | `sherpa` · `whisper` · `mock` |
-| `ASR_MODEL_DIR` | `models/asr/parakeet-tdt-0.6b-v2-int8` | sherpa-onnx model folder |
+| `ASR_MODEL_DIR` | `models/asr/parakeet-tdt-0.6b-v2-int8` | sherpa-onnx model folder (`python -m leafi doctor --download` fills `models/` for asr, vad, tts en, pronunciation and ocr) |
 | `TTS_BACKEND_EN` / `TTS_BACKEND_ZH` | `kokoro` / `edge` | `kokoro` · `edge` · `mock` |
 | `TTS_VOICE_EN_KOKORO` | `af_heart` | Kokoro voice id |
 | `OCR_BACKEND` | `rapidocr` | `rapidocr` · `qwen_vl` · `mock` |
@@ -63,7 +63,10 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `OCR_MIN_CONFIDENCE` | `0.85` | below it: recapture, then ask the learner |
 | `PRON_BACKEND` | `openpronounce` | `openpronounce` · `mock`; offline reference voice forced |
 | `PRON_AUTO_JUDGE` | `false` | automatic pronunciation judgement; on only after the evaluation threshold in ADR-0011 |
-| `ASR_HOTWORDS` | `off` | `off` · `lexicon`; on only after the biased-vs-unbiased comparison |
+| `ASR_HOTWORDS` | `off` | `off` · `lexicon`; on only after the biased-vs-unbiased comparison. P-1 (2026-10-20): hotwords work per stream with `modified_beam_search` and a `bpe.vocab` built from `tokens.txt` (`services/asr/sherpa.py`) |
+| `ASR_THREADS` | `4` | sherpa-onnx CPU threads (P-1: 12-word sentence 0.17 s at 2, 0.12 s at 4, 0.09 s at 8) |
+| `VAD_SILENCE_S` / `VAD_THRESHOLD` | `0.6` / `0.5` | Silero VAD (`models/vad/silero_vad.onnx`): silence that closes an utterance; speech probability threshold. Sentence completion is still `SENTENCE_PAUSE_S` |
+| `OCR_VERSION` | `PP-OCRv6` | `PP-OCRv6` (ships inside the rapidocr wheel) · `PP-OCRv5` (English recogniser, fetched by `doctor --download`); decided by prototype P-3 on desk captures |
 | `OCR_SNAP` | `advisory` | `off` · `advisory` (candidates shown) · `auto` (not in v1) |
 | `STUDY_BRAIN_MODEL` | `claude-opus-5-5` | study track: cloud model for enrichment turns (ADR-0003); the habit track keeps its own `BRAIN_MODEL` in `agent/config.py` |
 | `BRAIN_MODEL_CHEAP` | `claude-haiku-5-5` | one-line habit phrases |

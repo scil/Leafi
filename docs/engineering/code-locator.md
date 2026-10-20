@@ -19,9 +19,24 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Check: `tests/test_tasks.py`.
 
 ## "Leafi says it is listening but nothing happens" (study)
-- Start: `leafi/app.py::_compose_voice_listener`, `leafi/services/asr/__init__.py::VoiceListener`, `leafi/devices/local_pc.py`.
-- Trap: listening is paused while any Mouth plays (half-duplex, `core/hub.py::ListeningGate`); without an ASR model (`doctor` → `asr: missing …`) the voice Listener is not built and the console Listener takes over with a warning.
-- Check: `python -m leafi study --text --mock --book X --page-text tests/fixtures/pages/p1.txt`; then `python -m leafi doctor` shows `asr ok`.
+- Start: `leafi/app.py::_compose_voice_listener`, `leafi/services/asr/__init__.py::VoiceListener`, `leafi/services/asr/vad.py` (Silero), `leafi/devices/local_pc.py`.
+- Trap: listening is paused while any Mouth plays (half-duplex, `core/hub.py::ListeningGate`); without an ASR model (`doctor` → `asr: missing …`) the voice Listener is not built and the console Listener takes over with a warning. The default PC input on the deployment PC is a Bluetooth hands-free headset mic (narrowband, starts ~1 s late); `input_device` in `devices.yml` takes a name fragment and picks WASAPI over MME when the name is ambiguous (P-6).
+- Check: `python -m leafi doctor` all `ok`; `scripts/proto/p6_capture.py --list` then `--seconds 3` shows rms > 0 while someone talks; `LEAFI_HW_TESTS=1 pytest tests/test_hardware.py` (Kokoro → Silero → Parakeet → alignment).
+
+## "Leafi stopped by itself" / "I can't hear the microphone any more" / two sessions
+- Start: `leafi/study/session.py` (`_renew_loop`, `_listener_lost`, `listen`), `leafi/core/lease.py`, `leafi/services/asr/__init__.py::VoiceListener._pump`.
+- Invariant: a failed lease renewal (another launch took `data/leafi.lock` after the TTL expired, e.g. after a suspend) stops this session at its next renewal (≤ `LEASE_TTL_S`/3) with no more audio and summary `lease_lost=true` (TD-15); a dead Ear raises `ListenerLost` once, the session says so and continues on the console when one exists, else stops (`LISTENER_LOST`, TD-16). Replug = restart the session.
+- Check: `tests/test_voice_mode.py`.
+
+## "Parakeet heard 'Yeah.' in silence" / ASR oddities
+- Start: `leafi/services/asr/sherpa.py` (P-1 contract in the module docstring: space-prefixed pieces, 80 ms timing, `ys_log_probs` confidence, 1 s padding, hotwords via `bpe.vocab`).
+- Trap: inputs shorter than 0.5 s hallucinate; the backend pads to `MIN_SECONDS`; the Silero VAD never emits segments shorter than 0.25 s.
+- Check: `tests/test_hardware.py::test_sherpa_returns_nothing_for_short_silence_and_noise`; `scripts/proto/p1_parakeet.py` for the full report.
+
+## "pronunciation judge" / `PRON_AUTO_JUDGE` / OpenPronounce
+- Start: `leafi/services/pronunciation/openpronounce.py` (offline wiring: HF cache under `models/pronunciation/hf`, Kokoro reference registered as the `leafi` TTS backend, espeak from `espeakng-loader`), `docs/engineering/pronunciation-evaluation.md` (the gate), `scripts/proto/p4_openpronounce.py` (`--eval`).
+- Trap: the scorer loads ~2.5 GB on first use (15 s on the GPU); a correct native "little" scored 0.65 and homophones score 1.0, so `PRON_CONFIRM_BELOW` must come from the evaluation, not from a guess.
+- Check: `LEAFI_NO_NETWORK=1 python scripts/proto/p4_openpronounce.py`.
 
 ## "Leafi read the page wrong" / OCR mistake / correction did not stick
 - Start: `leafi/study/corrections.py::apply_correction`, `leafi/study/pages.py` (`current_text`, `add_ocr_revision`).
