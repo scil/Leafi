@@ -249,3 +249,24 @@ async def test_concurrent_speech_keeps_the_gate_closed_until_the_last_line_drain
     await asyncio.gather(gate.speak(hub, "one"), gate.speak(hub, "two"))
     assert log == [("pause",), ("start", "mouth"), ("end", "mouth"), ("resume", 0.2),
                    ("pause",), ("start", "mouth"), ("end", "mouth"), ("resume", 0.2)]
+
+
+async def test_skip_during_synthesis_skips_that_clip(tmp_path):
+    """Review 2 D3: /skip typed while the line is still being synthesised must not be swallowed."""
+    release = asyncio.Event()
+
+    class SlowSynth(FakeSynth):
+        async def synth(self, text, lang, *, slow=False, local_only=False):
+            await release.wait()
+            return await super().synth(text, lang, slow=slow, local_only=local_only)
+
+    mouth = FakeMouth()
+    hub = hub_with(tmp_path, {"pc": mouth}, synth=SlowSynth(tmp_path))
+    task = asyncio.create_task(hub.say("a long explanation"))
+    await asyncio.sleep(0.01)
+    await hub.skip_current()  # nothing is playing yet
+    release.set()
+    await task
+    assert mouth.played == []
+    await hub.say("the next line")
+    assert len(mouth.played) == 1  # the flag covers one clip only

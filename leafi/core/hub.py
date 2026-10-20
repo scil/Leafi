@@ -160,6 +160,7 @@ class Hub:
         self._lock = asyncio.Lock()
         self._generation = 0
         self._playing: dict[str, Mouth] = {}
+        self._skip_next = False  # a /skip that arrived before the clip started (review 2 D3)
         self._play_tasks: list[asyncio.Task] = []
 
     # ---- selection
@@ -221,6 +222,10 @@ class Hub:
                 return 0.0
             if generation != self._generation:
                 return 0.0
+            if self._skip_next:
+                self._skip_next = False
+                log.info("clip skipped before playback")
+                return 0.0
             self._playing = dict(targets)
             tasks = {name: asyncio.create_task(self._play(name, m, clip)) for name, m in targets.items()}
             self._play_tasks = list(tasks.values())
@@ -246,6 +251,7 @@ class Hub:
             finally:
                 self._playing = {}
                 self._play_tasks = []
+                self._skip_next = False
             return max((float(getattr(m, "drain_s", 0.0)) for m in targets.values()), default=0.0)
 
     def max_drain_s(self) -> float:
@@ -272,7 +278,10 @@ class Hub:
         await self.skip_current()
 
     async def skip_current(self) -> None:
-        """Cancel only the clip playing now; queued lines still play (console `/skip` during playback)."""
+        """Cancel only the clip playing now; queued lines still play (console `/skip` during playback). Typed
+        while the clip is still being synthesised, it skips that clip once synthesis ends."""
+        if not self._playing and self._lock.locked():
+            self._skip_next = True
         for name, mouth in list(self._playing.items()):
             await self._stop_mouth(name, mouth)
         for task in list(self._play_tasks):
