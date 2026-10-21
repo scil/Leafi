@@ -29,14 +29,11 @@ import httpx
 
 from leafi.core import alerts
 from leafi.core.storage import Store, now_iso
+from leafi.ops.timing import DEFAULTS, Timing
 
 log = logging.getLogger("leafi.supervisor")
 
 GOOD, BAD, IDLE = "GOOD", "BAD", "IDLE"
-MAX_KILLS = 3
-HEALTHY_S = 600.0       # ten continuous GOOD minutes end an outage
-GRACE_RESUME_S = 120.0  # BAD is ignored this long after the PC resumes from sleep
-RESUME_GAP_S = 180.0    # a wall-clock gap this long between polls is a resume
 MIN_FRAME_BYTES = 1024
 DELIVER_EVERY_S = 10.0
 
@@ -48,8 +45,8 @@ class ServicePolicy:
     caller recovers it and then calls `started()`. Budget, give-up and latch are persisted per service; streak
     and timers are not."""
 
-    def __init__(self, store: Store, service: str, grace_s: float) -> None:
-        self.store, self.service, self.grace_s = store, service, grace_s
+    def __init__(self, store: Store, service: str, grace_s: float, timing: Timing = DEFAULTS) -> None:
+        self.store, self.service, self.grace_s, self.t = store, service, grace_s, timing
         if store.one("SELECT service FROM service_state WHERE service = ?", (service,)) is None:
             store.insert("service_state", service=service, updated_at=now_iso())
         self.streak = 0
@@ -69,10 +66,10 @@ class ServicePolicy:
         self.grace_until = mono + self.grace_s
 
     def step(self, obs: str, mono: float, wall: float) -> bool:
-        if self.last_wall is not None and wall - self.last_wall > RESUME_GAP_S:
+        if self.last_wall is not None and wall - self.last_wall > self.t.resume_gap_s:
             log.info("%s: resume detected (%.0f s gap)", self.service, wall - self.last_wall)
             self.streak, self.good_since = 0, None
-            self.grace_until = max(self.grace_until, mono + GRACE_RESUME_S)
+            self.grace_until = max(self.grace_until, mono + self.t.resume_grace_s)
         self.last_wall = wall
         if obs == IDLE:
             self.streak, self.good_since = 0, None
@@ -81,14 +78,14 @@ class ServicePolicy:
             self.streak = 0
             if self.good_since is None:
                 self.good_since = mono
-            if mono - self.good_since >= HEALTHY_S:
+            if mono - self.good_since >= self.t.healthy_s:
                 self._recovered()
             return False
         self.good_since = None
         if mono < self.grace_until:
             return False
         self.streak += 1
-        return self._want_recovery() if self.streak >= 2 else False
+        return self._want_recovery() if self.streak >= self.t.bad_streak else False
 
     def rearm(self, mono: float) -> bool:
         """The 🔁 button: a fresh budget; its own recovery is attempt 1. The latch is kept (same outage)."""
@@ -102,15 +99,15 @@ class ServicePolicy:
         if st["gave_up"]:
             return False
         with self.store.transaction():
-            if st["kills"] < MAX_KILLS:
+            if st["kills"] < self.t.max_recoveries:
                 self._set("kills = kills + 1")
-                log.warning("%s %s: recovery %d of %d", self.service, cause, st["kills"] + 1, MAX_KILLS)
+                log.warning("%s %s: recovery %d of %d", self.service, cause, st["kills"] + 1, self.t.max_recoveries)
                 return True
             self._set("gave_up = 1, latch = 'down'")
             if st["latch"] == "up":
                 alerts.insert(self.store, self.service, "down", "restart_gave_up")
-        log.error("%s still failing after %d recoveries: paused until 10 good minutes or rearm", self.service,
-                  MAX_KILLS)
+        log.error("%s still failing after %d recoveries: paused until %.0f good minutes or rearm", self.service,
+                  self.t.max_recoveries, self.t.healthy_s / 60)
         return False
 
     def _recovered(self) -> None:
@@ -121,7 +118,7 @@ class ServicePolicy:
             self._set("kills = 0, gave_up = 0, latch = 'up'")
             if st["latch"] == "down":
                 alerts.insert(self.store, self.service, "up", "recovered")
-        log.info("%s healthy for %.0f min: budget reset", self.service, HEALTHY_S / 60)
+        log.info("%s healthy for %.0f min: budget reset", self.service, self.t.healthy_s / 60)
 
 
 # ---------------------------------------------------------------- services and one poll
@@ -458,7 +455,7 @@ def _same_file(a: str, b: Path) -> bool:
         return False
 
 
-def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service], list[Child]]:
+def build(settings, client: httpx.AsyncClient, logs: Path, timing: Timing = DEFAULTS) -> tuple[list[Service], list[Child]]:
     """The enabled services, docker first (containers depend on it), and the children to start."""
     enabled = [s.strip() for s in settings.supervise.split(",") if s.strip()]
     services: list[Service] = []
@@ -473,7 +470,7 @@ def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service
         return c
 
     if "docker" in enabled:
-        services.append(Service("docker", 180.0, docker_probe, lambda: docker_recover(settings)))
+        services.append(Service("docker", timing.grace["docker"], docker_probe, lambda: docker_recover(settings)))
     if "camera" in enabled:
         exe = Path(settings.go2rtc_exe)
         go2rtc = child("go2rtc", [str(exe.resolve()), "-config", str(settings.go2rtc_config)],
@@ -482,7 +479,7 @@ def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service
         async def observe_cam() -> str:
             return await observe_camera(client, settings) if go2rtc.alive() else BAD
 
-        services.append(Service("camera", 90.0, observe_cam, lambda: asyncio.to_thread(go2rtc.restart)))
+        services.append(Service("camera", timing.grace["camera"], observe_cam, lambda: asyncio.to_thread(go2rtc.restart)))
     if "habit-agent" in enabled:
         agent = child("habit-agent", [str(py), "-m", "agent.main"],
                       lambda path, cmd: "-m agent.main" in cmd and "python" in Path(path).name.lower())
@@ -490,13 +487,13 @@ def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service
         async def observe_agent() -> str:
             return GOOD if agent.alive() else BAD
 
-        services.append(Service("habit-agent", 90.0, observe_agent, lambda: asyncio.to_thread(agent.restart)))
+        services.append(Service("habit-agent", timing.grace["habit-agent"], observe_agent, lambda: asyncio.to_thread(agent.restart)))
     for name, grace, probe in (
             ("frigate", 120.0, lambda: http_probe(client, f"{settings.frigate_url.rstrip('/')}/api/stats")),
             ("mosquitto", 60.0, lambda: tcp_probe("127.0.0.1", settings.mqtt_port)),
             ("gatus", 60.0, lambda: http_probe(client, f"{settings.gatus_url.rstrip('/')}/health"))):
         if name in enabled:
-            services.append(Service(name, grace, probe, lambda n=name: compose_recover(n), depends_docker=True))
+            services.append(Service(name, timing.grace.get(name, grace), probe, lambda n=name: compose_recover(n), depends_docker=True))
     if "ollama" in enabled:
         ollama_exe = shutil.which("ollama") or "ollama"
         ollama = child("ollama", [ollama_exe, "serve"], lambda path, cmd: " serve" in cmd and
@@ -507,13 +504,13 @@ def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service
                 return BAD
             return await http_probe(client, f"{settings.ollama_url.rstrip('/')}/api/tags")
 
-        services.append(Service("ollama", 60.0, observe_ollama, lambda: asyncio.to_thread(ollama.restart)))
+        services.append(Service("ollama", timing.grace["ollama"], observe_ollama, lambda: asyncio.to_thread(ollama.restart)))
     return services, children
 
 
 async def run(settings) -> int:
     from leafi.devices.notifiers import NotifierDevice
-    from leafi.ops import checks
+    from leafi.ops import checks, timing
     from leafi.ops.alerts import deliver, windows_toast
 
     logs = Path(settings.data_dir) / "logs"
@@ -524,15 +521,18 @@ async def run(settings) -> int:
     _rotating(logs / "supervisor.log", "leafi", "%(asctime)s %(name)s %(levelname)s %(message)s")
 
     store = Store(settings.db_path)
+    t, problems = timing.resolve(settings)
+    if problems:  # never exit over timing: keep.ps1 would crash-loop; the supervision-timing check alerts
+        log.error("timing settings break %s; running with defaults for the settings involved", ", ".join(problems))
     notifier = NotifierDevice(options={"telegram_bot_token": settings.telegram_bot_token,
                                        "telegram_chat_id": settings.telegram_chat_id})
     loop = asyncio.get_running_loop()
     rearms: asyncio.Queue[str] = asyncio.Queue()
 
     async with httpx.AsyncClient() as client:
-        services, children = build(settings, client, logs)
+        services, children = build(settings, client, logs, t)
         by_name = {s.name: s for s in services}
-        policies = {s.name: ServicePolicy(store, s.name, s.grace_s) for s in services}
+        policies = {s.name: ServicePolicy(store, s.name, s.grace_s, t) for s in services}
         server = await serve_rearm("127.0.0.1", settings.supervisor_port,
                                    lambda s: loop.call_soon_threadsafe(rearms.put_nowait, s), set(by_name))
 
@@ -555,7 +555,7 @@ async def run(settings) -> int:
                                               "" if ok else "failed")
                 except Exception:  # noqa: BLE001 - checks must never stop the supervisor
                     log.exception("configuration checks failed")
-                await asyncio.sleep(settings.checks_every_s)
+                await asyncio.sleep(t.checks_every_s)
 
         async def report(seen: dict[str, str]) -> None:
             """Heartbeat (dead man's switch) and the read-only dashboard; neither can fail the poll."""
@@ -582,7 +582,7 @@ async def run(settings) -> int:
                     name = await asyncio.wait_for(rearms.get(), max(0.0, next_poll - time.monotonic()))
                 except TimeoutError:
                     await report(await poll(services, policies, time.monotonic(), time.time(), recoveries))
-                    next_poll = time.monotonic() + settings.supervisor_poll_s
+                    next_poll = time.monotonic() + t.poll_s
                     continue
                 if recoveries.busy(name):
                     log.info("%s: rearm ignored, a recovery is already running", name)

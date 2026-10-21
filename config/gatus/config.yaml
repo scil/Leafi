@@ -40,3 +40,4 @@ external-endpoints:
   - {name: telegram, group: checks, token: "${GATUS_TOKEN}"}
   - {name: heartbeat, group: checks, token: "${GATUS_TOKEN}"}
   - {name: devices, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: supervision-timing, group: checks, token: "${GATUS_TOKEN}"}

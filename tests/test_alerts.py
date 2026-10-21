@@ -51,7 +51,7 @@ def store(tmp_path):
 
 def test_render_maps_codes_to_fixed_sentences_and_never_echoes_input():
     gave_up = alerts.render("camera", "down", "restart_gave_up")
-    assert "restarted 3 times" in gave_up and gave_up == alerts.render("camera", "down", "restart_gave_up")
+    assert "restarted repeatedly" in gave_up and gave_up == alerts.render("camera", "down", "restart_gave_up")
     assert alerts.render("study-mic", "event", "mic_lost") != alerts.UNKNOWN
     hostile = alerts.render("study-mic", "event", "Microphone (DJI Mic Mini) — Alice")
     assert hostile == alerts.UNKNOWN

@@ -120,6 +120,15 @@ def cmd_alert(args: argparse.Namespace) -> int:
             print(f"{st['service']:<12} {st['latch']:<5} recoveries used {st['kills']}/3"
                   f"{'  GAVE UP (rearm: 🔁 or POST /rearm?service=' + st['service'] + ')' if st['gave_up'] else ''}"
                   f"  updated {st['updated_at']}")
+        from leafi.ops import timing
+
+        t, problems = timing.resolve(settings)
+        enabled = [s.strip() for s in settings.supervise.split(",") if s.strip()]
+        for d in timing.derived(t, enabled):
+            print(f"  {d.service:<12} broken → first recovery within {d.first_recovery_s / 60:.1f} min, "
+                  f"gives up within {d.give_up_s / 60:.1f} min (plus recovery run times)")
+        if problems:
+            print(f"timing settings conflict ({', '.join(problems)}): defaults in use; see python -m leafi timing")
         failing = [st["service"][6:] for st in states if st["service"].startswith("check-") and st["latch"] == "down"]
         checked = [st for st in states if st["service"].startswith("check-")]
         if checked:
@@ -136,6 +145,35 @@ def cmd_alert(args: argparse.Namespace) -> int:
         notifier = NotifierDevice(options={"telegram_bot_token": settings.telegram_bot_token,
                                            "telegram_chat_id": settings.telegram_chat_id})
         print(f"delivered {asyncio.run(deliver(store, windows_toast, notifier))}")
+    return 0
+
+
+def cmd_timing(args: argparse.Namespace) -> int:
+    """The supervision timings in use after validation (ADR-0016); `--env` prints KEY=value for the scripts."""
+    from leafi.ops import timing
+
+    settings = Settings()  # no netguard: the scripts call this before anything else and it reads nothing remote
+    t, problems = timing.resolve(settings)
+    if args.env:
+        print("\n".join(timing.as_env(t)))
+        return 0
+    enabled = [s.strip() for s in settings.supervise.split(",") if s.strip()]
+    print(f"poll {t.poll_s:g} s, {t.bad_streak} bad polls → recovery, at most {t.max_recoveries} per outage, "
+          f"healthy after {t.healthy_s:g} s; worst poll {timing.worst_poll_s(enabled):g} s")
+    print(f"resume: gap > {t.resume_gap_s:g} s, grace {t.resume_grace_s:g} s; checks every {t.checks_every_s:g} s")
+    print("grace: " + ", ".join(f"{k}={v:g}" for k, v in t.grace.items()))
+    print("scripts: " + "; ".join(timing.as_env(t)))
+    for d in timing.derived(t, enabled):
+        print(f"  {d.service:<12} first recovery within {d.first_recovery_s / 60:.1f} min, gives up within "
+              f"{d.give_up_s / 60:.1f} min")
+    hb = timing.gatus_heartbeat_s(Path(settings.devices_file).parent / "gatus" / "config.yaml")
+    if not timing.heartbeat_ok(hb, t, enabled):
+        print(f"dashboard: the leafi/supervisor heartbeat ({hb} s) must exceed one poll "
+              f"({t.poll_s + timing.worst_poll_s(enabled):g} s); edit config/gatus/config.yaml")
+    print(f"Healthchecks.io: set the check's period above {t.poll_s + timing.worst_poll_s(enabled):g} s")
+    if problems:
+        print("CONFLICT: " + ", ".join(problems) + " — the settings involved use their defaults (ADR-0016)")
+        return 1
     return 0
 
 
@@ -214,6 +252,9 @@ def main(argv: list[str] | None = None) -> int:
     f.set_defaults(fn=cmd_forget)
     sub.add_parser("supervisor", help="keep every Leafi service running, recover the ones that stop answering, "
                    "send alerts (ADR-0016)").set_defaults(fn=cmd_supervisor)
+    tm = sub.add_parser("timing", help="supervision timings after validation, derived times, conflicts (ADR-0016)")
+    tm.add_argument("--env", action="store_true", help="KEY=value lines for keep.ps1 / install-tasks.ps1")
+    tm.set_defaults(fn=cmd_timing)
     sub.add_parser("checks", help="run the configuration checks once and print them; no alerts (ADR-0016)"
                    ).set_defaults(fn=cmd_checks)
     a = sub.add_parser("alert", help="queue a coded alert and/or deliver due alerts once (ADR-0016)")

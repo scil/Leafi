@@ -92,7 +92,19 @@ class Settings(BaseSettings):
     # ---- supervisor (ADR-0016) ----
     # habit-agent is opt-in: it makes the camera speak on its schedule (AGENTS.md: never unasked); also: ollama
     supervise: str = "docker,camera,frigate,mosquitto,gatus"
+    # timings (ADR-0016 "Timing settings"): validated together by leafi/ops/timing.py; a value that breaks an
+    # invariant falls back to its default and the supervision-timing check alerts
     supervisor_poll_s: float = 60.0
+    supervisor_bad_streak: int = 2
+    supervisor_max_recoveries: int = 3
+    supervisor_healthy_s: float = 600.0
+    supervisor_grace: str = "camera=90,habit-agent=90,docker=180,frigate=120,mosquitto=60,gatus=60,ollama=60"
+    supervisor_resume_gap_s: float = 180.0
+    supervisor_resume_grace_s: float = 120.0
+    task_repeat_min: int = 5
+    keep_backoff_s: str = "5,30,120,300"
+    keep_crash_exits: int = 3
+    keep_crash_window_min: float = 30.0
     supervisor_port: int = 18771  # POST /rearm only; outside the Windows excluded port ranges (2026-10-20)
     go2rtc_exe: Path = Path("tools/go2rtc/go2rtc.exe")
     go2rtc_config: Path = Path("tools/go2rtc/go2rtc-host.yaml")

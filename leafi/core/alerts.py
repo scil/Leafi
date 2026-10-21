@@ -12,17 +12,17 @@ from leafi.core.storage import Store, now_iso
 STATES = frozenset({"down", "up", "event"})
 
 _GAVE_UP = {
-    "camera": "Leafi camera: go2rtc was restarted 3 times and the camera still sends no video. Restarts are paused; "
+    "camera": "Leafi camera: go2rtc was restarted repeatedly and the camera still sends no video. Restarts are paused; "
               "close the Mi Home app if it is open, check the camera, then press the go2rtc restart button.",
-    "habit-agent": "Leafi habit coach kept failing; it was restarted 3 times. Restarts are paused; see data/logs "
+    "habit-agent": "Leafi habit coach kept failing; it was restarted repeatedly. Restarts are paused; see data/logs "
                    "on the PC.",
-    "docker": "Docker Desktop is not answering after 3 restarts, so Frigate and MQTT are down. Restarts are paused; "
+    "docker": "Docker Desktop is not answering after repeated restarts, so Frigate and MQTT are down. Restarts are paused; "
               "open Docker Desktop on the PC.",
-    "frigate": "Frigate is not answering after 3 restarts. Restarts are paused; see the health check on the PC.",
-    "mosquitto": "The MQTT broker is not answering after 3 restarts. Restarts are paused; see the health check on "
+    "frigate": "Frigate is not answering after repeated restarts. Restarts are paused; see the health check on the PC.",
+    "mosquitto": "The MQTT broker is not answering after repeated restarts. Restarts are paused; see the health check on "
                  "the PC.",
-    "ollama": "Ollama is not answering after 3 restarts. Restarts are paused; see data/logs on the PC.",
-    "gatus": "The Leafi dashboard (Gatus) is not answering after 3 restarts. Alerts still work; see the health "
+    "ollama": "Ollama is not answering after repeated restarts. Restarts are paused; see data/logs on the PC.",
+    "gatus": "The Leafi dashboard (Gatus) is not answering after repeated restarts. Alerts still work; see the health "
              "check on the PC.",
 }
 _NAMES = {"camera": "Leafi camera: video is", "habit-agent": "Leafi habit coach is", "docker": "Docker Desktop is",
@@ -54,11 +54,13 @@ _CHECK_FAILED = {
     "heartbeat": "The heartbeat is not configured (HEARTBEAT_URL in .env), so nobody is told when the PC itself "
                  "stops.",
     "devices": "config/devices.yml no longer parses. Run python -m leafi devices on the PC.",
+    "supervision-timing": "Some supervision timing settings conflict, so the supervisor uses their defaults. Run "
+                          "python -m leafi timing on the PC to see which and why.",
 }
 
 CATALOG: dict[tuple[str, str, str], str] = {
     **{(s, "down", "restart_gave_up"): text for s, text in _GAVE_UP.items()},
-    **{(s, "up", "recovered"): f"{_NAMES[s]} back and has been steady for 10 minutes." for s in SERVICES},
+    **{(s, "up", "recovered"): f"{_NAMES[s]} back and has been steady since." for s in SERVICES},
     **{(f"check-{c}", "down", "failed"): f"Leafi check: {text}" for c, text in _CHECK_FAILED.items()},
     **{(f"check-{c}", "up", "recovered"): f"Leafi check '{c}' passes again." for c in _CHECK_FAILED},
     ("study-mic", "event", "mic_lost"):
@@ -67,7 +69,7 @@ CATALOG: dict[tuple[str, str, str], str] = {
     ("study-lease", "event", "lease_lost"):
         "Leafi reading session: another Leafi took over the speaker, so the session stopped. The reading is saved.",
     ("supervisor", "down", "repeated_exits"):
-        "Leafi supervisor crashed 3 times in 30 minutes; no service is being watched. See data/logs on the PC.",
+        "Leafi supervisor keeps crashing; no service is being watched. See data/logs on the PC.",
 }
 KEYS = frozenset(k for k, _, _ in CATALOG)
 UNKNOWN = "Leafi raised an alert it could not describe. Run the health check on the PC."

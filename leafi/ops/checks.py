@@ -186,11 +186,22 @@ def build(settings) -> list[Check]:
         Check("telegram", threaded(lambda: channel_ok(settings, "telegram"))),
         Check("heartbeat", threaded(lambda: channel_ok(settings, "heartbeat"))),
         Check("devices", threaded(lambda: _devices_ok(settings))),
+        Check("supervision-timing", threaded(lambda: timing_ok(settings))),
     ]
 
 
+def timing_ok(settings) -> bool:
+    """The timing settings satisfy every invariant and the dashboard heartbeat outlasts one poll (ADR-0016)."""
+    from leafi.ops import timing
+
+    t, problems = timing.resolve(settings)
+    services = [s.strip() for s in settings.supervise.split(",") if s.strip()]
+    gatus_cfg = Path(settings.devices_file).parent / "gatus" / "config.yaml"
+    return not problems and timing.heartbeat_ok(timing.gatus_heartbeat_s(gatus_cfg), t, services)
+
+
 NAMES = ("task", "docker-autostart", "go2rtc-patched", "ports", "power", "toasts", "active-hours", "disk",
-         "models", "redact-terms", "telegram", "heartbeat", "devices")
+         "models", "redact-terms", "telegram", "heartbeat", "devices", "supervision-timing")
 
 
 class CheckRunner:
