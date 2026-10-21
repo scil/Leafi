@@ -75,23 +75,52 @@ textarea{font-family:var(--mono);font-size:13px;line-height:1.6;resize:vertical}
 .toast.err{border-left-color:var(--rust);color:var(--rust)}
 .note{font-size:13px;color:var(--ink-3);margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line)}
 code{font-family:var(--mono);font-size:.9em;background:var(--sunk);padding:1px 5px;border-radius:3px}
+.tabs{display:flex;gap:4px}
+.tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;padding:6px 10px;color:var(--ink-2)}
+.tabs button.on{border-bottom-color:var(--mint);color:var(--ink);font-weight:500}
+[hidden]{display:none!important}
+.envwrap{max-width:1000px;margin:0 auto;padding:20px 20px 140px}
+.envwrap .card{padding:16px 20px;margin-bottom:16px}
+.kv{display:grid;grid-template-columns:240px minmax(0,1fr);gap:4px 16px;padding:10px 0;border-top:1px solid var(--line)}
+.kv:first-of-type{border-top:none}
+@media (max-width:700px){.kv{grid-template-columns:1fr}}
+.kv .k{font-family:var(--mono);font-size:13px;word-break:break-all}
+.kv .k .st{display:block;font-family:inherit;font-size:11.5px;color:var(--ink-3)}
+.kv .meta{font-size:12px;color:var(--ink-3);margin-top:4px;line-height:1.55}
+.kv .ctl{display:flex;gap:8px;align-items:center}
+.kv .ctl input,.kv .ctl select{max-width:420px}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:0 6px;margin:2px 4px 0 0;
+  border:1px solid var(--line-2);border-radius:3px;color:var(--ink-2)}
+.tag.warn{border-color:var(--amber);color:var(--amber)}
+.tag.bad{border-color:var(--rust);color:var(--rust)}
+.kv.pending .k{color:var(--mint);font-weight:600}
+.envbar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line-2);
+  padding:10px 20px;z-index:6}
+.envbar .in{max-width:1000px;margin:0 auto;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.envbar ul{margin:0;padding-left:18px;font-size:13px;font-family:var(--mono);max-height:96px;overflow:auto;flex:1;min-width:240px}
+.envbar label{font-size:13px;display:block}
+.result{font-size:13.5px;line-height:1.7}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>动作编辑</h1>
+  <h1>Leafi</h1>
+  <div class="tabs"><button id="tab-tasks" class="on">动作</button><button id="tab-env">设置 (.env)</button></div>
   <span class="sub" id="file">config/tasks.yml</span>
   <span class="spacer"></span>
   <span class="sub" id="dirty"></span>
-  <button id="reload">重新读取</button>
-  <button class="primary" id="save" disabled>保存</button>
+  <span id="taskbtns"><button id="reload">重新读取</button>
+  <button class="primary" id="save" disabled>保存</button></span>
 </header>
 
-<div class="wrap">
+<div class="wrap" id="tasksview">
   <div class="card list" id="list"></div>
   <div class="card form" id="form"></div>
 </div>
+
+<div class="envwrap" id="envview" hidden></div>
+<div class="envbar" id="envbar" hidden></div>
 
 <div class="toast" id="toast"></div>
 
@@ -335,11 +364,12 @@ function renderForm(){
   };
 }
 
+const TOKEN = (document.querySelector('meta[name=leafi-token]') || {}).content || '';
+const post = (url, body) => fetch(url, {method:'POST',
+  headers:{'Content-Type':'application/json', 'X-Leafi-Token': TOKEN}, body: JSON.stringify(body)});
+
 $('#save').onclick = async () => {
-  const r = await fetch('/api/tasks', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({tasks: TASKS})
-  });
+  const r = await post('/api/tasks', {tasks: TASKS});
   const d = await r.json();
   if (d.error){ toast(d.error, true); return; }
   if (d.ok === false){
@@ -358,7 +388,164 @@ $('#reload').onclick = () => {
   if (dirty && !confirm('有未保存的改动,重新读取会丢掉。继续?')) return;
   load();
 };
-window.onbeforeunload = e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
+window.onbeforeunload = e => {
+  if (dirty || Object.keys(PENDING).length) { e.preventDefault(); e.returnValue = ''; }
+};
+
+// ================================================================ 设置 (.env)
+// 规则全在服务端(leafi/envedit.py):这里只显示服务端给的选项、把改动原样提交。
+// 机密项服务端从不下发值;输入框留空 = 不改。待提交的机密只存在这个页面的内存里。
+let ENV = null, PENDING = {}, ENVERR = {}, ENVRESULT = '', LOCKED = false;
+const STATE = {set:'已设置', empty:'已设为空', default:'未设置(用默认)'};
+
+function showTab(which){
+  const env = which === 'env';
+  $('#tab-tasks').classList.toggle('on', !env); $('#tab-env').classList.toggle('on', env);
+  $('#tasksview').hidden = env; $('#taskbtns').hidden = env; $('#dirty').hidden = env;
+  $('#envview').hidden = !env; $('#envbar').hidden = !env;
+  $('#file').textContent = env ? '.env' : 'config/tasks.yml';
+  if (env && !ENV) loadEnv();
+}
+$('#tab-tasks').onclick = () => showTab('tasks');
+$('#tab-env').onclick = () => showTab('env');
+
+async function loadEnv(){
+  const r = await fetch('/api/env');
+  ENV = await r.json();
+  renderEnv();
+}
+
+async function sha256(s){
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function keyInfo(k){ for (const g of ENV.groups) for (const x of g.keys) if (x.key === k) return x; }
+
+function shown(k){
+  if (k.secret) return STATE[k.state];
+  return k.state === 'default' ? '(默认)' : k.state === 'empty' ? '(空)' : k.value;
+}
+
+function control(k){
+  const p = PENDING[k.key], dis = (!k.editable || LOCKED) ? ' disabled' : '';
+  const cur = p ? (p.op === 'set' ? p.value : '') : (k.value ?? '');
+  if (k.secret) return `<input type="password" data-k="${esc(k.key)}" placeholder="${k.state === 'set' ? '已设置;留空 = 不改' : '未设置'}" autocomplete="off"${dis}>`;
+  if (k.kind === 'bool'){
+    const on = String(cur).toLowerCase();
+    return `<select data-k="${esc(k.key)}"${dis}><option value="">(默认)</option>
+      <option value="true" ${['true','1','yes','on'].includes(on)?'selected':''}>true</option>
+      <option value="false" ${['false','0','no','off'].includes(on)?'selected':''}>false</option></select>`;
+  }
+  if (k.kind === 'enum'){
+    const opts = (k.allowed || []).map(o => `<option ${cur===o?'selected':''}>${esc(o)}</option>`).join('');
+    return `<select data-k="${esc(k.key)}"${dis}><option value="">(默认)</option>${opts}</select>`;
+  }
+  const t = k.kind === 'int' || k.kind === 'float' ? 'text" inputmode="decimal' : 'text';
+  return `<input type="${t}" data-k="${esc(k.key)}" value="${esc(cur)}"${dis}>`;
+}
+
+function renderEnv(){
+  const el = $('#envview');
+  let h = '';
+  if (ENVRESULT) h += `<div class="card result">${ENVRESULT}</div>`;
+  if (ENV.problems){
+    h += `<div class="errs"><b>.env 不是规范格式,本页只读。</b>请用编辑器手改下面这些行(scripts\\win\\edit-env.bat),改完点「重新读取」。
+      <ul>${ENV.problems.map(p => `<li>第 ${p.line || '—'} 行${p.key ? ' <code>' + esc(p.key) + '</code>' : ''}:${esc(p.rule)}</li>`).join('')}</ul></div>`;
+  }
+  if (ENVERR['*']) h += `<div class="errs">${esc(ENVERR['*'])}</div>`;
+  for (const g of ENV.groups){
+    h += `<div class="card"><fieldset><legend>${esc(g.name)}</legend>`;
+    for (const k of g.keys){
+      const tags = k.readers.map(r => `<span class="tag">${esc(r)}</span>`).join('')
+        + (k.privacy ? '<span class="tag warn">隐私</span>' : '')
+        + (k.gated ? '<span class="tag bad">已闸门</span>' : '')
+        + (k.reason && !k.gated ? '<span class="tag bad">未知</span>' : '');
+      const defs = Object.entries(k.defaults || {}).map(([r, v]) => `${esc(r)}=<code>${esc(v)}</code>`).join(' · ');
+      const reset = k.state !== 'default' && !LOCKED && !ENV.problems
+        ? `<button data-unset="${esc(k.key)}">恢复默认</button>` : '';
+      h += `<div class="kv ${PENDING[k.key] ? 'pending' : ''}">
+        <div class="k">${esc(k.key)}<span class="st">${esc(STATE[k.state])}</span></div>
+        <div><div class="ctl">${control(k)}${reset}</div>
+          ${ENVERR[k.key] ? `<div class="errs" style="margin:6px 0 0;padding:6px 10px">${esc(ENVERR[k.key])}</div>` : ''}
+          <div class="meta">${esc(k.help || '')}${k.reason ? '<br><b>' + esc(k.reason) + '</b>' : ''}
+            ${defs ? '<br>默认:' + defs : ''}${k.activation.length ? '<br>生效:' + k.activation.map(esc).join(';') : ''}
+            <br>${tags}</div></div></div>`;
+    }
+    h += `</fieldset></div>`;
+  }
+  el.innerHTML = h;
+  el.querySelectorAll('[data-k]').forEach(n => {
+    n.onchange = () => {
+      const k = keyInfo(n.dataset.k), v = n.value;
+      if (k.secret){ if (v === '') delete PENDING[k.key]; else PENDING[k.key] = {op:'set', value:v}; }
+      else if ((n.tagName === 'SELECT' && v === '')) PENDING[k.key] = {op:'unset'};
+      else if (v === '') PENDING[k.key] = {op:'empty'};
+      else PENDING[k.key] = {op:'set', value:v};
+      const same = !k.secret && ((PENDING[k.key].op === 'unset' && k.state === 'default')
+        || (PENDING[k.key].op === 'set' && v === k.value) || (PENDING[k.key].op === 'empty' && k.state === 'empty'));
+      if (same) delete PENDING[k.key];
+      renderBar(); n.closest('.kv').classList.toggle('pending', !!PENDING[k.key]);
+    };
+  });
+  el.querySelectorAll('[data-unset]').forEach(b => b.onclick = () => {
+    PENDING[b.dataset.unset] = {op:'unset'}; renderEnv();
+  });
+  renderBar();
+}
+
+function renderBar(){
+  const keys = Object.keys(PENDING);
+  const desc = k => { const p = PENDING[k], x = keyInfo(k);
+    const now = x.secret ? '' : shown(x) + ' → ';
+    return p.op === 'unset' ? `${k}: 恢复默认` : p.op === 'empty' ? `${k}: ${now}(空)`
+      : `${k}: ${x.secret ? '改为新值' : now + p.value}`; };
+  const priv = keys.filter(k => keyInfo(k).privacy);
+  $('#envbar').innerHTML = `<div class="in">
+    <ul>${keys.length ? keys.map(k => `<li>${esc(desc(k))}</li>`).join('') : '<li style="list-style:none;color:var(--ink-3)">没有待保存的改动</li>'}</ul>
+    <div>${priv.map(k => `<label><input type="checkbox" data-confirm="${esc(k)}"> 确认修改隐私项 <code>${esc(k)}</code>(决定什么能离开家)</label>`).join('')}</div>
+    <div style="display:flex;gap:8px"><button id="envreload">重新读取</button>
+      <button class="primary" id="envsave" ${keys.length && !LOCKED && !ENV.problems ? '' : 'disabled'}>保存到 .env</button></div></div>`;
+  $('#envreload').onclick = () => {
+    if (keys.length && !confirm('丢弃未保存的改动并重新读取?')) return;
+    PENDING = {}; ENVERR = {}; ENVRESULT = ''; LOCKED = false; loadEnv();
+  };
+  $('#envsave').onclick = saveEnv;
+}
+
+async function saveEnv(){
+  const confirmMap = {};
+  for (const box of document.querySelectorAll('[data-confirm]')){
+    if (box.checked){
+      const p = PENDING[box.dataset.confirm];
+      confirmMap[box.dataset.confirm] = await sha256(p.op === 'set' ? p.value : '');
+    }
+  }
+  const r = await post('/api/env', {digest: ENV.digest, ops: PENDING, confirm: confirmMap});
+  const d = r.status === 403 ? {ok:false, error:'请求被拒(页面过期?请刷新浏览器)'} : await r.json();
+  ENVERR = {}; ENVRESULT = '';
+  if (r.status === 409){
+    await loadEnv();
+    ENVRESULT = '<b>.env 在你编辑期间被改过,已重新读取。</b>你的改动还在下面,请核对后再保存;隐私确认已清空。';
+    renderEnv(); return;
+  }
+  if (r.status === 500 && d.recovery){
+    LOCKED = true;
+    ENVRESULT = `<div class="errs"><b>.env 需要手工恢复,本页只读。</b>保存过程中断,文件都保留着:<ul>${
+      Object.entries(d.recovery).filter(([, v]) => v).map(([k, v]) => `<li>${esc(k)}: <code>${esc(v)}</code></li>`).join('')}</ul>
+      恢复方法:把 side 文件改名回 .env(它是旧文件,权限不变),或把 backup 复制成 .env;然后删掉 marker 文件。</div>`;
+    renderEnv(); return;
+  }
+  if (!d.ok){
+    ENVERR = d.errors || {'*': d.error || '保存失败'};
+    renderEnv(); toast('没有保存:' + Object.keys(ENVERR).length + ' 处问题', true); return;
+  }
+  PENDING = {};
+  ENVRESULT = '<b>已写入 .env。</b>要让改动生效:<ul>' + (d.activation.length ? d.activation.map(a => `<li>${esc(a)}</li>`).join('') : '<li>无需操作</li>')
+    + '</ul>' + (d.warnings.length ? '<b>注意:</b><ul>' + d.warnings.map(w => `<li>${esc(w)}</li>`).join('') + '</ul>' : '');
+  await loadEnv();
+  toast('已写入 .env');
+}
 
 load();
 </script>

@@ -1,6 +1,8 @@
 # Design: `.env` settings page in the task editor
 
-Status: rev 7 (2026-10-21), after five codex rounds and one confirming round; the confirming round's single remaining finding (marker write failure) is resolved in §2 step 7 and not re-reviewed. No code yet. Rounds: `reviews/2026-10-21-codex-env-design-review-{1..6}.md`.
+Status: implemented 2026-10-21 (rev 7 design, after five codex rounds and one confirming round; the confirming round's single remaining finding, marker write failure, is resolved in §2 step 7 and not re-reviewed). Rounds: `reviews/2026-10-21-codex-env-design-review-{1..6}.md`.
+
+Implementation notes (where the code differs from the text below): enum-like keys without a registry (`ASR_HOTWORDS`, `OCR_SNAP`, `BOOK_LOOKUP`, `OCR_VERSION`, `VERIFY_MODE`, `SPEAKER_BACKEND`) take their options from `ENUMS` in `leafi/envedit.py` rather than from new `Literal` field types, so no runtime setting gains a stricter startup check; the `env-file` check's cases are tested through `envfile.health` in `tests/test_envfile.py`; a key documented in `.env.example` that no program reads (`XIAOMI_*`) is editable and labelled as such, not Unknown.
 
 ## Purpose
 

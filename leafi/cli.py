@@ -199,13 +199,20 @@ def cmd_checks(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
-    env = Path(".env")
-    text = env.read_text(encoding="utf-8") if env.exists() else ""
-    lines = [ln for ln in text.splitlines() if not ln.startswith("REDACT_TERMS=")]
-    lines.append(f"REDACT_TERMS={args.redact}")
-    env.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print("REDACT_TERMS updated in .env")
-    return 0
+    from leafi import envedit
+
+    # the shared writer (lock, backup, canonical form); this explicit command is the owner's confirmation
+    result = envedit.save({"digest": envedit.current_digest(), "ops": {"REDACT_TERMS": {"op": "set", "value": args.redact}}},
+                          trusted_confirm=True)
+    if result.body.get("ok"):
+        print("REDACT_TERMS updated in .env")
+        return 0
+    if "recovery" in result.body:
+        print(".env needs manual recovery; files kept:", ", ".join(v for v in result.body["recovery"].values() if v))
+    else:
+        print("REDACT_TERMS not saved:", result.body.get("error") or "; ".join(
+            f"{k}: {v}" for k, v in result.body.get("errors", {}).items()))
+    return 1
 
 
 def _file_log(path: Path) -> None:
