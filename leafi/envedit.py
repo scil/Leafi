@@ -313,6 +313,14 @@ def _agreement(m: Manifest, root: Path) -> list[str]:
             except ValueError:
                 out.append(f"{k.name}: its validator rejects its own default or example")
 
+    # every value env_example() writes, commented or not, must be storable canonically
+    for k in m.keys.values():
+        written = k.example if k.example is not None else (next(iter(k.default.values())).value if k.default else "")
+        try:
+            EnvFile.encode(k.name, written, bool(k.help))
+        except Unstorable:
+            out.append(f"{k.name}: the value .env.example would show cannot be stored canonically")
+
     # examples: needed where readers disagree or there is no default; never gated, privacy opt-ins stay off
     for k in m.keys.values():
         values = {d.value for d in k.default.values()}
@@ -408,7 +416,11 @@ def _empty_notes(k: Key) -> list[str]:
 
 
 def view(path: Path = Path(".env"), root: Path = ROOT) -> dict:
-    raw, digest = envfile.read_state(Path(path))
+    try:
+        raw, digest = envfile.read_state(Path(path))
+    except OSError as e:
+        return {"digest": "", "groups": [], "problems": [
+            {"line": 0, "key": None, "rule": f".env cannot be read ({e.__class__.__name__}); the page is read-only"}]}
     m, mismatches = load(root)
     if m is None:
         return {"digest": digest, "manifest_error": mismatches[0], "groups": []}
@@ -635,6 +647,10 @@ def save(body: Any, path: Path = Path(".env"), data_dir: Path = Path("data"), ro
     except OSError as e:
         log.warning("save failed: %s", e.__class__.__name__)
         return SaveResult(200, {"ok": False, "errors": {"*": f"could not write ({e.__class__.__name__})"}})
+    except Exception as e:  # noqa: BLE001 - validation met something unforeseen: nothing was written; answer anyway
+        log.warning("save could not validate: %s", e.__class__.__name__)
+        return SaveResult(200, {"ok": False, "errors": {"*": f"could not validate ({e.__class__.__name__}); "
+                                                              f"nothing was written"}})
     if isinstance(outcome, Conflict):
         return SaveResult(409, {"ok": False, "error": "changed on disk"})
     if isinstance(outcome, RecoveryRequired):

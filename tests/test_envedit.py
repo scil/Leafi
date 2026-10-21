@@ -81,6 +81,31 @@ def test_validator_errors_block_and_warnings_save(env, tmp_path):
     assert r.body["ok"] is True and any("KEEP_BACKOFF_S" in w for w in r.body["warnings"])
 
 
+@pytest.mark.parametrize("key,value", [("KEEP_CRASH_EXITS", "1" + "0" * 400), ("KEEP_CRASH_WINDOW_MIN", "inf"),
+                                       ("TASK_REPEAT_MIN", "2147483648"), ("SUPERVISOR_POLL_S", "nan")])
+def test_absurd_timing_values_are_reported_not_crashing(env, tmp_path, key, value):
+    r = save(tmp_path, {key: {"op": "set", "value": value}})
+    assert r.status == 200
+    assert r.body.get("ok") is False or any("range" in w for w in r.body.get("warnings", []))
+
+
+def test_absurd_timing_values_fall_back_for_the_supervisor():
+    from leafi.core.config import Settings
+    from leafi.ops import timing
+
+    t, problems = timing.resolve(Settings(_env_file=None, keep_crash_exits=10**400, keep_crash_window_min=float("inf"),
+                                          task_repeat_min=2**31))
+    assert "range" in problems
+    assert (t.keep_crash_exits, t.keep_crash_window_min, t.task_repeat_min) == (3, 30.0, 5)
+    assert "inf" not in "\n".join(timing.as_env(t))
+
+
+def test_an_unreadable_env_keeps_the_page_answering(tmp_path):
+    (tmp_path / ".env").mkdir()
+    body = envedit.view(tmp_path / ".env")
+    assert body["problems"] and body["groups"] == []
+
+
 def test_unknown_keys_accept_only_removal(env, tmp_path):
     assert "TARGET_BRUSH_SECONDS" in save(tmp_path, {"TARGET_BRUSH_SECONDS": {"op": "set", "value": "1"}}).body["errors"]
     r = save(tmp_path, {"TARGET_BRUSH_SECONDS": {"op": "unset"}})

@@ -51,6 +51,8 @@ def test_generated_example_is_canonical_and_its_active_values_validate():
     (lambda d: d["keys"]["ASR_HOTWORDS"].pop("gate"), "ASR_HOTWORDS=lexicon: must be gated"),
     (lambda d: d["keys"]["NOTIFY_WITH_SNAPSHOT"].update(example={"value": "true"}), "NOTIFY_WITH_SNAPSHOT: privacy key"),
     (lambda d: d["keys"]["ASR_BACKEND"].update(example={"value": "Sherpa"}), "ASR_BACKEND: active example"),
+    (lambda d: d["keys"]["ASR_THREADS"].update(example={"value": "C:\\x it's", "commented": True}),
+     "ASR_THREADS: the value .env.example would show"),
     (lambda d: (d["keys"]["GATUS_TOKEN"]["readers"].remove("compose:gatus"),
                 d["keys"]["GATUS_TOKEN"]["default"].pop("compose:gatus")),
      "GATUS_TOKEN: used in config.yaml but compose:gatus"),

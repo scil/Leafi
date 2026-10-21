@@ -1727,7 +1727,8 @@
           "empty": "error"
         }
       },
-      "help": "`1` makes any non-loopback connect raise (tests)"
+      "help": "`1` makes any non-loopback connect raise (tests)",
+      "privacy": true
     },
     "LEASE_TTL_S": {
       "group": "study-ops",

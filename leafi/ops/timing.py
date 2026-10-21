@@ -119,10 +119,37 @@ def _parse(settings) -> tuple[Timing, list[str]]:
                   keep_crash_window_min=float(settings.keep_crash_window_min)), problems
 
 
+INT32_MAX = 2**31 - 1  # keep.ps1 / install-tasks.ps1 read these with [int] and [double]
+
+
+def _in_range(t: Timing) -> tuple[Timing, list[str]]:
+    """A number the arithmetic or the PowerShell readers cannot take (inf, nan, beyond Int32) falls back to its
+    default before the invariants run, so an absurd value is a reported problem, never an OverflowError."""
+    import math
+
+    def ok(v) -> bool:
+        try:
+            return math.isfinite(float(v)) and abs(v) <= INT32_MAX
+        except OverflowError:  # an int too large to become a float
+            return False
+
+    bad = []
+    for f in fields(Timing):
+        v = getattr(t, f.name)
+        values = v.values() if isinstance(v, dict) else v if isinstance(v, tuple) else (v,)
+        if not all(ok(x) for x in values):
+            bad.append(f.name)
+    if not bad:
+        return t, []
+    return replace(t, **{f: getattr(DEFAULTS, f) for f in bad}), ["range"]
+
+
 def resolve(settings) -> tuple[Timing, list[str]]:
     """The timing the supervisor runs with, and the problems found. Fallback converges: each round resets at
     least one field to its default, and the all-default set has no violation."""
     t, problems = _parse(settings)
+    t, out_of_range = _in_range(t)
+    problems += out_of_range
     services = [s.strip() for s in settings.supervise.split(",") if s.strip()]
     for _ in range(len(fields(Timing)) + 1):
         broken = violations(t, services)

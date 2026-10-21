@@ -10,7 +10,7 @@ from leafi.core.envfile import read_state
 
 CHANGED = {"NOTIFY_WITH_SNAPSHOT": "true", "BOOK_LOOKUP": "openlibrary", "AUDIO_KEEP_CLIPS": "true",
            "EVAL_TRANSCRIPTS": "true", "REDACT_TERMS": "Ann", "BRAIN_BACKEND": "mock", "STUDY_BRAIN_MODEL": "other",
-           "TTS_BACKEND_EN": "edge", "TTS_BACKEND_ZH": "kokoro"}
+           "TTS_BACKEND_EN": "edge", "TTS_BACKEND_ZH": "kokoro", "LEAFI_NO_NETWORK": "true"}
 GATED = [*envprotect.GATE_FLOOR, ("PRON_AUTO_JUDGE", "yes"), ("PRON_AUTO_JUDGE", "1"), ("PRON_AUTO_JUDGE", "on")]
 
 
