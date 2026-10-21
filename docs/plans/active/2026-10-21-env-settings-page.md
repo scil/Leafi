@@ -4,6 +4,153 @@ Status: implemented 2026-10-21 (rev 7 design, after five codex rounds and one co
 
 Implementation notes (where the code differs from the text below): enum-like keys without a registry (`ASR_HOTWORDS`, `OCR_SNAP`, `BOOK_LOOKUP`, `OCR_VERSION`, `VERIFY_MODE`, `SPEAKER_BACKEND`) take their options from `ENUMS` in `leafi/envedit.py` rather than from new `Literal` field types, so no runtime setting gains a stricter startup check; the `env-file` check's cases are tested through `envfile.health` in `tests/test_envfile.py`; a key documented in `.env.example` that no program reads (`XIAOMI_*`) is editable and labelled as such, not Unknown.
 
+## Rev 8 (2026-10-21, owner's request): one settings manifest
+
+Status: implemented 2026-10-21 after review rounds 7–11 (`reviews/2026-10-21-codex-env-design-review-{7..11}.md`); the round-11 correction in §8.9 is not re-reviewed. Where the code differs from the text: groups and keys carry `notes` / `notes_after` so `.env.example`'s free-standing comment lines survive generation; the per-key text of `docs/architecture/config.md` was merged into `help` (that table is now a pointer); §8.7's per-constant behaviour test is a stronger static one — `tests/test_env_validators.py` asserts no runtime code reads the six new domain constants at all, so no service can behave differently because of them.
+
+The implemented catalog (§3) reassembles each key's facts from six places: two Settings classes, `.env.example`, `docs/architecture/config.md`, `${VAR}` scans of four files, and five constant tables in `leafi/envedit.py` (`SECRET_KEYS`, `PRIVACY_KEYS`, `ENUMS`, `GATES`, `ACTIVATION`). The owner asked for one JSON file that is the only source of truth for what `.env` may contain, with each key's type and choices, so the page can render dropdowns and checkboxes from it. Rev 8 replaces §3's discovery with that manifest; §1, §2, §4's masking rule, §5's procedure and §6 are unchanged.
+
+### 8.1 `config/env-schema.json`
+
+```json
+{
+  "version": 1,
+  "readers": {
+    "leafi":        {"action": "restart the supervisor (Leafi console) and any running study session"},
+    "habit agent":  {"action": "restart the habit agent"},
+    "compose:frigate": {"action": "run scripts\\win\\apply-env.bat (recreates the Frigate container)"},
+    "compose:gatus":   {"action": "docker compose up -d gatus"},
+    "devices.yml":  {"action": "restart the supervisor (Leafi console) and any running study session"},
+    "logon task":   {"action": "rerun scripts\\win\\install-tasks.ps1"},
+    "keep.ps1":     {"action": "restart the supervisor task (keep.ps1 reads them at start)"}
+  },
+  "groups": [{"id": "camera", "title": "机型切换(唯一开关):…"}, …],
+  "keys": {
+    "SUPERVISE": {
+      "group": "supervision", "type": "list",
+      "options": ["docker", "camera", "frigate", "mosquitto", "gatus", "habit-agent", "ollama"],
+      "default": {"leafi": "docker,camera,frigate,mosquitto,gatus"},
+      "readers": ["leafi"],
+      "help": "Services the supervisor keeps running; habit-agent is opt-in (it speaks on schedule).",
+      "example": {"value": "docker,camera,frigate,mosquitto,gatus", "commented": true}
+    },
+    "PRON_AUTO_JUDGE": {"group": "study", "type": "bool", "default": {"leafi": "false"}, "readers": ["leafi"],
+                        "privacy": true, "gate": {"values": ["true"]}, "help": "…"}
+  }
+}
+```
+
+Per key: `group` (an id from `groups`, which fixes section order and header text), `type`, `options` (`enum` and `list` only), `default` per Settings reader (as the text a reader would be given, so `"false"`, `"4"`), `readers`, `help`, `secret`, `privacy`, `gate`, `example` (the value and whether `.env.example` shows it commented). Absent booleans mean `false`. Key order inside `keys` is the order on the page and in `.env.example`.
+
+Types and what they accept (the page renders each one; `envedit` validates with it, after the Settings type):
+
+| `type` | Page control | Accepts | Settings annotation it must match |
+|---|---|---|---|
+| `text` | text box | any storable text (§1) | `str` |
+| `secret` | password box, blank = unchanged | any storable text | `str` (and `secret` implied) |
+| `int`, `float` | text box, numeric keyboard | the Settings type's parse | `int`, `float` |
+| `bool` | dropdown `(默认) / true / false` | `true`, `false` (the page writes only these) | `bool` |
+| `path` | text box | storable text | `Path` |
+| `enum` | dropdown of `options` minus gated | one of `options` | `str` |
+| `list` | checkboxes of `options` minus gated | comma-separated, no spaces, each item in `options`, no repeats, written in `options` order; none checked writes `KEY=` | `str` |
+
+`gate` is data instead of code: `{"values": [...]}` refuses those values (for `list`, any of those items), `{"nonempty": true}` refuses any non-empty value (`OCR_SECOND_OPINION`, `BRAIN_LOCAL_MODEL`). Comparison is on the value as validated by the Settings type, so `yes`, `1`, `on` match a gated `"true"`. For backend keys `options` lists every backend the registry knows **including deferred ones**, and the deferred ones are listed in `gate.values`.
+
+Keys that only compose or scripts read (`CAM_PASSWORD`, `TASK_REPEAT_MIN`'s `logon task` reader, …) are entries like any other; their defaults per non-Settings reader (Compose `${VAR:-x}`) are under `default` with the reader name. Keys documented but read by nothing (`XIAOMI_*`) have `"readers": []` and say so in `help`.
+
+### 8.2 Who owns what, and where agreement is checked
+
+- The **manifest** owns everything descriptive: group, order, help, type, options, readers, activation, secret, privacy, gate, example.
+- The **Settings classes** keep their fields and defaults: they are what each process runs with, and type checkers and IDEs read them. A key a Settings class reads is therefore declared twice (the field and the manifest entry). That is the price of keeping runtime types static; the alternative, building the Settings classes from JSON at import, loses static typing for every `settings.x` in the code base.
+- **Agreement is checked by a test, not at runtime.** `tests/test_env_schema.py` fails when: a field of either Settings class has no entry, or an entry names a Settings reader whose class has no such field; a manifest default differs from the field default (both rendered to text); `type` does not match the field annotation (table above); a `${VAR}` in `docker-compose.yml`, `config/devices.yml`, `config/gatus/config.yaml`, `config/frigate/*.yml`, or a key in `scripts/win/timing.ps1`, has no entry naming that reader; a reader has no `action`; a backend key's `options` differ from its registry's `backends ∪ deferred` or its deferred backends are not gated; a key whose name matches the credential rule is not `secret`; `.env.example` differs from the generated one (§8.3).
+  - Why not inside `Settings` (a check at construction): every household service builds a Settings at start. A manifest mistake — a typo in help text's sibling field, a stale default — would then stop the supervisor, the habit agent and every study session, and the supervisor's restarts would loop on it. The manifest is documentation and page metadata; it must never be able to take a running service down. The test stops the mistake before a commit instead.
+  - The page is the one runtime consumer, so `envedit` validates the manifest's own shape at load (unknown `type`, an `enum` without `options`, a `group` not in `groups`, a gate value outside `options`): on failure the settings tab shows the error and is read-only; the task tab and every other process are unaffected.
+- Loader: `leafi/core/envschema.py` (standard library only: `json` and dataclasses) parses and shape-checks the manifest, so `leafi.ops` may use it later; `leafi/envedit.py` uses it instead of discovery.
+
+### 8.3 `.env.example` is generated
+
+`python -m leafi env-example` writes `.env.example` from the manifest: one `# ===== <group title> =====` header per group, then for each key `KEY=<example>   # <help>` (or `# KEY=<example>   # <help>` when `example.commented`), through `EnvFile`'s serialiser so the output is canonical; a key with no `example` is written with its default commented. `tests/test_env_schema.py` regenerates it and fails when the committed file differs ("run python -m leafi env-example"). The current hand-written Chinese section headers and comments move into `groups[].title` and `help` verbatim.
+
+`docs/architecture/config.md`'s per-key table moves into the manifest's `help` (it is the richest help text today) and the page shows it; `config.md` keeps its three-roots table and the canonical-form paragraph and points to the manifest for the per-key list.
+
+### 8.4 What is deleted
+
+From `leafi/envedit.py`: `.env.example` and `config.md` parsing, the `${VAR}` scans (they move into the agreement test), `SECRET_KEYS`, `PRIVACY_KEYS`, `ENUMS`, `ACTIVATION`, `_gates()`. `allowed()`, `gated()` and `_kind()` read the manifest. The credential name rule stays as a test only: an Unknown key (in `.env`, not in the manifest) is still masked and offers only removal (§4).
+
+### 8.5 Tests added or changed
+
+`tests/test_env_schema.py` (the agreement list in §8.2, plus: the manifest loads; every gate value is in `options`; list values round-trip through the page's encoding; the generated `.env.example` is canonical and equals the committed one); `tests/test_envedit.py` keeps its behaviour tests (gates on typed values, privacy confirmation, masking, all-or-nothing) and gains: a `list` save writes items in `options` order without spaces, rejects an unknown item and a repeated item; a manifest with a bad shape makes `view` report it and `save` refuse.
+
+### 8.6 Round-7 resolutions (these override §8.1–§8.5 where they differ)
+
+**Gates (D1).** A gate is a list of values in the key's own Settings domain: `"gate": {"values": ["true"]}` for `bool`, `{"values": ["lexicon"]}` for `enum`, `{"values": ["ollama", "whisper"]}` for an item of a `list` or `enum`, `{"nonempty": true}` for free text. At load, each gate literal is parsed with the key's Settings `TypeAdapter` (the leafi class when both readers have the field), exactly as a submitted value is; comparison is between the two typed values, so a submitted `yes`, `1` or `on` matches the gate literal `"true"`. "Gate values ⊆ options" applies only to `enum` and `list`.
+
+**Protection floor (D2).** Deleting the five tables must not let an edit to the manifest remove a protection silently. `tests/test_env_protections.py` holds, as plain lists written in the test (intentionally independent of the manifest), the protections that exist today: the 7 secret keys, the 9 privacy keys, and the gated cases (`PRON_AUTO_JUDGE` ∈ {true, yes, 1, on}, `ASR_HOTWORDS=lexicon`, `OCR_SNAP=auto`, `ASR_BACKEND=whisper`, `OCR_BACKEND=qwen_vl`, `BRAIN_BACKEND=ollama`, `OCR_SECOND_OPINION=x`, `BRAIN_LOCAL_MODEL=x`). It checks them **behaviourally** through `envedit.view`/`save` on a temp `.env`: each secret's canary value never appears in a response; each privacy key's change is refused without its value-bound confirmation; each gated case is refused. Removing a protection therefore needs a deliberate edit to this test, visible in review. The credential name rule also stays in that test.
+
+**Consumer domains (D3).** Every `enum` and `list` key names the code constant that defines its domain: `"domain": "leafi.ops.supervisor:SERVICES"`. The agreement test imports it and requires `set(options) == set(domain)` (for backend keys, `domain` is the registry and the rule stays `backends ∪ deferred`). Where a consumer has no constant today, the implementation adds one in the consumer and makes the consumer use it (`OCR_VERSION` in `services/ocr/rapidocr.py`, `SUPERVISE` in `ops/supervisor.py`, `REQUIRED_CHANNELS` in `ops/checks.py`, `ASR_HOTWORDS`, `OCR_SNAP`, `BOOK_LOOKUP`, `VERIFY_MODE`, `SPEAKER_BACKEND` where they are read). The page and the runtime never import `domain`; it exists for the test.
+
+**Defaults per reader, with the empty case (D4).** `default` becomes `{reader: {"value": "<text>", "empty": "empty" | "default" | "error" | "current-dir"}}` — what the reader does with `KEY=`. For Settings readers the test derives both from the field (`TypeAdapter.validate_strings("")`: `str` → `empty`, `Path` → `current-dir`, `int`/`float`/`bool` → `error`) and requires equality. For Compose the test parses every `${VAR…}` and requires equality both ways: `${V:-x}` ↔ `{"value": "x", "empty": "default"}`, `${V-x}` ↔ `{"value": "x", "empty": "empty"}`, `${V}` ↔ `{"value": "", "empty": "empty"}`; a manifest reader `compose:<svc>` with no matching reference fails, as does a reference with no matching reader. The page shows each reader's empty consequence before an `empty` op (as rev 7 did), and `empty` is offered only when no Settings reader has `"empty": "error"`.
+
+**Generated example is checked for meaning (D5).** Beyond byte equality and canonical form: the active assignments of the generated `.env.example` pass the file-only Settings validation of §5 for both classes and the manifest's options; no active example sets a gated value; every privacy key's active example equals its leafi or habit default (the opt-in stays off in a copy of the example); a key with no `example` whose readers' defaults differ, or that has no default, fails the manifest shape check (an explicit `example` is required).
+
+**Runtime boundary (round-7 §2).** Settings construction stays untouched. The settings tab loads the manifest lazily per request; besides its shape it compares the manifest with the Settings classes actually loaded (field set, type mapping, defaults): any disagreement (a deployment skew the commit-time test could not see) makes the tab read-only with the list of mismatches; the task tab and every service are unaffected.
+
+**Implementer decisions recorded.** `list` means a finite set: written in `options` order, no spaces, no repeats; `SUPERVISE` and `REQUIRED_CHANNELS` are lists; ordered or free-form comma values (`KEEP_BACKOFF_S`, `SUPERVISOR_GRACE`, `REDACT_TERMS`) stay `text`. An existing value the page would spell differently (`yes` for a bool, a list out of order) is shown as found and rewritten only when the owner changes that key; the confirmation hash covers the value as written. `bool` writes `true`/`false`; `(默认)` is `unset`, never `KEY=`. "None checked" in a list is the `empty` op (so `KEY=''` when a comment follows). The manifest's own load failure returns `{"manifest_error": "…"}` from `GET /api/env` and refuses saves.
+
+### 8.7 Round-8 resolutions and the `validator` field (override earlier sections where they differ)
+
+**One agreement checker, run by the test and by the editor.** `leafi/envedit.py::agreement(manifest) -> list[str]` performs every check of §8.2 and §8.6 (fields, types, defaults with the empty case, readers both ways, `domain` options, gates, validators, the protection floor). `tests/test_env_schema.py` asserts it returns `[]`; the settings tab calls it on every load and is read-only, listing the mismatches, when it does not. So a local manifest edit that keeps the Settings structure but weakens a protection or adds an unsupported option is caught by the editor too, not only when tests run (round 8, blocker 2). Services never call it.
+
+**Protection floor in code.** The floor lists move from the test into `leafi/envprotect.py` (`SECRET_FLOOR`, `PRIVACY_FLOOR`, `GATE_FLOOR`; plain constants, nothing else). `agreement` requires the manifest to be at least as strict (each floor secret is `secret`, each floor privacy key is `privacy`, each floor gate case is gated); `tests/test_env_protections.py` keeps the behavioural checks through `view`/`save`. The floor is a safety invariant, not a second description: weakening it is a code change in review, while the manifest stays the one place for everything descriptive.
+
+**Every reader's default, with its own parser (round 8, blocker 1).** Each reader kind declares how its default is derived, and `agreement` checks it both ways:
+- Settings readers: from the field (§8.6).
+- `compose:<svc>`: from `${V:-x}` / `${V-x}` / `${V}` in `docker-compose.yml` (§8.6).
+- `devices.yml`: from its `${V:-x}` / `${V}` references, interpreted by the same expansion function `leafi.core.hub` uses (called with a lookup that returns `None`, then `""`), so the manifest's `{"value", "empty"}` is whatever the hub really does.
+- `config/gatus/config.yaml` and Frigate's YAML are not `.env` readers: they read container environment that Compose builds. Their `${V}` references must be covered by a `compose:<svc>` reader of the same key; they get no reader of their own.
+- `scripts/win/timing.ps1` is not a `.env` reader either (it reads `python -m leafi timing --env`). Its readers stay `logon task` / `keep.ps1` for **activation only**; `agreement` requires its fallback table to equal the leafi Settings defaults for the same keys.
+
+**Domain constants preserve behaviour.** Extracting a `domain` constant must not change any consumer's branching: the supervisor still ignores an unknown service name, sherpa still treats any non-`off` hotwords value as on, the speaker still treats any non-`local` backend as go2rtc. The constant is the set the page offers; the consumer may keep accepting more. A test per extracted constant runs the consumer's existing behaviour on one value outside the domain and asserts it is unchanged.
+
+**`validator` (owner's request).** For a value whose rule is more than a type and a choice list:
+
+```json
+"WEEKLY_REPORT": {"type": "text", "validator": {"fn": "agent.config:parse_weekly_report", "severity": "error"}}
+```
+
+- `fn` names the **consumer's own parser**, `module:function`, taking the text and returning the parsed value or raising `ValueError` (message without the value). It is never a separate checking function, so the page and the service cannot disagree about what is valid. Where the parser is a method or inline code today, it is moved to a module-level function that the old call site now calls (behaviour unchanged; the existing tests of that consumer must stay green).
+- `severity`: `error` blocks the save; `warning` saves and reports, for settings whose consumer already falls back on a bad value.
+- Only modules under `leafi.` or `agent.` are accepted; the function is imported only by `envedit` when validating, never at service start.
+- The validator runs after the type check and before the gate check, on `set` values only (`empty` is governed by the reader's `empty` rule; an `empty` that the validator rejects is refused when the validator's own call with `""` raises).
+- `agreement` checks: `fn` resolves to a callable; it accepts every active example and every default of that key; and the consumer really calls it — the module that owns the setting's runtime use contains a call to that function name (AST search), so a validator cannot quietly drift from the code that reads the value.
+- Initial validators: `WEEKLY_REPORT` and `SCHEDULE` (`agent/config.py`, from the `parsed_*` methods), `SUPERVISOR_GRACE` and `KEEP_BACKOFF_S` (`leafi/ops/timing.py`, from `_parse`, severity `warning` because the supervisor falls back), `ACTIVE_HOURS` (`leafi/ops/checks.py`, from the inline `partition`). Cross-key invariants (the timing rules) stay in §5's whole-file validation.
+
+### 8.8 Round-9 resolutions (override §8.7 where they differ)
+
+**Validator contract.** A validator is `fn(text: str) -> parsed`: exactly one argument, synchronous, deterministic, no I/O, no environment or Settings access, no mutation of module state; it raises `ValueError` with a message that does not contain the text. The editor calls it on the effective text and discards the result; the consumer calls the **same** function on the Settings field's text and uses the result. Validators live only in import-safe parser modules: `agent/parsers.py` (new; `parse_weekly_report`, `parse_schedule`, moved from the `parsed_*` methods, which now return `parsers.parse_…(self.weekly_report)`), and the pure functions added to `leafi/ops/timing.py` (`parse_grace(text) -> dict[str, float]` overrides only, `parse_backoff(text) -> tuple[float, ...]`) and `leafi/ops/checks.py` (`parse_active_hours(text) -> tuple[int, int]`, including both `int` conversions). `tests/test_env_validators.py` imports every validator module in a fresh subprocess (`python -I`, empty temp cwd, empty environment) and asserts the import succeeds and neither `agent.config` nor `leafi.core.config`'s `Settings()` was instantiated (no `.env` read: the temp cwd has a poisoned `.env` whose parse would raise).
+
+**Runtime boundaries stay where they are.** `timing._parse` keeps its `try/except` and grace-default merging; it now calls `parse_grace`/`parse_backoff` inside them, so a bad value still falls back with the same problem names. `checks.build` still only stores the text; the `active_hours` check function calls `parse_active_hours` when it runs, so a bad value still fails that check, not `build()`. `parsed_weekly_report`/`parsed_schedule` keep their call sites.
+
+**Validation depth = today's acceptance.** Each validator accepts exactly what its runtime parser accepts today (`parse_weekly_report` still accepts `noday:99:99`; `parse_schedule` still accepts `task:not-a-time`). Making them stricter is a behaviour change of the services and is out of scope; recorded as a follow-up, not done here.
+
+**Consumer binding is behavioural, not lexical.** Each `validator` entry also names its call site: `"consumer": "agent.config:Settings.parsed_weekly_report"`. `tests/test_env_validators.py` has one test per validator that replaces the validator with a spy returning a sentinel, runs the consumer on a Settings built with a chosen text, and asserts the spy received exactly that text and the sentinel came back from (or drove) the consumer: for `timing.resolve`, the grace/backoff in the resulting `Timing`; for the `active-hours` check, the hours passed to `hours_cover`; for the habit agent, the return of `parsed_*`. The AST search of §8.7 is dropped. `agreement` checks only that `fn` and `consumer` resolve.
+
+**Empty values, one rule.** The effective text of `set("")` and of `empty` is `""`, and both go through the same steps: the reader `empty` rule (§8.6) first, then the validator on `""` if the key has one, with its declared `severity` applied the same way as for any other text. `unset` runs no validator (the default applies; `agreement` checks every default passes its validator).
+
+**devices.yml readers.** Discovery follows the hub's scope: only `${…}` inside `devices[*].options` values of `config/devices.yml`, each recorded with its device name. The derived consequence calls `leafi.core.hub._expand(value, lookup, missing)` with a fresh `missing` list for an absent and for an empty value: a non-empty `missing` means `"empty": "disables-device"` (and for absent, `"absent": "disables-device"`), otherwise the returned text is the default. So `default` per reader gains an optional `absent` (`"default"`, `"empty"` or `"disables-device"`) beside `empty`. The page shows "empty here disables device <name>" before an `empty` op or `unset` on such a key.
+
+### 8.9 Round-10 resolutions (override §8.8 where they differ)
+
+**One reader per device.** A key referenced in `config/devices.yml` gets one reader per device that references it, named `devices.yml:<device>` (like `compose:<service>`), each with its own `default` record and the activation of `leafi`. So `${V:-x}` on one device and a required `${V}` on another are two readers with two records. If one device references the same key more than once, its record is the strictest of them (`disables-device` beats a fallback).
+
+**Consequences are attributed to the key under test only.** For key `K` in one options value, `_expand` is called with a lookup that returns the test value (`None` for absent, `""` for empty) for `K` and a fixed non-empty sentinel for every other variable; `K` disables the device only if `K` itself is in `missing`. The returned text with the sentinels removed is the fallback default. So `${A:-x}/${B}` gives `A`: default `x`, never disables; `B`: disables when absent or empty.
+
+**Round-11 correction: one reader per reference, expanded alone.** The reader is `devices.yml:<device>.<option>` (the option key whose value holds the reference; a second reference to the same key in the same option gets a `#2` suffix), not one per device. Its default is derived by finding each `${…}` occurrence with the hub's own reference pattern and calling `_expand` on **that occurrence's text alone** (`"${A:-x}"`, not `"${A:-x}/${B}"`), so the fallback is exactly `x` and no surrounding literal or neighbour leaks in; the sentinel lookup above is then only needed for the `missing` attribution, which is per occurrence too. Two references to one key with different fallbacks are two readers with two records, so no aggregation rule is needed. (This correction closes round 11's two findings and is not re-reviewed: the review budget of five rounds for Rev 8 is spent.)
+
+**Import safety is observed directly.** The subprocess import test installs `sys.addaudithook` before importing each validator module and fails on any `open` event whose path ends in `.env`, and replaces `pydantic_settings.BaseSettings.__init__` with a recorder that fails on any call; success of the import alone is not evidence.
+
+**Active hours.** `parse_active_hours` is called inside the check after both registry values are read, as today (the existing short circuit on missing registry values is unchanged).
+
 ## Purpose
 
 The owner edits `.env` by hand (`scripts\win\edit-env.bat`). Mistakes found so far: stale key names that silently stop working (`TARGET_BRUSH_SECONDS`, renamed to `TARGET_ACTIVE_SECONDS`), a key whose two readers have different defaults (`GO2RTC_URL`: 2984 in `leafi`, 1984 in `agent`), and no hint about which service must restart. The owner asked for a page in the task editor (`python -m agent.webui`, `http://127.0.0.1:8770`) that edits `.env`, with secrets masked.

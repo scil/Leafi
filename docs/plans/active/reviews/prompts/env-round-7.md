@@ -1,0 +1,9 @@
+Design review, round 7 (a new revision). Read the section "Rev 8 (2026-10-21, owner's request): one settings manifest" at the top of docs/plans/active/2026-10-21-env-settings-page.md as a design, not as prose. The rest of that document is the implemented rev 7 design; the implementation is leafi/core/envfile.py, leafi/envedit.py, agent/webui/__main__.py and agent/webui/index.html, and the current tests are tests/test_envfile.py, tests/test_envedit.py, tests/test_webui_env.py. Open those and leafi/core/config.py, agent/config.py, .env.example, docs/architecture/config.md, docker-compose.yml, scripts/win/timing.ps1 and the service registries (leafi/services/*/__init__.py) only to verify a claim. Do not read .env.
+
+Answer:
+1. Defects: places where rev 8, implemented as written, lets the manifest and the code disagree without a failing test, lets the page write a value a reader rejects or reads differently, weakens a rev-7 guarantee (canonical form, masking, gates, privacy confirmation, all-or-nothing), or contradicts a repository rule (AGENTS.md, tests/test_architecture.py, ADR-0011, ADR-0016).
+2. The decision in §8.2 to check manifest/Settings agreement in a test rather than at Settings construction: is the reasoning sound? Is there a runtime failure mode the test cannot catch?
+3. The type table in §8.1: for each type, a concrete value that the page could write and that a reader (pydantic-settings 2.14 for bool/int/float/Path/str; docker compose; scripts/win/timing.ps1) would read differently or reject. Especially `list` and `bool`.
+4. Anything an implementer would still have to invent: "blocker" or "implementer may decide".
+
+Output: Markdown sections 1-4; severity and location per finding; end with "Remaining blockers before coding" (may be empty). Do not comment on style.
