@@ -9,8 +9,12 @@ $user = "$env:USERDOMAIN\$env:USERNAME"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $repo `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$keep`""
 $logon = New-ScheduledTaskTrigger -AtLogOn -User $user
-# Relaunch keep.ps1 within 5 min if it ever dies; IgnoreNew leaves a running one alone (ADR-0016).
-$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+# Relaunch keep.ps1 within TASK_REPEAT_MIN (default 5) if it ever dies; IgnoreNew leaves a running one alone.
+. (Join-Path $PSScriptRoot "timing.ps1")
+$timing = Read-LeafiTiming $repo
+$repeatMin = [int]$timing.TASK_REPEAT_MIN
+Write-Output "[--] repeating trigger every $repeatMin min (from $($timing._source))"
+$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $repeatMin)
 $trigger = @($logon, $repeat)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
