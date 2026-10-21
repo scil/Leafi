@@ -194,7 +194,7 @@ def cmd_checks(args: argparse.Namespace) -> int:
 
     results = asyncio.run(run_all())
     for name, verdict in results:
-        print(f"{name:<18}{verdict}")
+        print(f"{name:<20}{verdict}")
     return 0 if all(v == "ok" for _, v in results) else 1
 
 
