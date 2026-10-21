@@ -92,6 +92,45 @@ def cmd_forget(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watchdog(args: argparse.Namespace) -> int:
+    from leafi.ops import watchdog
+
+    try:
+        return asyncio.run(watchdog.run(_settings()))
+    except KeyboardInterrupt:
+        return 130
+
+
+def cmd_alert(args: argparse.Namespace) -> int:
+    """keep.ps1's path (ADR-0016): queue a coded alert and/or deliver what is due, once."""
+    from leafi.core import alerts
+    from leafi.core.storage import Store
+    from leafi.devices.notifiers import NotifierDevice
+    from leafi.ops.alerts import deliver, windows_toast
+
+    settings = _settings()
+    store = Store(settings.db_path)
+    if args.status:
+        st = store.one("SELECT kills, gave_up, latch, updated_at FROM watchdog_state WHERE id = 1")
+        if st is None:
+            print("watchdog: never ran")
+        else:
+            print(f"watchdog: camera {st['latch']}, restarts used {st['kills']}/3"
+                  f"{', GAVE UP (press the restart button)' if st['gave_up'] else ''}, updated {st['updated_at']}")
+        rows = store.all("SELECT id, key, state, reason, created_at, attempts FROM alert_outbox "
+                         "WHERE sent_at IS NULL ORDER BY id")
+        print(f"unsent alerts: {len(rows)}")
+        for r in rows:
+            print(f"  #{r['id']} {r['created_at']} {r['key']}/{r['state']}/{r['reason']} (attempts {r['attempts']})")
+    if args.insert:
+        alerts.insert(store, *args.insert)
+    if args.drain:
+        notifier = NotifierDevice(options={"telegram_bot_token": settings.telegram_bot_token,
+                                           "telegram_chat_id": settings.telegram_chat_id})
+        print(f"delivered {asyncio.run(deliver(store, windows_toast, notifier))}")
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     env = Path(".env")
     text = env.read_text(encoding="utf-8") if env.exists() else ""
@@ -100,6 +139,20 @@ def cmd_setup(args: argparse.Namespace) -> int:
     env.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("REDACT_TERMS updated in .env")
     return 0
+
+
+def _file_log(path: Path) -> None:
+    """WARNING and above from every command, rotating 5 × 1 MB (ADR-0016), so faults outlive the console."""
+    from logging.handlers import RotatingFileHandler
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=5, encoding="utf-8", delay=True)
+    except OSError:
+        return
+    handler.setLevel(logging.WARNING)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(process)d %(name)s %(levelname)s %(message)s"))
+    logging.getLogger().addHandler(handler)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -130,12 +183,20 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--session", type=int)
     g.add_argument("--book", type=int)
     f.set_defaults(fn=cmd_forget)
+    sub.add_parser("watchdog", help="own the host go2rtc, restart it when the camera sends no video, send alerts "
+                   "(ADR-0016)").set_defaults(fn=cmd_watchdog)
+    a = sub.add_parser("alert", help="queue a coded alert and/or deliver due alerts once (ADR-0016)")
+    a.add_argument("--insert", nargs=3, metavar=("KEY", "STATE", "REASON"))
+    a.add_argument("--drain", action="store_true")
+    a.add_argument("--status", action="store_true", help="restart budget and unsent alerts (health.ps1)")
+    a.set_defaults(fn=cmd_alert)
     st = sub.add_parser("setup", help="local setup")
     st.add_argument("--redact", required=True, help="comma-separated terms removed from cloud payloads")
     st.set_defaults(fn=cmd_setup)
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    _file_log(Settings().data_dir / "logs" / "leafi.log")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     return int(args.fn(args) or 0)

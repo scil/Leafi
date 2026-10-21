@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     # ---- speech lease ----
     lease_ttl_s: float = 60.0
 
+    # ---- watchdog (ADR-0016) ----
+    watchdog_poll_s: float = 60.0
+    watchdog_port: int = 18771  # POST /rearm only; outside the Windows excluded port ranges (2026-10-20)
+    go2rtc_exe: Path = Path("tools/go2rtc/go2rtc.exe")
+    go2rtc_config: Path = Path("tools/go2rtc/go2rtc-host.yaml")
+    frigate_url: str = "http://127.0.0.1:15000"
+    frigate_camera: str = "hallway"  # the Frigate camera fed by STREAM_NAME (config/frigate/config.yml)
+
     @property
     def db_path(self) -> Path:
         return self.data_dir / "leafi.db"
