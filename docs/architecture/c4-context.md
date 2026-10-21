@@ -8,7 +8,7 @@ flowchart LR
     Parent(["Parent"])
     subgraph LAN["Home LAN — images and audio stay here"]
         Leafi["Leafi agent"]
-        Cam["Cameras with speakers\n(Xiaomi 3 PTZ today, Tapo later)"]
+        Cam["Cameras with speakers<br/>(Xiaomi 3 PTZ today, Tapo later)"]
         PC["PC mic / speakers / terminal"]
         ESP["ESP32 box with mic, speaker, screen (planned)"]
         Frigate["Frigate + mosquitto"]

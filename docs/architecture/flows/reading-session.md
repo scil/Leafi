@@ -15,8 +15,8 @@ stateDiagram-v2
     FIND_PAGE --> READ: page text ready (revision known)
     READ --> READ: utterance aligned
     READ --> PRACTICE: sentence completed (ADR-0013) with candidates
-    READ --> CORRECT: control: "the book says …"
-    READ --> EXPLAIN: control: "what does … mean" / "I don't understand"
+    READ --> CORRECT: control "the book says …"
+    READ --> EXPLAIN: control "what does … mean" or "I don't understand"
     READ --> REPOSITION: two unanchored utterances, no page-wide anchor
     REPOSITION --> READ: anchored
     PRACTICE --> READ: practice ended, sentences remain
@@ -54,7 +54,7 @@ sequenceDiagram
     Lis-->>S: Utterance(words, times, conf|None, audio_ref|None)
     S->>A: align(reading_state, utterance)
     A-->>S: (state', observations, events: sentence_reached | unanchored)
-    S->>S: store utterance, observations, state'; new candidates; withdrawn candidates (self_corrected / reread)
+    S->>S: store utterance, observations, state', new candidates, withdrawn candidates (self_corrected / reread)
     Note over S: sentence completion = sentence_reached, or pause 1.2 s / typed line end near the sentence end (ADR-0013)
     alt sentence completed and no candidates
         S->>H: say(local encouragement or nothing)
@@ -70,7 +70,7 @@ sequenceDiagram
             opt PRON_AUTO_JUDGE and audio_ref
                 S->>S: pronunciation.score → evidence=acoustic
             end
-            S->>S: practices row; a matching retry → withdrawn(practice); two disagreements / skip / idle → unsure; confirmed only with acoustic evidence (voice and text alike, ADR-0013 → Practice)
+            S->>S: practices row. A matching retry → withdrawn(practice). Two disagreements / skip / idle → unsure. Confirmed only with acoustic evidence (voice and text alike, ADR-0013 → Practice)
         end
     end
     opt Brain enrichment (async, turn-guarded)

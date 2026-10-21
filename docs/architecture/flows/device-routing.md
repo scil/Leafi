@@ -11,13 +11,13 @@ sequenceDiagram
     participant M1 as Mouth: desk_cam (go2rtc)
     participant M2 as Mouth: pc
     participant F as Faces
-    T->>G: pause()            — capture stops; buffered audio discarded
+    T->>G: pause()            — capture stops, buffered audio discarded
     T->>H: say("Let's try 'through' once more.")
     H->>F: show(text)         — always first, never waits for audio
     alt policy != none and ≥1 Mouth
         H->>TTS: synth(text, lang, voice, speed) → clip (cache key = text+lang+voice+speed+model)
         par policy = all
-            H->>M1: play(prepared clip)   — adapter pads/transcodes; returns at estimated playback end
+            H->>M1: play(prepared clip)   — adapter pads/transcodes, returns at estimated playback end
             H->>M2: play(clip)
         and policy = primary
             H->>M1: play(clip)
