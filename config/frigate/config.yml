@@ -55,4 +55,4 @@ snapshots:
 # face_recognition:
 #   enabled: true
 #   model_size: large
-version: 0.17-0
+version: 0.18-0

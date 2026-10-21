@@ -5,16 +5,24 @@ mqtt:
 
 go2rtc:
   streams:
-    sink_cam:
+    # 多机型并存:每机型一条流;go2rtc 懒连接,未被消费的机型定义放着无害。
+    # 切换机型 = 改 .env 的 STREAM_NAME(cam_xiaomi | cam_tapo),Frigate 取流与 agent 喇叭推送同步切换。
+    cam_xiaomi:
+      # 小米智能摄像机 3 云台版(现有过渡机):P2P 源跑在宿主 go2rtc(tools/go2rtc,端口 2554/2984),
+      # 容器这里只做 RTSP 中继——cs2 打洞的 UDP 回包会换端口,Docker NAT 必丢,容器内直连永远超时。
+      # 宿主实例需要 Windows 防火墙对 go2rtc.exe 的入站 Allow(cs2 回包 + 本容器拉流都靠它)。
+      - rtsp://host.docker.internal:2554/cam_xiaomi
+    cam_tapo:
+      # Tapo C260(终选主推)/ C225:视频走 RTSP,喇叭走 tapo:// 双向通道。
       - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM_IP}:554/stream1
-      - tapo://{FRIGATE_TAPO_CLOUD_PASSWORD}@{FRIGATE_CAM_IP}   # 喇叭回传通道(双向音频)
+      - tapo://{FRIGATE_TAPO_CLOUD_PASSWORD}@{FRIGATE_CAM_IP}
 
 cameras:
   hallway:
     enabled: true
     ffmpeg:
       inputs:
-        - path: rtsp://127.0.0.1:8554/sink_cam
+        - path: rtsp://127.0.0.1:8554/{FRIGATE_ACTIVE_STREAM}
           input_args: preset-rtsp-restream
           roles: [detect, record]
     detect:
@@ -34,10 +42,10 @@ detectors:
 
 record:
   enabled: true
-  retain:
+  continuous:
+    days: 0
+  motion:
     days: 2
-    mode: active_objects
-
 snapshots:
   enabled: true
   retain:
@@ -47,3 +55,4 @@ snapshots:
 # face_recognition:
 #   enabled: true
 #   model_size: large
+version: 0.17-0
