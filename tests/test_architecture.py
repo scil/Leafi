@@ -112,6 +112,16 @@ def test_only_the_alert_deliverer_calls_notifier_send():
     assert bad == []
 
 
+def test_envfile_is_stdlib_only_and_envedit_stays_in_the_outer_ring():
+    import sys
+
+    names = _imports(LEAFI / "core" / "envfile.py")
+    assert all(n.split(".")[0] in sys.stdlib_module_names or n.startswith("__future__") for n in names), names
+    bad = [f"{f.name}: {n}" for ring in ("core", "ops", "study") for f in _files(ring) for n in _imports(f)
+           if n == "leafi.envedit" or n.startswith("leafi.envedit.")]
+    assert bad == []
+
+
 def test_no_environment_reads_outside_core_config():
     bad = []
     for f in LEAFI.rglob("*.py"):

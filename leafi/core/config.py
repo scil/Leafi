@@ -155,6 +155,13 @@ def env_lookup(name: str, settings: Settings | None = None, env_file: Path | Non
     return None
 
 
+def env_overrides(keys: list[str]) -> list[str]:
+    """Which of these `.env` keys this process's environment shadows (pydantic-settings: the environment wins).
+    Names only, never values."""
+    present = {k.upper() for k in os.environ}
+    return [k for k in keys if k.upper() in present]
+
+
 def hardware_tests_enabled() -> bool:
     return os.environ.get("LEAFI_HW_TESTS") == "1"
 

@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.lock
+.env.*.tmp
+.env.*.side
 cache/
 data/
 config/frigate/model_cache/
