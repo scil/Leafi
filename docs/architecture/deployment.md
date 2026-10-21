@@ -1,6 +1,6 @@
 # Deployment
 
-One Windows 11 PC runs everything. Containers hold Frigate and mosquitto; the host runs go2rtc, Ollama, Anki and the Leafi process. See `c4-container.md` for ports.
+One Windows 11 PC runs everything. Containers hold Frigate and mosquitto; the host runs go2rtc, Ollama, Anki and the Leafi process. See `c4-container.md` for ports, and `flows/supervision.md` for how the supervisor keeps them running and alerts the owner.
 
 ## Why go2rtc runs on the host
 
