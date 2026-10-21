@@ -120,6 +120,7 @@ def _parse(settings) -> tuple[Timing, list[str]]:
 
 
 INT32_MAX = 2**31 - 1  # keep.ps1 / install-tasks.ps1 read these with [int] and [double]
+SLEEP_MAX_S = 2147483  # Windows PowerShell 5.1 Start-Sleep -Seconds ceiling (keep.ps1 sleeps each backoff)
 
 
 def _in_range(t: Timing) -> tuple[Timing, list[str]]:
@@ -137,7 +138,7 @@ def _in_range(t: Timing) -> tuple[Timing, list[str]]:
     for f in fields(Timing):
         v = getattr(t, f.name)
         values = v.values() if isinstance(v, dict) else v if isinstance(v, tuple) else (v,)
-        if not all(ok(x) for x in values):
+        if not all(ok(x) for x in values) or (f.name == "keep_backoff_s" and any(x > SLEEP_MAX_S for x in values)):
             bad.append(f.name)
     if not bad:
         return t, []

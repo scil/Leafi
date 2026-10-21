@@ -98,6 +98,9 @@ def test_absurd_timing_values_fall_back_for_the_supervisor():
     assert "range" in problems
     assert (t.keep_crash_exits, t.keep_crash_window_min, t.task_repeat_min) == (3, 30.0, 5)
     assert "inf" not in "\n".join(timing.as_env(t))
+    t, problems = timing.resolve(Settings(_env_file=None, keep_backoff_s="5,30,120,3000000",
+                                          keep_crash_window_min=100001))
+    assert "range" in problems and t.keep_backoff_s == (5.0, 30.0, 120.0, 300.0)
 
 
 def test_an_unreadable_env_keeps_the_page_answering(tmp_path):
