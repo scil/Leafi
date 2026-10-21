@@ -6,7 +6,7 @@ Capabilities used: Eye (`frame.jpeg`), Mouth (go2rtc push → P2P talk), Ear (RT
 
 | Item | Value |
 |---|---|
-| Camera firmware | **not recorded** (read it in the Mi Home app at the next owner session and add it here) |
+| Camera firmware | `5.3.1_0548`; Mi Home camera plugin version 4433 (read by the owner in the Mi Home app on 2026-10-20; assumed unchanged since the day's runs, as no update was applied) |
 | go2rtc | `1.9.14+dev.b5948cf.dirty` = v1.9.14 + the two local patches in `tools/go2rtc/PATCHES.md`; `tools/go2rtc/go2rtc.exe` sha256 `E4E5FC2D75094FFA5034BCEAF00B4E06A643712E705646648169D5F7D73321C3` |
 | Host | Windows 11 desk PC, host go2rtc via `scripts\win\go2rtc-host.bat`; RTSP `rtsp://127.0.0.1:2554/cam_xiaomi` |
 | Talk path | push of a prepared clip (`audio_codec` opus), go2rtc `AddTrack`: bare `cmdSpeakerStartReq` (0x106) + fixed 1 s sleep; `cmdSpeakerStop` never sent |
@@ -43,7 +43,7 @@ All runs: 2026-10-20, the owner (adult) ~1 m from the camera in its current wide
 | Fact | Value | Probe | Evidence |
 |---|---|---|---|
 | Stream | Opus, 25 packets/s (40 ms frames, 201–351 bytes ≈ 60 kbit/s), no DTX (packets flow in a silent room, so judge by decoded level only) | `p2_camera_mic.py --seconds 8` | Plan Progress P-2 11:55; commit c8ccd4a |
-| SNR at ~1 m | speech rms 475 against a floor of 1.8 (≈ 48 dB; earlier notes round it to 45 or 49 dB); speech peaks 963–7368 (≈ −13 dBFS) | same | same |
+| SNR at ~1 m | speech rms 475 against a floor of 1.8, i.e. 20·log10(475/1.8) ≈ 48 dB (earlier notes say 45 or 49 dB; use the raw values); speech peaks 963–7368 (≈ −13 dBFS). The floor is measured after the camera's AGC and Opus, so this is not an acoustic room SNR; at 50 % words, SNR is not what limits recognition | same | same |
 | ASR word accuracy at ~1 m | **50 %**: Parakeet TDT 0.6B v2 int8 matched 6 of 12 tokens of the fixture passage (adult reader); right words confidence 0.75–0.93, wrong 0.15–0.55. Target for the camera Ear: ≥ 80 % at the reading position (TD-14) | same | same |
 | AGC | levels swing 5–10× between runs | `p27_duplex.py --keep` | ADR-0014 second measurement |
 | RTSP pull start | 0.7 s (P-2); 0.6–1.9 s across P-2 and p27 pulls; the wall-time-minus-decoded estimate varied 0.9–3.3 s and is unusable for placing events | `p2_camera_mic.py`, `p27_duplex.py` | Plan Progress P-2; Surprises (TD-27) |
@@ -69,7 +69,6 @@ All runs: 2026-10-20, the owner (adult) ~1 m from the camera in its current wide
 
 ## Unmeasured
 
-- Camera firmware version (see Versions).
 - The head pad the camera's fade-in actually needs, and whether a longer tail pad or a later teardown saves short clips (TD-24 steps 3–4).
 - Whether a **long-lived** talk channel streaming idle silence keeps the microphone hearing and lets the next line skip the handshake (TD-24 step 2; only 1.7 s silent streams were measured).
 - Recovery time with an acoustic marker rather than counting (ADR-0014 asks for it before a camera Ear).
