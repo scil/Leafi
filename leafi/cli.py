@@ -215,6 +215,19 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_env_example(args: argparse.Namespace) -> int:
+    from leafi import envedit
+
+    m, mismatches = envedit.load()
+    if m is None or mismatches:
+        print("config/env-schema.json disagrees with the code; fix these first:")
+        print("\n".join(f"  {x}" for x in mismatches))
+        return 1
+    (envedit.ROOT / ".env.example").write_bytes(envedit.env_example(m))
+    print(".env.example regenerated from config/env-schema.json")
+    return 0
+
+
 def _file_log(path: Path) -> None:
     """WARNING and above from every command, rotating 5 × 1 MB (ADR-0016), so faults outlive the console."""
     from logging.handlers import RotatingFileHandler
@@ -272,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
     st = sub.add_parser("setup", help="local setup")
     st.add_argument("--redact", required=True, help="comma-separated terms removed from cloud payloads")
     st.set_defaults(fn=cmd_setup)
+    sub.add_parser("env-example", help="regenerate .env.example from config/env-schema.json"
+                   ).set_defaults(fn=cmd_env_example)
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")

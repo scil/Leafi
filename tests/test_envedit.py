@@ -1,15 +1,12 @@
-"""The `.env` catalog and save coordinator (design §3-§5): gates, privacy confirmations, secrets, file-only validation."""
+"""The `.env` save coordinator (design §5, rev 8): typed gates, privacy confirmations, masking, lists, all-or-nothing."""
 
 import argparse
-import re
 
 import pytest
 from dotenv import dotenv_values
 
 from leafi import envedit
-from leafi.core.config import Settings as LeafiSettings
 from leafi.core.envfile import EnvFile, read_state
-from tests.test_architecture import ROOT
 
 
 def save(tmp_path, ops, confirm=None, **kw):
@@ -25,54 +22,20 @@ def env(tmp_path):
     return p
 
 
-# ---------------------------------------------------------------- catalog
-
-
-def test_every_known_key_is_catalogued_and_has_an_activation():
-    cat = envedit.catalog()
-    from agent.config import Settings as HabitSettings
-
-    keys = {n.upper() for n in LeafiSettings.model_fields} | {n.upper() for n in HabitSettings.model_fields}
-    keys |= set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", (ROOT / ".env.example").read_text(encoding="utf-8"), re.M))
-    keys |= set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", (ROOT / "docker-compose.yml").read_text(encoding="utf-8")))
-    assert keys <= set(cat.entries)
-    readers = {r for e in cat.entries.values() for r in e.readers}
-    assert all(envedit.activation(r) for r in readers), [r for r in readers if not envedit.activation(r)]
-
-
-def test_gated_values_are_never_offered():
-    cat = envedit.catalog()
-    for key in ("ASR_BACKEND", "OCR_BACKEND", "BRAIN_BACKEND", "ASR_HOTWORDS", "OCR_SNAP"):
-        options = envedit.allowed(cat.entries[key])
-        assert options and not any(envedit.gated(cat.entries[key], o) for o in options), key
-    assert "ollama" not in envedit.allowed(cat.entries["BRAIN_BACKEND"])
-    assert "auto" not in envedit.allowed(cat.entries["OCR_SNAP"])
-
-
-def test_every_credential_like_name_is_in_the_secret_table():
-    from agent.config import Settings as HabitSettings
-
-    names = {n.upper() for n in LeafiSettings.model_fields} | {n.upper() for n in HabitSettings.model_fields}
-    names |= set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", (ROOT / ".env.example").read_text(encoding="utf-8"), re.M))
-    assert {n for n in names if envedit.SECRET_NAME.search(n)} <= envedit.SECRET_KEYS
-
-
-def test_per_reader_defaults_surface_the_traps():
-    cat = envedit.catalog()
-    assert cat.entries["GO2RTC_URL"].defaults["leafi"] != cat.entries["GO2RTC_URL"].defaults["habit agent"]
-    assert cat.entries["GATUS_TOKEN"].defaults["compose:gatus"].startswith("change-me")
-    assert "logon task" in cat.entries["TASK_REPEAT_MIN"].readers
-    assert "VAR" not in cat.entries  # a ${VAR} inside a comment reads nothing
+def keys_of(body):
+    return {k["key"]: k for g in body["groups"] for k in g["keys"]}
 
 
 def test_view_masks_secrets_and_unknown_keys(env):
     body = envedit.view(env)
     assert "canary-secret-123" not in repr(body)
-    keys = {k["key"]: k for g in body["groups"] for k in g["keys"]}
+    keys = keys_of(body)
     assert keys["TELEGRAM_BOT_TOKEN"]["state"] == "set" and "value" not in keys["TELEGRAM_BOT_TOKEN"]
     stale = keys["TARGET_BRUSH_SECONDS"]
     assert stale["secret"] and not stale["editable"] and "value" not in stale
     assert keys["ASR_THREADS"]["value"] == "4"
+    assert keys["SUPERVISE"]["type"] == "list" and "habit-agent" in keys["SUPERVISE"]["options"]
+    assert "ollama" not in keys["BRAIN_BACKEND"]["options"]  # gated values are never offered
 
 
 def test_view_of_a_non_canonical_file_shows_no_values(tmp_path):
@@ -83,9 +46,6 @@ def test_view_of_a_non_canonical_file_shows_no_values(tmp_path):
     assert all("value" not in k and not k["editable"] for g in body["groups"] for k in g["keys"])
 
 
-# ---------------------------------------------------------------- save
-
-
 def test_save_is_all_or_nothing_and_names_the_rule_not_the_value(env, tmp_path):
     before = env.read_bytes()
     r = save(tmp_path, {"ASR_THREADS": {"op": "set", "value": "eight-xyz"}, "VAD_THRESHOLD": {"op": "set", "value": "0.4"}})
@@ -94,28 +54,31 @@ def test_save_is_all_or_nothing_and_names_the_rule_not_the_value(env, tmp_path):
     assert env.read_bytes() == before
 
 
-@pytest.mark.parametrize("value", ["yes", "1", "on", "true"])
-def test_gates_hold_on_typed_values(env, tmp_path, value):
-    r = save(tmp_path, {"PRON_AUTO_JUDGE": {"op": "set", "value": value}})
-    assert r.body["errors"]["PRON_AUTO_JUDGE"].startswith("gated")
-
-
 @pytest.mark.parametrize("value", ["whisper", "Sherpa"])
 def test_backends_are_checked_server_side(env, tmp_path, value):
     r = save(tmp_path, {"ASR_BACKEND": {"op": "set", "value": value}})
     assert "ASR_BACKEND" in r.body["errors"]
 
 
-def test_privacy_keys_need_a_confirmation_bound_to_the_value(env, tmp_path):
-    ops = {"NOTIFY_WITH_SNAPSHOT": {"op": "set", "value": "true"}}
-    assert "NOTIFY_WITH_SNAPSHOT" in save(tmp_path, ops).body["errors"]
-    wrong = {"NOTIFY_WITH_SNAPSHOT": envedit.confirmation("false")}
-    assert "NOTIFY_WITH_SNAPSHOT" in save(tmp_path, ops, wrong).body["errors"]
-    right = {"NOTIFY_WITH_SNAPSHOT": envedit.confirmation("true")}
-    r = save(tmp_path, ops, right)
-    assert r.body["ok"] is True
-    assert dotenv_values(env)["NOTIFY_WITH_SNAPSHOT"] == "true"
-    assert "restart the habit agent" in r.body["activation"]
+def test_lists_are_written_in_option_order_and_reject_unknown_or_repeated_items(env, tmp_path):
+    assert save(tmp_path, {"SUPERVISE": {"op": "set", "value": "gatus, docker"}}).body["ok"] is True
+    assert dotenv_values(env)["SUPERVISE"] == "docker,gatus"
+    for bad in ("docker,docker", "docker,teapot"):
+        assert "SUPERVISE" in save(tmp_path, {"SUPERVISE": {"op": "set", "value": bad}}).body["errors"]
+    assert save(tmp_path, {"REQUIRED_CHANNELS": {"op": "empty"}}).body["ok"] is True
+    assert dotenv_values(env)["REQUIRED_CHANNELS"] == ""
+
+
+def test_empty_is_refused_where_a_reader_would_reject_it(env, tmp_path):
+    assert "ASR_THREADS" in save(tmp_path, {"ASR_THREADS": {"op": "empty"}}).body["errors"]
+
+
+def test_validator_errors_block_and_warnings_save(env, tmp_path):
+    r = save(tmp_path, {"WEEKLY_REPORT": {"op": "set", "value": "sunday-evening"}})
+    assert r.body["errors"]["WEEKLY_REPORT"].startswith("not accepted by agent.parsers")
+    assert "sunday-evening" not in repr(r.body)
+    r = save(tmp_path, {"KEEP_BACKOFF_S": {"op": "set", "value": "5,soon"}})
+    assert r.body["ok"] is True and any("KEEP_BACKOFF_S" in w for w in r.body["warnings"])
 
 
 def test_unknown_keys_accept_only_removal(env, tmp_path):

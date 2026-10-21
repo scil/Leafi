@@ -1,0 +1,2195 @@
+{
+  "version": 1,
+  "readers": {
+    "leafi": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "habit agent": {
+      "action": "restart the habit agent"
+    },
+    "logon task": {
+      "action": "rerun scripts\\win\\install-tasks.ps1"
+    },
+    "keep.ps1": {
+      "action": "restart the supervisor task (keep.ps1 reads them at start)"
+    },
+    "compose:frigate": {
+      "action": "run scripts\\win\\apply-env.bat (recreates the Frigate container)"
+    },
+    "devices.yml:desk_cam.stream": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "devices.yml:desk_cam.go2rtc_url": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "devices.yml:desk_cam.audio_codec": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "devices.yml:desk_cam.src_dir": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "devices.yml:pc.input_device": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "compose:gatus": {
+      "action": "docker compose up -d gatus"
+    },
+    "devices.yml:parent_phone.bark_url": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "devices.yml:parent_phone.telegram_bot_token": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    },
+    "devices.yml:parent_phone.telegram_chat_id": {
+      "action": "restart the supervisor (Leafi console) and any running study session"
+    }
+  },
+  "groups": [
+    {
+      "id": "g1",
+      "title": "机型切换(唯一开关):cam_xiaomi=小米3云台(现有) | cam_tapo=Tapo C260/C225(待购)",
+      "notes": [
+        "Frigate 取流与 agent 喇叭推送都跟这个变量;切机型后记得同步 SPEAKER_AUDIO_CODEC 并 docker compose up -d"
+      ]
+    },
+    {
+      "id": "g2",
+      "title": "小米智能摄像机 3 云台版(cam_xiaomi)",
+      "notes": [
+        "需 go2rtc ≥1.9.14(Frigate 内置 1.9.10 不够;二进制放 config/frigate/go2rtc,README 有下载命令)",
+        "认证:账号密码不进配置——在 go2rtc WebUI(http://127.0.0.1:1984)Add→Xiaomi 登录一次",
+        "(可能要邮箱/手机验证码+拼图),token 自动存 config/frigate/go2rtc_homekit.yml(勿提交 git)"
+      ]
+    },
+    {
+      "id": "g3",
+      "title": "Tapo C260/C225(cam_tapo)"
+    },
+    {
+      "id": "g4",
+      "title": "服务地址(默认本机 docker)"
+    },
+    {
+      "id": "g5",
+      "title": "任务时刻表",
+      "notes": [
+        "有 config/tasks.yml 时以那里的 schedule 为准(用 scripts\\win\\taskeditor.bat 编辑),",
+        "下面这行只在 tasks.yml 不存在时作为回退。"
+      ]
+    },
+    {
+      "id": "g6",
+      "title": "语音(10 岁 → 少年感声线;可换 zh-CN-XiaoxiaoNeural 等)"
+    },
+    {
+      "id": "g7",
+      "title": "Supervision (ADR-0016)"
+    },
+    {
+      "id": "g8",
+      "title": "家长通知(至少配一个;都不配则只打印日志)"
+    },
+    {
+      "id": "g9",
+      "title": "P1 视觉验证(默认关;摄像头+模型就绪后改 vision)"
+    },
+    {
+      "id": "g10",
+      "title": "P2 对话大脑(留空则用离线静态话术)"
+    },
+    {
+      "id": "g11",
+      "title": "家长周报(周几:时:分,留空禁用)"
+    },
+    {
+      "id": "g12",
+      "title": "Leafi book study (leafi/, docs/architecture/config.md; defaults live in leafi/core/config.py)",
+      "notes": [
+        "Backends: asr sherpa|mock  tts kokoro|edge|mock  ocr rapidocr|mock  pronunciation openpronounce|mock  brain claude|mock"
+      ]
+    },
+    {
+      "id": "study-ops",
+      "title": "Study and ops (leafi; defaults in leafi/core/config.py)"
+    },
+    {
+      "id": "habit",
+      "title": "Habit agent (agent/config.py)"
+    },
+    {
+      "id": "compose",
+      "title": "Compose only"
+    }
+  ],
+  "keys": {
+    "STREAM_NAME": {
+      "group": "g1",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "habit agent",
+        "compose:frigate",
+        "devices.yml:desk_cam.stream"
+      ],
+      "default": {
+        "leafi": {
+          "value": "cam_xiaomi",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "sink_cam",
+          "empty": "empty"
+        },
+        "compose:frigate": {
+          "value": "cam_xiaomi",
+          "empty": "default"
+        },
+        "devices.yml:desk_cam.stream": {
+          "value": "",
+          "empty": "disables-device"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "cam_xiaomi",
+        "commented": false
+      }
+    },
+    "XIAOMI_IP": {
+      "group": "g2",
+      "type": "text",
+      "readers": [],
+      "help": "",
+      "example": {
+        "value": "192.168.1.51",
+        "commented": false
+      }
+    },
+    "XIAOMI_USERID": {
+      "group": "g2",
+      "type": "text",
+      "readers": [],
+      "help": "数字用户ID:登录后 go2rtc_homekit.yml 的 xiaomi: 段键名即是",
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "XIAOMI_DID": {
+      "group": "g2",
+      "type": "text",
+      "readers": [],
+      "help": "设备ID:WebUI 相机列表或 GET /api/xiaomi?id=<userID> 可见(≠账号ID)",
+      "example": {
+        "value": "",
+        "commented": false
+      },
+      "notes_after": [
+        "米家 app 里:关云存储/看家助手上传(影像红线);设物理遮蔽日程;云台手动对准走廊(PTZ 无法程序控制)"
+      ]
+    },
+    "CAM_IP": {
+      "group": "g3",
+      "type": "text",
+      "readers": [
+        "compose:frigate"
+      ],
+      "default": {
+        "compose:frigate": {
+          "value": "192.168.1.50",
+          "empty": "default"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "192.168.1.50",
+        "commented": false
+      }
+    },
+    "CAM_USER": {
+      "group": "g3",
+      "type": "text",
+      "readers": [
+        "compose:frigate"
+      ],
+      "default": {
+        "compose:frigate": {
+          "value": "frigate",
+          "empty": "default"
+        }
+      },
+      "help": "Tapo App → 我 → 工具 → 相机账号 里创建",
+      "example": {
+        "value": "frigate",
+        "commented": false
+      }
+    },
+    "CAM_PASSWORD": {
+      "group": "g3",
+      "type": "secret",
+      "readers": [
+        "compose:frigate"
+      ],
+      "default": {
+        "compose:frigate": {
+          "value": "change-me",
+          "empty": "default"
+        }
+      },
+      "help": "",
+      "secret": true,
+      "example": {
+        "value": "change-me",
+        "commented": false
+      }
+    },
+    "TAPO_CLOUD_PASSWORD": {
+      "group": "g3",
+      "type": "secret",
+      "readers": [
+        "compose:frigate"
+      ],
+      "default": {
+        "compose:frigate": {
+          "value": "change-me",
+          "empty": "default"
+        }
+      },
+      "help": "TP-Link 云账号密码(tapo:// 喇叭通道用)",
+      "secret": true,
+      "example": {
+        "value": "change-me",
+        "commented": false
+      }
+    },
+    "MQTT_HOST": {
+      "group": "g4",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "127.0.0.1",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "127.0.0.1",
+        "commented": false
+      }
+    },
+    "MQTT_PORT": {
+      "group": "g4",
+      "type": "int",
+      "readers": [
+        "leafi",
+        "habit agent"
+      ],
+      "default": {
+        "leafi": {
+          "value": "18830",
+          "empty": "error"
+        },
+        "habit agent": {
+          "value": "18830",
+          "empty": "error"
+        }
+      },
+      "help": "宿主机映射端口(Windows 保留了 1883 所在端口段) — mosquitto's host port, probed by TCP connect",
+      "example": {
+        "value": "18830",
+        "commented": false
+      }
+    },
+    "GO2RTC_URL": {
+      "group": "g4",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "habit agent",
+        "devices.yml:desk_cam.go2rtc_url"
+      ],
+      "default": {
+        "leafi": {
+          "value": "http://127.0.0.1:2984",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "http://127.0.0.1:1984",
+          "empty": "empty"
+        },
+        "devices.yml:desk_cam.go2rtc_url": {
+          "value": "",
+          "empty": "disables-device"
+        }
+      },
+      "help": "宿主 go2rtc 实例(小米机必须;见 tools/go2rtc);纯 Tapo 可用容器的 1984",
+      "example": {
+        "value": "http://127.0.0.1:2984",
+        "commented": false
+      }
+    },
+    "FRIGATE_URL": {
+      "group": "g4",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "habit agent"
+      ],
+      "default": {
+        "leafi": {
+          "value": "http://127.0.0.1:15000",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "http://127.0.0.1:15000",
+          "empty": "empty"
+        }
+      },
+      "help": "宿主映射端口(5000 会被 Windows 保留段吞掉) — Frigate listing this camera counts as demand for the stream, so a dead producer is not mistaken for idle",
+      "example": {
+        "value": "http://127.0.0.1:15000",
+        "commented": false
+      }
+    },
+    "CAMERA_NAME": {
+      "group": "g4",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "hallway",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "hallway",
+        "commented": false
+      }
+    },
+    "SCHEDULE": {
+      "group": "g5",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "water:07:20,brush_am:07:35,brush_pm:20:30",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "validator": {
+        "fn": "agent.parsers:parse_schedule",
+        "severity": "error",
+        "consumer": "agent.config:Settings.parsed_schedule"
+      },
+      "example": {
+        "value": "water:07:20,brush_am:07:35,brush_pm:20:30",
+        "commented": false
+      }
+    },
+    "WAIT_PRESENCE_MIN": {
+      "group": "g5",
+      "type": "int",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "15",
+          "empty": "error"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "15",
+        "commented": false
+      }
+    },
+    "WAIT_RETRY_MIN": {
+      "group": "g5",
+      "type": "int",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "10",
+          "empty": "error"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "10",
+        "commented": false
+      }
+    },
+    "TTS_VOICE": {
+      "group": "g6",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "zh-CN-YunxiNeural",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "zh-CN-YunxiNeural",
+        "commented": false
+      }
+    },
+    "SPEAKER_BACKEND": {
+      "group": "g6",
+      "type": "enum",
+      "options": [
+        "go2rtc",
+        "local"
+      ],
+      "domain": "agent.speaker:SPEAKER_BACKENDS",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "go2rtc",
+          "empty": "empty"
+        }
+      },
+      "help": "go2rtc=摄像头喇叭 | local=本机 ffplay(开发试听)",
+      "example": {
+        "value": "go2rtc",
+        "commented": false
+      }
+    },
+    "SPEAKER_AUDIO_CODEC": {
+      "group": "g6",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "habit agent",
+        "devices.yml:desk_cam.audio_codec"
+      ],
+      "default": {
+        "leafi": {
+          "value": "opus",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "pcma",
+          "empty": "empty"
+        },
+        "devices.yml:desk_cam.audio_codec": {
+          "value": "opus",
+          "empty": "default"
+        }
+      },
+      "help": "喇叭推送编码:小米=opus | Tapo=pcma",
+      "example": {
+        "value": "opus",
+        "commented": false
+      }
+    },
+    "SPEAKER_SRC_DIR": {
+      "group": "g6",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "habit agent",
+        "devices.yml:desk_cam.src_dir"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "/cache/tts",
+          "empty": "empty"
+        },
+        "devices.yml:desk_cam.src_dir": {
+          "value": "",
+          "empty": "disables-device"
+        }
+      },
+      "help": "GO2RTC_URL 指宿主时用 Windows 路径;指容器时用 /cache/tts",
+      "example": {
+        "value": "E:/GitHub/scil/Leafi/cache/tts",
+        "commented": false
+      }
+    },
+    "PC_INPUT_DEVICE": {
+      "group": "g6",
+      "type": "text",
+      "readers": [
+        "devices.yml:pc.input_device"
+      ],
+      "help": "study PC microphone: name fragment, index or default (devices.yml, TD-26)",
+      "example": {
+        "value": "DJI",
+        "commented": true
+      },
+      "default": {
+        "devices.yml:pc.input_device": {
+          "value": "DJI",
+          "empty": "default"
+        }
+      }
+    },
+    "SUPERVISE": {
+      "group": "g7",
+      "type": "list",
+      "options": [
+        "docker",
+        "camera",
+        "frigate",
+        "mosquitto",
+        "gatus",
+        "habit-agent",
+        "ollama"
+      ],
+      "domain": "leafi.core.alerts:SERVICES",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "docker,camera,frigate,mosquitto,gatus",
+          "empty": "empty"
+        }
+      },
+      "help": "add habit-agent (it speaks on schedule) or ollama to supervise them — services the supervisor keeps running (ADR-0016). `habit-agent` is opt-in because the habit coach speaks through the camera on its schedule; add `ollama` when the vision judge is used daily",
+      "example": {
+        "value": "docker,camera,frigate,mosquitto,gatus",
+        "commented": true
+      }
+    },
+    "HEARTBEAT_URL": {
+      "group": "g7",
+      "type": "secret",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "Healthchecks.io check; it alerts you when the PC stops pinging — Healthchecks.io ping URL; the supervisor GETs it every poll (dead man's switch)",
+      "secret": true,
+      "example": {
+        "value": "https://hc-ping.com/",
+        "commented": true
+      }
+    },
+    "GATUS_TOKEN": {
+      "group": "g7",
+      "type": "secret",
+      "readers": [
+        "leafi",
+        "compose:gatus"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        },
+        "compose:gatus": {
+          "value": "change-me",
+          "empty": "default"
+        }
+      },
+      "help": "read-only dashboard at http://127.0.0.1:18080 (docker compose up -d gatus) — the read-only dashboard; the same `GATUS_TOKEN` must reach the `gatus` container (docker-compose.yml reads `.env`); empty: no pushes",
+      "secret": true,
+      "example": {
+        "value": "",
+        "commented": true
+      }
+    },
+    "REQUIRED_CHANNELS": {
+      "group": "g7",
+      "type": "list",
+      "options": [
+        "telegram",
+        "heartbeat"
+      ],
+      "domain": "leafi.ops.checks:CHANNELS",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "telegram,heartbeat",
+          "empty": "empty"
+        }
+      },
+      "help": "checks that alert while a channel is not configured — the `telegram` and `heartbeat` checks fail while a listed channel is not configured; remove one to accept toast-only or no heartbeat",
+      "example": {
+        "value": "telegram,heartbeat",
+        "commented": true
+      }
+    },
+    "BARK_URL": {
+      "group": "g8",
+      "type": "secret",
+      "readers": [
+        "leafi",
+        "habit agent",
+        "devices.yml:parent_phone.bark_url"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "",
+          "empty": "empty"
+        },
+        "devices.yml:parent_phone.bark_url": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "iOS Bark,例 https://api.day.app/xxxxxxxx",
+      "secret": true,
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "TELEGRAM_BOT_TOKEN": {
+      "group": "g8",
+      "type": "secret",
+      "readers": [
+        "leafi",
+        "habit agent",
+        "devices.yml:parent_phone.telegram_bot_token"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "",
+          "empty": "empty"
+        },
+        "devices.yml:parent_phone.telegram_bot_token": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "secret": true,
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "TELEGRAM_CHAT_ID": {
+      "group": "g8",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "habit agent",
+        "devices.yml:parent_phone.telegram_chat_id"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "",
+          "empty": "empty"
+        },
+        "devices.yml:parent_phone.telegram_chat_id": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "VERIFY_MODE": {
+      "group": "g9",
+      "type": "enum",
+      "options": [
+        "presence",
+        "vision"
+      ],
+      "domain": "agent.session:GLOBAL_VERIFY_MODES",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "presence",
+          "empty": "empty"
+        }
+      },
+      "help": "presence=仅到场 | vision=按 tasks.py 里各任务的 verify 策略验证",
+      "example": {
+        "value": "presence",
+        "commented": false
+      }
+    },
+    "OLLAMA_URL": {
+      "group": "g9",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "habit agent"
+      ],
+      "default": {
+        "leafi": {
+          "value": "http://127.0.0.1:11434",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "http://127.0.0.1:11434",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "http://127.0.0.1:11434",
+        "commented": false
+      }
+    },
+    "VLM_MODEL": {
+      "group": "g9",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "qwen3-vl:8b",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "qwen3-vl:8b",
+        "commented": false
+      }
+    },
+    "CHILD_FACE_LABEL": {
+      "group": "g9",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "Frigate 人脸训练后填孩子名(sub_label);空=任何人都算",
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "TARGET_ACTIVE_SECONDS": {
+      "group": "g9",
+      "type": "int",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "100",
+          "empty": "error"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "100",
+        "commented": false
+      },
+      "notes": [
+        "下面三条是 pose_dwell 类任务的全局默认,单任务可在 agent/tasks.py 的 TaskSpec 里覆盖"
+      ]
+    },
+    "MIN_VISIBLE_ACTIVE_SECONDS": {
+      "group": "g9",
+      "type": "int",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "60",
+          "empty": "error"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "60",
+        "commented": false
+      }
+    },
+    "INSIDE_CREDIT_CAP": {
+      "group": "g9",
+      "type": "int",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "40",
+          "empty": "error"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "40",
+        "commented": false
+      }
+    },
+    "BRAIN_MODEL": {
+      "group": "g10",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "claude-haiku-4-5",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "example": {
+        "value": "claude-haiku-4-5",
+        "commented": false
+      }
+    },
+    "ANTHROPIC_API_KEY": {
+      "group": "g10",
+      "type": "secret",
+      "readers": [
+        "leafi",
+        "habit agent"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        },
+        "habit agent": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "secret": true,
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "WEEKLY_REPORT": {
+      "group": "g11",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "sun:20:45",
+          "empty": "empty"
+        }
+      },
+      "help": "",
+      "validator": {
+        "fn": "agent.parsers:parse_weekly_report",
+        "severity": "error",
+        "consumer": "agent.config:Settings.parsed_weekly_report"
+      },
+      "example": {
+        "value": "sun:20:45",
+        "commented": false
+      }
+    },
+    "NOTIFY_WITH_SNAPSHOT": {
+      "group": "g11",
+      "type": "bool",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "false",
+          "empty": "error"
+        }
+      },
+      "help": "habit track only: attach one frame to the parent's Telegram notification (owner opt-in, ADR-0011)",
+      "privacy": true,
+      "example": {
+        "value": "false",
+        "commented": false
+      },
+      "notes": [
+        "Habit track: attach one camera frame to the parent's Telegram message (images leave the LAN). Owner opt-in, ADR-0011."
+      ]
+    },
+    "ASR_BACKEND": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "mock",
+        "sherpa",
+        "whisper"
+      ],
+      "domain": "leafi.services.asr:REGISTRY",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "sherpa",
+          "empty": "empty"
+        }
+      },
+      "help": "`sherpa` · `whisper` · `mock`",
+      "gate": {
+        "values": [
+          "whisper"
+        ]
+      },
+      "example": {
+        "value": "sherpa",
+        "commented": false
+      }
+    },
+    "TTS_BACKEND_EN": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "edge",
+        "kokoro",
+        "mock"
+      ],
+      "domain": "leafi.services.tts:REGISTRY",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "kokoro",
+          "empty": "empty"
+        }
+      },
+      "help": "`kokoro` · `edge` · `mock`",
+      "privacy": true,
+      "example": {
+        "value": "kokoro",
+        "commented": false
+      }
+    },
+    "TTS_BACKEND_ZH": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "edge",
+        "kokoro",
+        "mock"
+      ],
+      "domain": "leafi.services.tts:REGISTRY",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "edge",
+          "empty": "empty"
+        }
+      },
+      "help": "`kokoro` · `edge` · `mock`",
+      "privacy": true,
+      "example": {
+        "value": "edge",
+        "commented": false
+      }
+    },
+    "OCR_BACKEND": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "mock",
+        "qwen_vl",
+        "rapidocr"
+      ],
+      "domain": "leafi.services.ocr:REGISTRY",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "rapidocr",
+          "empty": "empty"
+        }
+      },
+      "help": "`rapidocr` · `qwen_vl` · `mock`",
+      "gate": {
+        "values": [
+          "qwen_vl"
+        ]
+      },
+      "example": {
+        "value": "rapidocr",
+        "commented": false
+      }
+    },
+    "PRON_BACKEND": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "mock",
+        "openpronounce"
+      ],
+      "domain": "leafi.services.pronunciation:REGISTRY",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "openpronounce",
+          "empty": "empty"
+        }
+      },
+      "help": "`openpronounce` · `mock`; offline reference voice forced",
+      "example": {
+        "value": "openpronounce",
+        "commented": false
+      }
+    },
+    "PRON_AUTO_JUDGE": {
+      "group": "g12",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "false",
+          "empty": "error"
+        }
+      },
+      "help": "stays off until the ADR-0011 child-speech evaluation passes — automatic pronunciation judgement; on only after the evaluation threshold in ADR-0011",
+      "gate": {
+        "values": [
+          "true"
+        ]
+      },
+      "example": {
+        "value": "false",
+        "commented": false
+      }
+    },
+    "ASR_HOTWORDS": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "off",
+        "lexicon"
+      ],
+      "domain": "leafi.services.asr:HOTWORDS_MODES",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "off",
+          "empty": "empty"
+        }
+      },
+      "help": "off | lexicon (after the biased-vs-unbiased comparison) — `off` · `lexicon`; on only after the biased-vs-unbiased comparison. P-1 (2026-10-20): hotwords work per stream with `modified_beam_search` and a `bpe.vocab` built from `tokens.txt` (`services/asr/sherpa.py`)",
+      "gate": {
+        "values": [
+          "lexicon"
+        ]
+      },
+      "example": {
+        "value": "off",
+        "commented": false
+      }
+    },
+    "OCR_SNAP": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "off",
+        "advisory",
+        "auto"
+      ],
+      "domain": "leafi.study.lexicon:SNAP_MODES",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "advisory",
+          "empty": "empty"
+        }
+      },
+      "help": "off | advisory — `off` · `advisory` (candidates shown) · `auto` (not in v1)",
+      "gate": {
+        "values": [
+          "auto"
+        ]
+      },
+      "example": {
+        "value": "advisory",
+        "commented": false
+      }
+    },
+    "STUDY_BRAIN_MODEL": {
+      "group": "g12",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "claude-opus-5-5",
+          "empty": "empty"
+        }
+      },
+      "help": "study track: cloud model for enrichment turns (ADR-0003); the habit track keeps its own `BRAIN_MODEL` in `agent/config.py`",
+      "privacy": true,
+      "example": {
+        "value": "claude-opus-5-5",
+        "commented": false
+      },
+      "notes": [
+        "Study Brain model (cloud, text only). BRAIN_MODEL above stays the habit track's one-line-phrase model."
+      ]
+    },
+    "BRAIN_DEADLINE_S": {
+      "group": "g12",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "12.0",
+          "empty": "error"
+        }
+      },
+      "help": "overall deadline per Brain call, 1 retry",
+      "example": {
+        "value": "12",
+        "commented": false
+      }
+    },
+    "BOOK_LOOKUP": {
+      "group": "g12",
+      "type": "enum",
+      "options": [
+        "off",
+        "openlibrary",
+        "mock"
+      ],
+      "domain": "leafi.services.catalog:LOOKUPS",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "off",
+          "empty": "empty"
+        }
+      },
+      "help": "off | openlibrary (ISBN digits only) — `off` · `openlibrary` (ISBN digits only, egress table)",
+      "privacy": true,
+      "example": {
+        "value": "off",
+        "commented": false
+      }
+    },
+    "REDACT_TERMS": {
+      "group": "g12",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "learner name, school: python -m leafi setup --redact \"<name>,<school>\" — comma-separated terms removed from cloud payloads (learner name, school); set by `python -m leafi setup --redact \"…\"`; `doctor` warns when empty",
+      "privacy": true,
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "STUDY_IDLE_S": {
+      "group": "g12",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "180.0",
+          "empty": "error"
+        }
+      },
+      "help": "idle timeout to WRAP (READ/CHECK/REVIEW_DUE only)",
+      "example": {
+        "value": "180",
+        "commented": false
+      }
+    },
+    "PRACTICE_RETRY_S": {
+      "group": "g12",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "10.0",
+          "empty": "error"
+        }
+      },
+      "help": "voice: no retry within this → `unsure(idle)`, next candidate",
+      "example": {
+        "value": "10",
+        "commented": false
+      }
+    },
+    "CHECK_ANSWER_S": {
+      "group": "g12",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "20.0",
+          "empty": "error"
+        }
+      },
+      "help": "voice: no answer within this → `unavailable`",
+      "example": {
+        "value": "20",
+        "commented": false
+      }
+    },
+    "SAY_TIMEOUT_S": {
+      "group": "g12",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "20.0",
+          "empty": "error"
+        }
+      },
+      "help": "per `say()` call",
+      "example": {
+        "value": "20",
+        "commented": false
+      }
+    },
+    "ANKI_URL": {
+      "group": "g12",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "http://127.0.0.1:8765",
+          "empty": "empty"
+        }
+      },
+      "help": "AnkiConnect target",
+      "example": {
+        "value": "http://127.0.0.1:8765",
+        "commented": false
+      }
+    },
+    "ANKI_DECK": {
+      "group": "g12",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "Leafi",
+          "empty": "empty"
+        }
+      },
+      "help": "AnkiConnect target",
+      "example": {
+        "value": "Leafi",
+        "commented": false
+      }
+    },
+    "AUDIO_KEEP_CLIPS": {
+      "group": "g12",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "false",
+          "empty": "error"
+        }
+      },
+      "help": "keep learner audio clips (off by default; see security)",
+      "privacy": true,
+      "example": {
+        "value": "false",
+        "commented": false
+      }
+    },
+    "EVAL_TRANSCRIPTS": {
+      "group": "g12",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "false",
+          "empty": "error"
+        }
+      },
+      "help": "opt-in text-only transcripts under `data/evals/`",
+      "privacy": true,
+      "example": {
+        "value": "false",
+        "commented": false
+      }
+    },
+    "ACTIVE_HOURS": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "7-21",
+          "empty": "empty"
+        }
+      },
+      "help": "Windows Update active hours must cover these hours; free space required on the data drive",
+      "validator": {
+        "fn": "leafi.ops.checks:parse_active_hours",
+        "severity": "error",
+        "consumer": "leafi.ops.checks:build"
+      }
+    },
+    "ANKI_MODEL": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "问答题",
+          "empty": "empty"
+        }
+      },
+      "help": "AnkiConnect target"
+    },
+    "ASR_MODEL_DIR": {
+      "group": "study-ops",
+      "type": "path",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "models/asr/parakeet-tdt-0.6b-v2-int8",
+          "empty": "current-dir"
+        }
+      },
+      "help": "sherpa-onnx model folder (`python -m leafi doctor --download` fills `models/` for asr, vad, tts en, pronunciation and ocr)"
+    },
+    "ASR_THREADS": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "4",
+          "empty": "error"
+        }
+      },
+      "help": "sherpa-onnx CPU threads (P-1: 12-word sentence 0.17 s at 2, 0.12 s at 4, 0.09 s at 8)"
+    },
+    "BRAIN_BACKEND": {
+      "group": "study-ops",
+      "type": "enum",
+      "options": [
+        "claude",
+        "mock",
+        "ollama"
+      ],
+      "domain": "leafi.services.brain:REGISTRY",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "claude",
+          "empty": "empty"
+        }
+      },
+      "help": "`claude` · `ollama` (deferred) · `mock`; an empty `ANTHROPIC_API_KEY` means static phrases only",
+      "privacy": true,
+      "gate": {
+        "values": [
+          "ollama"
+        ]
+      }
+    },
+    "BRAIN_LOCAL_MODEL": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "Ollama fallback, deferred (ADR-0011)",
+      "gate": {
+        "nonempty": true
+      }
+    },
+    "BRAIN_MODEL_CHEAP": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "claude-haiku-5-5",
+          "empty": "empty"
+        }
+      },
+      "help": "one-line habit phrases"
+    },
+    "CACHE_DIR": {
+      "group": "study-ops",
+      "type": "path",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "cache",
+          "empty": "current-dir"
+        }
+      },
+      "help": "paths (tests and the no-network run point them at a temp dir)"
+    },
+    "CHECKS_EVERY_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "900.0",
+          "empty": "error"
+        }
+      },
+      "help": "configuration checks interval (ADR-0016); `python -m leafi checks` runs them once and prints the result"
+    },
+    "DATA_DIR": {
+      "group": "study-ops",
+      "type": "path",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "data",
+          "empty": "current-dir"
+        }
+      },
+      "help": "paths (tests and the no-network run point them at a temp dir)"
+    },
+    "DEVICES_FILE": {
+      "group": "study-ops",
+      "type": "path",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "config/devices.yml",
+          "empty": "current-dir"
+        }
+      },
+      "help": "paths (tests and the no-network run point them at a temp dir)"
+    },
+    "DOCKER_DESKTOP_EXE": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "Docker Desktop executable for the `docker` recovery; empty finds it next to the docker CLI (scoop) or under Program Files"
+    },
+    "FRIGATE_CAMERA": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "hallway",
+          "empty": "empty"
+        }
+      },
+      "help": "Frigate listing this camera counts as demand for the stream, so a dead producer is not mistaken for idle"
+    },
+    "GATUS_URL": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "http://127.0.0.1:18080",
+          "empty": "empty"
+        }
+      },
+      "help": "the read-only dashboard; the same `GATUS_TOKEN` must reach the `gatus` container (docker-compose.yml reads `.env`); empty: no pushes"
+    },
+    "GO2RTC_CONFIG": {
+      "group": "study-ops",
+      "type": "path",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "tools/go2rtc/go2rtc-host.yaml",
+          "empty": "current-dir"
+        }
+      },
+      "help": "the go2rtc child the supervisor starts"
+    },
+    "GO2RTC_EXE": {
+      "group": "study-ops",
+      "type": "path",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "tools/go2rtc/go2rtc.exe",
+          "empty": "current-dir"
+        }
+      },
+      "help": "the go2rtc child the supervisor starts"
+    },
+    "GO2RTC_SHA256": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "e4e5fc2d75094ffa5034bceaf00b4e06a643712e705646648169d5f7d73321c3",
+          "empty": "empty"
+        }
+      },
+      "help": "the `go2rtc-patched` check's expected hash; update it after a patched rebuild (`tools/go2rtc/PATCHES.md`)"
+    },
+    "KEEP_BACKOFF_S": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi",
+        "keep.ps1"
+      ],
+      "default": {
+        "leafi": {
+          "value": "5,30,120,300",
+          "empty": "empty"
+        }
+      },
+      "help": "keep.ps1's restart delays and its \"crashed repeatedly\" rule (window > (exits − 1) × the longest delay)",
+      "validator": {
+        "fn": "leafi.ops.timing:parse_backoff",
+        "severity": "warning",
+        "consumer": "leafi.ops.timing:resolve"
+      }
+    },
+    "KEEP_CRASH_EXITS": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi",
+        "keep.ps1"
+      ],
+      "default": {
+        "leafi": {
+          "value": "3",
+          "empty": "error"
+        }
+      },
+      "help": "keep.ps1's restart delays and its \"crashed repeatedly\" rule (window > (exits − 1) × the longest delay)"
+    },
+    "KEEP_CRASH_WINDOW_MIN": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi",
+        "keep.ps1"
+      ],
+      "default": {
+        "leafi": {
+          "value": "30.0",
+          "empty": "error"
+        }
+      },
+      "help": "keep.ps1's restart delays and its \"crashed repeatedly\" rule (window > (exits − 1) × the longest delay)"
+    },
+    "LEAFI_DEBUG_TEXT": {
+      "group": "study-ops",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "false",
+          "empty": "error"
+        }
+      },
+      "help": "allow raw utterance text in DEBUG logs"
+    },
+    "LEAFI_NO_NETWORK": {
+      "group": "study-ops",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "false",
+          "empty": "error"
+        }
+      },
+      "help": "`1` makes any non-loopback connect raise (tests)"
+    },
+    "LEASE_TTL_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "60.0",
+          "empty": "error"
+        }
+      },
+      "help": "speech-lease expiry, renewed every third of it"
+    },
+    "MIN_FREE_GB": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "5.0",
+          "empty": "error"
+        }
+      },
+      "help": "Windows Update active hours must cover these hours; free space required on the data drive"
+    },
+    "MOCK": {
+      "group": "habit",
+      "type": "bool",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "false",
+          "empty": "error"
+        }
+      },
+      "help": ""
+    },
+    "MODELS_DIR": {
+      "group": "study-ops",
+      "type": "path",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "models",
+          "empty": "current-dir"
+        }
+      },
+      "help": "paths (tests and the no-network run point them at a temp dir)"
+    },
+    "OCR_AUTO_ROTATE": {
+      "group": "study-ops",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "true",
+          "empty": "error"
+        }
+      },
+      "help": "when 0° yields < 3 confident lines, read 90/270/180 too and keep the best (the desk book lay at 270°); up to four passes of ~1.5 s once per page"
+    },
+    "OCR_MIN_CONFIDENCE": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "0.85",
+          "empty": "error"
+        }
+      },
+      "help": "below it: recapture, then ask the learner"
+    },
+    "OCR_SECOND_OPINION": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "deferred in v1 (ADR-0011); `qwen_vl` when enabled later",
+      "gate": {
+        "nonempty": true
+      }
+    },
+    "OCR_VERSION": {
+      "group": "study-ops",
+      "type": "enum",
+      "options": [
+        "PP-OCRv6",
+        "PP-OCRv5"
+      ],
+      "domain": "leafi.services.ocr.rapidocr:VERSIONS",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "PP-OCRv6",
+          "empty": "empty"
+        }
+      },
+      "help": "`PP-OCRv6` (ships inside the rapidocr wheel) · `PP-OCRv5` (English recogniser, fetched by `doctor --download`); P-3 on desk captures (2026-10-20): v6 gave 6–8 confident lines where v5 gave 1–5"
+    },
+    "PAGES_RETAIN_DAYS": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "7",
+          "empty": "error"
+        }
+      },
+      "help": "delete cached page images after N days"
+    },
+    "PAGE_DIFF_THRESHOLD": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "6.0",
+          "empty": "error"
+        }
+      },
+      "help": "page-turn watcher: mean grey diff (64×64) that counts as motion. Desk camera noise 2.3–3.0, a hand 37–66 (P-3); rendered test pages differ by 1.7, so tests use 1.0"
+    },
+    "PAGE_POLL_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "1.0",
+          "empty": "error"
+        }
+      },
+      "help": "how often the session checks the Eye for a physical page turn"
+    },
+    "POSE_MODEL": {
+      "group": "habit",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "yolo11n-pose.pt",
+          "empty": "empty"
+        }
+      },
+      "help": ""
+    },
+    "REVIEW_KNOWN_INTERVAL_DAYS": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "21",
+          "empty": "error"
+        }
+      },
+      "help": "`learning→known` interval; cards per review turn"
+    },
+    "REVIEW_MAX_CARDS": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "5",
+          "empty": "error"
+        }
+      },
+      "help": "`learning→known` interval; cards per review turn"
+    },
+    "SENTENCE_PAUSE_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "1.2",
+          "empty": "error"
+        }
+      },
+      "help": "voice: silence that completes a sentence near its end (ADR-0013 completion (ii))"
+    },
+    "STUDY_LANGUAGE": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "en",
+          "empty": "empty"
+        }
+      },
+      "help": "expected book language"
+    },
+    "SUPERVISOR_BAD_STREAK": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "2",
+          "empty": "error"
+        }
+      },
+      "help": "bad polls before a recovery; recoveries per outage; continuous good time that ends an outage"
+    },
+    "SUPERVISOR_GRACE": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "camera=90,habit-agent=90,docker=180,frigate=120,mosquitto=60,gatus=60,ollama=60",
+          "empty": "empty"
+        }
+      },
+      "help": "per-service grace after a recovery (minimums: docker 120, frigate 60, camera 60)",
+      "validator": {
+        "fn": "leafi.ops.timing:parse_grace",
+        "severity": "warning",
+        "consumer": "leafi.ops.timing:resolve"
+      }
+    },
+    "SUPERVISOR_HEALTHY_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "600.0",
+          "empty": "error"
+        }
+      },
+      "help": "bad polls before a recovery; recoveries per outage; continuous good time that ends an outage"
+    },
+    "SUPERVISOR_MAX_RECOVERIES": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "3",
+          "empty": "error"
+        }
+      },
+      "help": "bad polls before a recovery; recoveries per outage; continuous good time that ends an outage"
+    },
+    "SUPERVISOR_POLL_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "60.0",
+          "empty": "error"
+        }
+      },
+      "help": "poll interval"
+    },
+    "SUPERVISOR_PORT": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "18771",
+          "empty": "error"
+        }
+      },
+      "help": "the supervisor's `POST /rearm?service=S` listener on 127.0.0.1 (the 🔁 button rearms `camera`); outside Windows' excluded port ranges"
+    },
+    "SUPERVISOR_RESUME_GAP_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "180.0",
+          "empty": "error"
+        }
+      },
+      "help": "wall-clock gap read as sleep/resume (must exceed one poll plus its worst duration); grace after it"
+    },
+    "SUPERVISOR_RESUME_GRACE_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "120.0",
+          "empty": "error"
+        }
+      },
+      "help": "wall-clock gap read as sleep/resume (must exceed one poll plus its worst duration); grace after it"
+    },
+    "TASK_REPEAT_MIN": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi",
+        "logon task"
+      ],
+      "default": {
+        "leafi": {
+          "value": "5",
+          "empty": "error"
+        }
+      },
+      "help": "the logon task's repeating trigger (read by `install-tasks.ps1`)"
+    },
+    "TTS_VOICE_EN": {
+      "group": "habit",
+      "type": "text",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "en-US-JennyNeural",
+          "empty": "empty"
+        }
+      },
+      "help": ""
+    },
+    "TTS_VOICE_EN_EDGE": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "en-US-JennyNeural",
+          "empty": "empty"
+        }
+      },
+      "help": "edge-tts voices"
+    },
+    "TTS_VOICE_EN_KOKORO": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "af_heart",
+          "empty": "empty"
+        }
+      },
+      "help": "Kokoro voice id"
+    },
+    "TTS_VOICE_ZH_EDGE": {
+      "group": "study-ops",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "zh-CN-YunxiNeural",
+          "empty": "empty"
+        }
+      },
+      "help": "edge-tts voices"
+    },
+    "VAD_SILENCE_S": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "0.6",
+          "empty": "error"
+        }
+      },
+      "help": "Silero VAD (`models/vad/silero_vad.onnx`): silence that closes an utterance; speech probability threshold. Sentence completion is still `SENTENCE_PAUSE_S`"
+    },
+    "VAD_THRESHOLD": {
+      "group": "study-ops",
+      "type": "float",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "0.5",
+          "empty": "error"
+        }
+      },
+      "help": "Silero VAD (`models/vad/silero_vad.onnx`): silence that closes an utterance; speech probability threshold. Sentence completion is still `SENTENCE_PAUSE_S`"
+    },
+    "VERIFY_WINDOW_S": {
+      "group": "habit",
+      "type": "int",
+      "readers": [
+        "habit agent"
+      ],
+      "default": {
+        "habit agent": {
+          "value": "300",
+          "empty": "error"
+        }
+      },
+      "help": ""
+    }
+  }
+}

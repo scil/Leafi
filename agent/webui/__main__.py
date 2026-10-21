@@ -94,6 +94,13 @@ class Handler(BaseHTTPRequestHandler):
                 and secrets.compare_digest(self.headers.get("X-Leafi-Token", ""), self.server.token))
 
     def _forbidden(self) -> None:
+        # 先读掉请求体再回 403:不读就关连接,Windows 会发 RST,客户端连 403 都收不到
+        try:
+            n = min(int(self.headers.get("Content-Length") or 0), 1 << 20)
+            if n:
+                self.rfile.read(n)
+        except (ValueError, OSError):
+            pass
         self._send(403, b"", "text/plain")
 
     def _body(self):

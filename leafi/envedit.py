@@ -1,89 +1,38 @@
-"""The `.env` settings catalog and the save coordinator (docs/plans/active/2026-10-21-env-settings-page.md §3-§5).
+"""The `.env` settings page's rules and the save coordinator (design rev 8: docs/plans/active/2026-10-21-env-settings-page.md).
 
-Outer ring, beside `cli.py`: it reads both Settings classes, the service registries, `.env.example`, the docs table
-and every `${VAR}` reference, and drives `leafi.core.envfile.update_env` with a validating `transform`. Values are
-never logged; secret values never leave this module except into the file.
+Everything descriptive about a key comes from the manifest, `config/env-schema.json` (`leafi.core.envschema`).
+`agreement()` checks the manifest against the code that really reads `.env` (both Settings classes, Compose, the
+devices.yml expansion, the timing script, each choice list's domain constant, each validator's consumer) and against
+the protection floor in `leafi.envprotect`; the tests and the editor both run it, services never do. Values are never
+logged; secret values never leave this module except into the file.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib
 import logging
 import re
-from dataclasses import dataclass, field
-from functools import lru_cache
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from leafi.core import envfile
+from leafi import envprotect
+from leafi.core import envfile, envschema
 from leafi.core.config import Settings as LeafiSettings
 from leafi.core.config import env_overrides
-from leafi.core.envfile import ABSENT, Committed, Conflict, EnvFile, Op, RecoveryRequired, Unstorable
+from leafi.core.envfile import Committed, Conflict, EnvFile, Op, RecoveryRequired, Unstorable
+from leafi.core.envschema import Key, Manifest, SchemaError
 
 log = logging.getLogger("leafi.envedit")
 
 ROOT = Path(__file__).resolve().parents[1]
-
-SECRET_KEYS = {"TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "CAM_PASSWORD", "TAPO_CLOUD_PASSWORD", "GATUS_TOKEN",
-               "BARK_URL", "HEARTBEAT_URL"}
-SECRET_NAME = re.compile(r"(?i)(TOKEN|PASSW|SECRET|KEY|CREDENTIAL|PRIVATE)")
-
-# ADR-0011: changing these changes what may leave the house; a save needs a confirmation bound to the new value
-PRIVACY_KEYS = {"NOTIFY_WITH_SNAPSHOT", "BOOK_LOOKUP", "AUDIO_KEEP_CLIPS", "EVAL_TRANSCRIPTS", "REDACT_TERMS",
-                "BRAIN_BACKEND", "STUDY_BRAIN_MODEL", "TTS_BACKEND_EN", "TTS_BACKEND_ZH"}
-
-# Enum-like keys without a service registry (the registries cover *_BACKEND)
-ENUMS = {"ASR_HOTWORDS": ("off", "lexicon"), "OCR_SNAP": ("off", "advisory", "auto"),
-         "BOOK_LOOKUP": ("off", "openlibrary"), "OCR_VERSION": ("PP-OCRv6", "PP-OCRv5"),
-         "VERIFY_MODE": ("presence", "vision"), "SPEAKER_BACKEND": ("go2rtc", "local")}
-
 READER_LEAFI, READER_HABIT = "leafi", "habit agent"
-ACTIVATION = {
-    READER_LEAFI: "restart the supervisor (Leafi console) and any running study session",
-    READER_HABIT: "restart the habit agent",
-    "devices.yml": "restart the supervisor (Leafi console) and any running study session",
-    "frigate": r"run scripts\win\apply-env.bat (recreates the Frigate container)",
-    "compose:frigate": r"run scripts\win\apply-env.bat (recreates the Frigate container)",
-    "gatus": "docker compose up -d gatus",
-    "logon task": r"rerun scripts\win\install-tasks.ps1",
-    "keep.ps1": "restart the supervisor task (keep.ps1 reads them at start)",
-}
-
-
-def activation(reader: str) -> str | None:
-    if reader in ACTIVATION:
-        return ACTIVATION[reader]
-    if reader.startswith("compose:"):
-        return f"docker compose up -d {reader.split(':', 1)[1]}"
-    return None
-
-
-def _registries() -> dict[str, Any]:
-    from leafi.services.asr import REGISTRY as asr
-    from leafi.services.brain import REGISTRY as brain
-    from leafi.services.ocr import REGISTRY as ocr
-    from leafi.services.pronunciation import REGISTRY as pron
-    from leafi.services.tts import REGISTRY as tts
-
-    return {"ASR_BACKEND": asr, "OCR_BACKEND": ocr, "PRON_BACKEND": pron, "BRAIN_BACKEND": brain,
-            "TTS_BACKEND_EN": tts, "TTS_BACKEND_ZH": tts}
-
-
-def _gates() -> dict[str, Any]:
-    """ADR-0011 / ADR-0003 release gates: predicates on the typed value; the page never sets a gated value."""
-    regs = _registries()
-    return {
-        "PRON_AUTO_JUDGE": lambda v: v is True,
-        "ASR_HOTWORDS": lambda v: v == "lexicon",
-        "OCR_SNAP": lambda v: v == "auto",
-        "ASR_BACKEND": lambda v: v in regs["ASR_BACKEND"].deferred,
-        "OCR_BACKEND": lambda v: v in regs["OCR_BACKEND"].deferred,
-        "BRAIN_BACKEND": lambda v: v == "ollama",
-        "OCR_SECOND_OPINION": lambda v: v != "",
-        "BRAIN_LOCAL_MODEL": lambda v: v != "",
-    }
+TYPE_ANNOTATIONS = {"text": str, "secret": str, "enum": str, "list": str, "int": int, "float": float, "bool": bool,
+                    "path": Path}
+REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?:(:?-)([^}]*))?\}")
 
 
 def _habit_settings_class():
@@ -92,34 +41,19 @@ def _habit_settings_class():
     return Settings
 
 
-# ---------------------------------------------------------------- catalog
+def settings_classes() -> dict[str, Any]:
+    return {READER_LEAFI: LeafiSettings, READER_HABIT: _habit_settings_class()}
 
 
-@dataclass
-class Entry:
-    key: str
-    section: str | None = None
-    order: int = 10_000
-    help: str = ""
-    readers: list[str] = field(default_factory=list)
-    defaults: dict[str, str] = field(default_factory=dict)
-    types: dict[str, Any] = field(default_factory=dict)  # reader -> annotation
-    unknown: bool = False
-
-    @property
-    def secret(self) -> bool:
-        return self.key in SECRET_KEYS or bool(SECRET_NAME.search(self.key))
-
-    @property
-    def privacy(self) -> bool:
-        return self.key in PRIVACY_KEYS
-
-    def add_reader(self, reader: str) -> None:
-        if reader not in self.readers:
-            self.readers.append(reader)
+def _resolve(ref: str) -> Any:
+    module, _, attr = ref.partition(":")
+    obj = importlib.import_module(module)
+    for part in attr.split("."):
+        obj = getattr(obj, part)
+    return obj
 
 
-def _show(v: Any) -> str:
+def show(v: Any) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, Path):
@@ -127,199 +61,352 @@ def _show(v: Any) -> str:
     return str(v)
 
 
-@dataclass
-class Catalog:
-    entries: dict[str, Entry]
-    sections: list[str]
-    anchors: dict[str, str]
+def empty_rule(annotation: Any) -> str:
+    """What a Settings field does with `KEY=` (pydantic-settings 2.14 reads the empty string)."""
+    try:
+        v = TypeAdapter(annotation).validate_strings("")
+    except ValidationError:
+        return "error"
+    return "current-dir" if isinstance(v, Path) else "empty"
 
 
-@lru_cache(maxsize=1)
-def _static_catalog(root: Path) -> Catalog:
-    entries: dict[str, Entry] = {}
-
-    def entry(key: str) -> Entry:
-        return entries.setdefault(key, Entry(key))
-
-    for reader, cls in ((READER_LEAFI, LeafiSettings), (READER_HABIT, _habit_settings_class())):
-        for name, f in cls.model_fields.items():
-            e = entry(name.upper())
-            e.add_reader(reader)
-            e.types[reader] = f.annotation
-            e.defaults[reader] = _show(f.default)
-
-    sections: list[str] = []
-    anchors: dict[str, str] = {}
-    section = None
-    example = root / ".env.example"
-    if example.exists():
-        for i, ln in enumerate(example.read_text(encoding="utf-8").splitlines()):
-            if ln.startswith("# ====="):
-                section = ln
-                sections.append(ln)
-                continue
-            m = re.match(r"^#?\s*([A-Z][A-Z0-9_]*)=([^#]*?)(?:\s+#\s*(.*))?$", ln)
-            if m:
-                e = entry(m.group(1))
-                if e.section is None:
-                    e.section, e.order = section, i
-                    if section:
-                        anchors[e.key] = section
-                if m.group(3) and not e.help:
-                    e.help = m.group(3).strip()
-
-    doc = root / "docs" / "architecture" / "config.md"
-    if doc.exists():
-        for ln in doc.read_text(encoding="utf-8").splitlines():
-            m = re.match(r"^\| ((?:`[A-Z][A-Z0-9_]*`(?: / )?)+) \| (.*?) \| (.*) \|$", ln)
-            if m:
-                for key in re.findall(r"`([A-Z][A-Z0-9_]*)`", m.group(1)):
-                    e = entry(key)
-                    if not e.help:
-                        e.help = m.group(3).strip()
-
-    ref = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?:(:?-)([^}]*))?\}")
-    compose = root / "docker-compose.yml"
-    if compose.exists():
-        import yaml
-
-        services = (yaml.safe_load(compose.read_text(encoding="utf-8")) or {}).get("services", {})
-        for svc, spec in services.items():
-            for m in ref.finditer(yaml.safe_dump(spec)):
-                e = entry(m.group(1))
-                e.add_reader(f"compose:{svc}")
-                if m.group(2):
-                    e.defaults[f"compose:{svc}"] = m.group(3) + ("  (also when empty)" if m.group(2) == ":-" else "")
-    for reader, files in (("devices.yml", [root / "config" / "devices.yml"]),
-                          ("gatus", [root / "config" / "gatus" / "config.yaml"]),
-                          ("frigate", sorted((root / "config" / "frigate").glob("*.yml")))):
-        for f in files:
-            if f.exists():
-                text = "\n".join(ln for ln in f.read_text(encoding="utf-8").splitlines()
-                                 if not ln.lstrip().startswith("#"))  # a ${VAR} in a comment reads nothing
-                for m in ref.finditer(text):
-                    entry(m.group(1)).add_reader(reader)
-
-    timing_ps1 = root / "scripts" / "win" / "timing.ps1"
-    if timing_ps1.exists():
-        for key, default in re.findall(r"\b((?:KEEP|TASK)_[A-Z_]+) = \"([^\"]*)\"", timing_ps1.read_text(encoding="utf-8")):
-            e = entry(key)
-            reader = "logon task" if key == "TASK_REPEAT_MIN" else "keep.ps1"
-            e.add_reader(reader)
-            e.defaults[reader] = default
-
-    return Catalog(entries, sections, anchors)
+# ---------------------------------------------------------------- typed values, gates, lists
 
 
-def catalog(env_keys: set[str] = frozenset(), root: Path = ROOT) -> Catalog:
-    """The static catalog plus an Unknown entry for every `.env` key no reader knows (masked, unset only)."""
-    static = _static_catalog(root)
-    entries = dict(static.entries)
-    for key in env_keys - set(entries):
-        entries[key] = Entry(key, help="no reader found: probably a stale name", unknown=True)
-    for e in entries.values():
-        if not e.readers and e.section and not e.help:
-            e.help = "documented in .env.example; no program in this repository reads it"
-    return Catalog(entries, static.sections, static.anchors)
-
-
-def is_unknown(e: Entry) -> bool:
-    """In `.env` but in no source at all; a key documented in `.env.example` that nothing reads is not unknown."""
-    return e.unknown
-
-
-def is_secret(e: Entry) -> bool:
-    return e.secret or is_unknown(e)
-
-
-def allowed(e: Entry) -> list[str] | None:
-    gates = _gates()
-    regs = _registries()
-    if e.key in regs:
-        options = sorted(regs[e.key].backends)
-    elif e.key in ENUMS:
-        options = list(ENUMS[e.key])
-    else:
-        return None
-    gate = gates.get(e.key)
-    return [o for o in options if not (gate and gate(o))]
-
-
-def typed(e: Entry, text: str) -> Any:
-    """The value each reader would hold; raises ValueError with a rule (never the value)."""
-    out = None
-    for reader in (READER_LEAFI, READER_HABIT):
-        if reader in e.types:
+def typed(k: Key, text: str) -> Any:
+    """The value the first Settings reader would hold; raises ValueError naming the rule, never the value."""
+    for reader, cls in settings_classes().items():
+        if reader in k.readers:
             try:
-                v = TypeAdapter(e.types[reader]).validate_strings(text)
+                return TypeAdapter(cls.model_fields[k.name.lower()].annotation).validate_strings(text)
             except ValidationError as err:
                 raise ValueError(err.errors()[0]["msg"]) from None
-            out = v if out is None else out
-    return text if out is None else out
+    return text
 
 
-def gated(e: Entry, value: Any) -> bool:
-    gate = _gates().get(e.key)
-    return bool(gate and gate(value))
+def gated(k: Key, text: str) -> bool:
+    if k.gate_nonempty and text != "":
+        return True
+    if not k.gate_values:
+        return False
+    if k.type == "list":
+        return any(item in k.gate_values for item in text.split(",") if item)
+    try:
+        value = typed(k, text)
+        return any(value == typed(k, g) for g in k.gate_values)
+    except ValueError:
+        return False
 
 
-def _kind(e: Entry) -> str:
-    if is_secret(e):
-        return "secret"
-    if allowed(e) is not None:
-        return "enum"
-    ann = e.types.get(READER_LEAFI) or e.types.get(READER_HABIT)
-    return {bool: "bool", int: "int", float: "float"}.get(ann, "text")
+def offered(k: Key) -> list[str] | None:
+    """The options the page offers: every option the code knows, minus the gated ones."""
+    if k.options is None:
+        return None
+    return [o for o in k.options if not gated(k, o)]
+
+
+def normalise_list(k: Key, text: str) -> str:
+    items = [i.strip() for i in text.split(",") if i.strip()]
+    if len(set(items)) != len(items):
+        raise ValueError("an item is repeated")
+    unknown = [i for i in items if i not in k.options]
+    if unknown:
+        raise ValueError("not an allowed item: choose from " + ", ".join(k.options))
+    return ",".join(o for o in k.options if o in items)
+
+
+# ---------------------------------------------------------------- agreement (the tests and the editor run this)
+
+
+def _compose_refs(root: Path) -> dict[tuple[str, str], tuple[str, str]]:
+    """(key, "compose:<svc>") -> (default value, empty rule), from docker-compose.yml."""
+    import yaml
+
+    out = {}
+    services = (yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8")) or {}).get("services", {})
+    for svc, spec in services.items():
+        for m in REF.finditer(yaml.safe_dump(spec)):
+            op, value = m.group(2), m.group(3) or ""
+            rule = "default" if op == ":-" else "empty"
+            out[(m.group(1), f"compose:{svc}")] = (value if op else "", rule)
+    return out
+
+
+def _device_refs(root: Path) -> dict[tuple[str, str], tuple[str, str, str]]:
+    """(key, "devices.yml:<device>.<option>[#n]") -> (default, empty rule, absent rule), derived by calling the
+    hub's own `_expand` on each reference alone, with every other variable set to a sentinel."""
+    import yaml
+
+    from leafi.core.hub import _VAR_RE, _expand
+
+    out = {}
+    data = yaml.safe_load((root / "config" / "devices.yml").read_text(encoding="utf-8")) or {}
+    for d in data.get("devices") or []:
+        for opt, val in (d.get("options") or {}).items():
+            if not isinstance(val, str):
+                continue
+            seen: dict[str, int] = {}
+            for m in _VAR_RE.finditer(val):
+                key = m.group(1)
+                seen[key] = seen.get(key, 0) + 1
+                reader = f"devices.yml:{d['name']}.{opt}" + (f"#{seen[key]}" if seen[key] > 1 else "")
+
+                def rule(test_value: str | None) -> tuple[str, str]:
+                    missing: list[str] = []
+                    got = _expand(m.group(0), lambda n: test_value if n == key else "SENTINEL", missing)
+                    return got, ("disables-device" if key in missing else "default" if got else "empty")
+
+                default, empty = rule("")
+                _, absent = rule(None)
+                out[(key, reader)] = (default, empty, absent)
+    return out
+
+
+def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
+    """Every way the manifest disagrees with the code, the readers or the protection floor; [] = agree."""
+    out: list[str] = []
+    classes = settings_classes()
+
+    # Settings fields, types and defaults, both ways
+    for reader, cls in classes.items():
+        for fname, f in cls.model_fields.items():
+            k = m.keys.get(fname.upper())
+            if k is None or reader not in k.readers:
+                out.append(f"{fname.upper()}: read by {reader} but not declared for it")
+                continue
+            if TYPE_ANNOTATIONS[k.type] is not f.annotation:
+                out.append(f"{k.name}: type {k.type} does not match {reader}'s {f.annotation}")
+            want = (show(f.default), empty_rule(f.annotation))
+            got = k.default.get(reader)
+            if got is None or (got.value, got.empty) != want:
+                out.append(f"{k.name}: default for {reader} should be {want[0]!r} (empty: {want[1]})")
+    for k in m.keys.values():
+        for reader, cls in classes.items():
+            if reader in k.readers and k.name.lower() not in cls.model_fields:
+                out.append(f"{k.name}: says {reader} reads it, but {reader} has no such field")
+
+    # Compose, both ways
+    compose = _compose_refs(root)
+    for (key, reader), (value, rule) in compose.items():
+        k = m.keys.get(key)
+        d = k.default.get(reader) if k else None
+        if k is None or reader not in k.readers or d is None or (d.value, d.empty) != (value, rule):
+            out.append(f"{key}: {reader} reads it with default {value!r} (empty: {rule}); declare exactly that")
+    for k in m.keys.values():
+        for r in k.readers:
+            if r.startswith("compose:") and (k.name, r) not in compose:
+                out.append(f"{k.name}: says {r} reads it, but docker-compose.yml has no such reference")
+
+    # devices.yml, both ways
+    devices = _device_refs(root)
+    for (key, reader), (value, rule, absent) in devices.items():
+        k = m.keys.get(key)
+        d = k.default.get(reader) if k else None
+        want_absent = absent if absent != rule else None
+        if k is None or reader not in k.readers or d is None or (d.value, d.empty, d.absent) != (value, rule, want_absent):
+            out.append(f"{key}: {reader} reads it with default {value!r} (empty: {rule}, absent: {absent})")
+    for k in m.keys.values():
+        for r in k.readers:
+            if r.startswith("devices.yml:") and (k.name, r) not in devices:
+                out.append(f"{k.name}: says {r} reads it, but config/devices.yml has no such reference")
+
+    # Gatus and Frigate YAML read container environment built by Compose
+    for f in [root / "config" / "gatus" / "config.yaml", *sorted((root / "config" / "frigate").glob("*.yml"))]:
+        if f.exists():
+            text = "\n".join(ln for ln in f.read_text(encoding="utf-8").splitlines() if not ln.lstrip().startswith("#"))
+            for ref in REF.finditer(text):
+                k = m.keys.get(ref.group(1))
+                if k is None or not any(r.startswith("compose:") for r in k.readers):
+                    out.append(f"{ref.group(1)}: used in {f.name} but no Compose reader passes it")
+
+    # timing.ps1's fallback table equals the leafi defaults
+    ps1 = root / "scripts" / "win" / "timing.ps1"
+    if ps1.exists():
+        for key, value in re.findall(r"\b((?:KEEP|TASK)_[A-Z_]+) = \"([^\"]*)\"", ps1.read_text(encoding="utf-8")):
+            k = m.keys.get(key)
+            d = k.default.get(READER_LEAFI) if k else None
+            if d is None:
+                out.append(f"{key}: in timing.ps1 but not a leafi setting")
+            else:
+                try:
+                    same = typed(k, value) == typed(k, d.value)
+                except ValueError:
+                    same = False
+                if not same:
+                    out.append(f"{key}: timing.ps1 falls back to {value!r}, leafi's default is {d.value!r}")
+            reader = "logon task" if key == "TASK_REPEAT_MIN" else "keep.ps1"
+            if k is not None and reader not in k.readers:
+                out.append(f"{key}: {reader} reads it (activation) but it is not declared")
+
+    # choice lists against the code that consumes them; gates
+    for k in m.keys.values():
+        if k.domain:
+            try:
+                dom = _resolve(k.domain)
+            except (ImportError, AttributeError):
+                out.append(f"{k.name}: domain {k.domain} does not resolve")
+                continue
+            values = set(dom.backends) | set(dom.deferred) if hasattr(dom, "backends") else set(dom)
+            if set(k.options) != values:
+                out.append(f"{k.name}: options {sorted(k.options)} differ from {k.domain} {sorted(values)}")
+            if hasattr(dom, "deferred") and not set(dom.deferred) <= set(k.gate_values):
+                out.append(f"{k.name}: deferred backends must be gated")
+        for g in k.gate_values:
+            try:
+                typed(k, g)
+            except ValueError:
+                out.append(f"{k.name}: gate value {g!r} is not a valid value")
+
+    # validators: resolve, and accept every example and default of their key
+    for k in m.keys.values():
+        if k.validator is None:
+            continue
+        try:
+            fn = _resolve(k.validator.fn)
+            _resolve(k.validator.consumer)
+        except (ImportError, AttributeError):
+            out.append(f"{k.name}: validator or consumer does not resolve")
+            continue
+        texts = [d.value for r, d in k.default.items() if r in (READER_LEAFI, READER_HABIT)]
+        if k.example is not None and not k.example_commented:
+            texts.append(k.example)
+        for t in texts:
+            try:
+                fn(t)
+            except ValueError:
+                out.append(f"{k.name}: its validator rejects its own default or example")
+
+    # examples: needed where readers disagree or there is no default; never gated, privacy opt-ins stay off
+    for k in m.keys.values():
+        values = {d.value for d in k.default.values()}
+        if k.example is None and len(values) != 1:
+            out.append(f"{k.name}: needs an explicit example (readers' defaults differ or there is none)")
+        if k.example is not None and not k.example_commented:
+            try:
+                EnvFile.encode(k.name, k.example, True)
+            except Unstorable:
+                out.append(f"{k.name}: example cannot be stored canonically")
+            if gated(k, k.example):
+                out.append(f"{k.name}: active example sets a gated value")
+            if k.privacy and k.example not in values:
+                out.append(f"{k.name}: privacy key's active example must equal its default")
+
+    # protection floor and the credential name rule
+    for key in envprotect.SECRET_FLOOR:
+        if key not in m.keys or not m.keys[key].secret:
+            out.append(f"{key}: must be secret (leafi/envprotect.py)")
+    for key in envprotect.PRIVACY_FLOOR:
+        if key not in m.keys or not m.keys[key].privacy:
+            out.append(f"{key}: must be a privacy key (leafi/envprotect.py)")
+    for key, value in envprotect.GATE_FLOOR:
+        k = m.keys.get(key)
+        if k is None or not (k.gate_nonempty if value == "*" else gated(k, value)):
+            out.append(f"{key}={value}: must be gated (leafi/envprotect.py)")
+    for k in m.keys.values():
+        if re.search(envprotect.CREDENTIAL_NAME, k.name) and not k.secret:
+            out.append(f"{k.name}: its name looks like a credential; mark it secret")
+    return out
+
+
+# ---------------------------------------------------------------- .env.example
+
+
+def env_example(m: Manifest) -> bytes:
+    """The `.env.example` the manifest describes (canonical by construction)."""
+    lines: list[str] = []
+    for g in m.groups:
+        keys = [k for k in m.keys.values() if k.group == g.id]
+        if not keys:
+            continue
+        if lines:
+            lines.append("")
+        lines.append(f"# ===== {g.title} =====")
+        lines += [f"# {n}" for n in g.notes]
+        for k in keys:
+            lines += [f"# {n}" for n in k.notes]
+            if k.example is not None:
+                value, commented = k.example, k.example_commented
+            else:
+                value = next(iter(k.default.values())).value if k.default else ""
+                commented = True
+            assign = f"{k.name}={EnvFile.encode(k.name, value, bool(k.help))}"
+            line = ("# " if commented else "") + assign
+            if k.help:
+                line += " " * max(3, 33 - len(line)) + "# " + k.help
+            lines.append(line)
+            lines += [f"# {n}" for n in k.notes_after]
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 # ---------------------------------------------------------------- the GET body
 
 
-def _group_name(e: Entry) -> str:
-    if e.section:
-        return e.section.strip("# =").strip()
-    if is_unknown(e):
-        return "Unknown"
-    if READER_LEAFI in e.readers:
-        return "Study and ops (leafi)"
-    if READER_HABIT in e.readers:
-        return "Habit agent"
-    return "Compose only"
+def load(root: Path = ROOT) -> tuple[Manifest | None, list[str]]:
+    """The manifest and its disagreements; (None, [error]) when it does not even load."""
+    try:
+        m = envschema.load(root / "config" / "env-schema.json")
+    except SchemaError as e:
+        return None, [f"manifest: {e}"]
+    return m, agreement(m, root)
+
+
+def _empty_notes(k: Key) -> list[str]:
+    notes = []
+    for r, d in k.default.items():
+        if d.empty == "default":
+            notes.append(f"{r} uses {d.value!r}")
+        elif d.empty == "disables-device":
+            notes.append(f"{r}: the device is disabled")
+        elif d.empty == "current-dir":
+            notes.append(f"{r} reads the current directory")
+    return notes
 
 
 def view(path: Path = Path(".env"), root: Path = ROOT) -> dict:
     raw, digest = envfile.read_state(Path(path))
+    m, mismatches = load(root)
+    if m is None:
+        return {"digest": digest, "manifest_error": mismatches[0], "groups": []}
     f = EnvFile.parse(raw)
     problems = f.problems()
     values = {} if problems else f.values()
-    cat = catalog(set(values), root)
-    groups: dict[str, list[dict]] = {}
-    order = {s.strip("# =").strip(): i for i, s in enumerate(cat.sections)}
-    for e in sorted(cat.entries.values(), key=lambda x: (x.order, x.key)):
-        state = "default" if e.key not in values else ("empty" if values[e.key] == "" else "set")
-        item = {"key": e.key, "state": state, "help": e.help, "readers": e.readers, "defaults": e.defaults,
-                "activation": sorted({a for r in e.readers if (a := activation(r))}), "secret": is_secret(e),
-                "privacy": e.privacy, "kind": _kind(e), "allowed": allowed(e)}
-        is_gated = False
-        if state != "default" and not problems:
-            try:
-                is_gated = gated(e, typed(e, values[e.key]))
-            except ValueError:
-                pass
-        item["gated"] = is_gated
-        item["editable"] = not problems and not is_unknown(e) and not is_gated
-        if is_unknown(e):
-            item["reason"] = "no reader found: probably a stale name; only removal is offered"
-        elif is_gated:
-            item["reason"] = "gated by ADR-0011: change by hand only after its evaluation; only removal is offered"
-        if not problems and not is_secret(e) and e.key in values:
-            item["value"] = values[e.key]
-        groups.setdefault(_group_name(e), []).append(item)
-    tail = {"Study and ops (leafi)": 1, "Habit agent": 2, "Compose only": 3, "Unknown": 4}
-    names = sorted(groups, key=lambda n: (n in tail, tail.get(n, 0), order.get(n, 0)))
-    body = {"digest": digest, "groups": [{"name": n, "keys": groups[n]} for n in names]}
+    locked = bool(problems or mismatches)
+    groups: list[dict] = []
+    for g in m.groups:
+        items = []
+        for k in (k for k in m.keys.values() if k.group == g.id):
+            state = "default" if k.name not in values else ("empty" if values[k.name] == "" else "set")
+            is_gated = state != "default" and gated(k, values[k.name])
+            item = {"key": k.name, "state": state, "type": k.type, "help": k.help, "readers": list(k.readers),
+                    "defaults": {r: {"value": "" if k.secret else d.value, "empty": d.empty}
+                                 for r, d in k.default.items()},
+                    "activation": sorted({m.readers[r] for r in k.readers}), "secret": k.secret,
+                    "privacy": k.privacy, "options": offered(k), "gated": is_gated,
+                    "empty_allowed": all(d.empty != "error" for d in k.default.values()),
+                    "empty_notes": _empty_notes(k),
+                    "editable": not locked and not is_gated}
+            if is_gated:
+                item["reason"] = "gated by ADR-0011: change by hand only after its evaluation; only removal is offered"
+            if not k.readers:
+                item["reason"] = "documented in .env.example; no program in this repository reads it"
+            if not problems and not k.secret and k.name in values:
+                item["value"] = values[k.name]
+            items.append(item)
+        if items:
+            groups.append({"name": g.title, "keys": items})
+    unknown = sorted(set(values) - set(m.keys))
+    if unknown:
+        groups.append({"name": "Unknown", "keys": [
+            {"key": u, "state": "empty" if values[u] == "" else "set", "type": "secret", "secret": True,
+             "privacy": False, "readers": [], "defaults": {}, "activation": [], "options": None, "gated": False,
+             "empty_allowed": False, "empty_notes": [], "editable": False,
+             "reason": "no reader found: probably a stale name; only removal is offered", "help": ""}
+            for u in unknown]})
+    body = {"digest": digest, "groups": groups}
     if problems:
         body["problems"] = [{"line": p.line, "key": p.key, "rule": p.rule} for p in problems]
+    if mismatches:
+        body["agreement"] = mismatches
     return body
 
 
@@ -384,11 +471,11 @@ def _file_only(cls):
     return FileOnly
 
 
-def _validate_whole(values: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+def validate_whole(values: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     errors: dict[str, str] = {}
     warnings: list[str] = []
     instances = {}
-    for reader, cls in ((READER_LEAFI, LeafiSettings), (READER_HABIT, _habit_settings_class())):
+    for reader, cls in settings_classes().items():
         kwargs = {k.lower(): v for k, v in values.items() if k.lower() in cls.model_fields}
         try:
             instances[reader] = _file_only(cls)(**kwargs)
@@ -404,6 +491,43 @@ def _validate_whole(values: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     return errors, warnings
 
 
+def _check_op(k: Key, op: Op, current: dict[str, str], confirm: dict[str, str], trusted: bool,
+              warnings: list[str]) -> tuple[Op | None, str | None]:
+    """The op as it will be written (lists normalised), or an error naming the rule."""
+    if k.name in current and gated(k, current[k.name]) and op.kind != "unset":
+        return None, "only removal is offered for this setting"
+    text = op.value if op.kind == "set" else ""
+    if op.kind != "unset":
+        if text == "" and not all(d.empty != "error" for d in k.default.values()):
+            return None, "cannot be empty for every reader; use 'restore default' instead"
+        if k.type == "list" and text != "":
+            try:
+                text = normalise_list(k, text)
+            except ValueError as e:
+                return None, str(e)
+            op = Op("set", text)
+        try:
+            typed(k, text)
+        except ValueError as e:
+            return None, str(e)
+        if k.validator is not None:
+            try:
+                _resolve(k.validator.fn)(text)
+            except ValueError:
+                msg = f"not accepted by {k.validator.fn}"
+                if k.validator.severity == "error":
+                    return None, msg
+                warnings.append(f"{k.name}: {msg}; the running service falls back to its default")
+        if gated(k, text):
+            return None, "gated by ADR-0011: not settable from this page"
+        if k.type == "enum" and text != "" and text not in (offered(k) or []):
+            return None, "not an allowed value: " + ", ".join(offered(k) or [])
+    changes = (current.get(k.name) != text) if op.kind != "unset" else k.name in current
+    if k.privacy and changes and not trusted and confirm.get(k.name) != confirmation(text):
+        return None, "privacy setting: confirm this exact value"
+    return op, None
+
+
 def save(body: Any, path: Path = Path(".env"), data_dir: Path = Path("data"), root: Path = ROOT,
          trusted_confirm: bool = False) -> SaveResult:
     """Validate and write one batch of ops (all or nothing). `trusted_confirm`: the caller (the CLI) is itself the
@@ -412,6 +536,10 @@ def save(body: Any, path: Path = Path(".env"), data_dir: Path = Path("data"), ro
         digest, ops, confirm = parse_ops(body)
     except BadRequest as e:
         return SaveResult(400, {"ok": False, "error": str(e)})
+    m, mismatches = load(root)
+    if m is None or mismatches:
+        return SaveResult(200, {"ok": False, "errors": {"*": "the settings manifest disagrees with the code; "
+                                                              "the page is read-only until it is fixed"}})
     warnings: list[str] = []
 
     def transform(old: bytes) -> bytes:
@@ -419,52 +547,34 @@ def save(body: Any, path: Path = Path(".env"), data_dir: Path = Path("data"), ro
         if f.problems():
             raise Rejected({"*": "file is not canonical; fix the listed lines by hand, then reload"})
         current = f.values()
-        cat = catalog(set(current), root)
         errors: dict[str, str] = {}
+        final: dict[str, Op] = {}
         for key, op in ops.items():
-            e = cat.entries.get(key)
-            if e is None:
-                errors[key] = "not a known setting"
+            k = m.keys.get(key)
+            if k is None:
+                if key in current and op.kind == "unset":
+                    final[key] = op  # an Unknown key: removal only
+                else:
+                    errors[key] = "not a known setting" if key not in current else "only removal is offered"
                 continue
-            now_gated = False
-            if key in current:
-                try:
-                    now_gated = gated(e, typed(e, current[key]))
-                except ValueError:
-                    pass
-            if (is_unknown(e) or now_gated) and op.kind != "unset":
-                errors[key] = "only removal is offered for this setting"
-                continue
-            new_text = op.value if op.kind == "set" else ""
-            if op.kind != "unset":
-                try:
-                    value = typed(e, new_text)
-                except ValueError as err:
-                    errors[key] = str(err)
-                    continue
-                if gated(e, value):
-                    errors[key] = "gated by ADR-0011: not settable from this page"
-                    continue
-                options = allowed(e)
-                if options is not None and new_text != "" and new_text not in options:
-                    errors[key] = "not an allowed value: " + ", ".join(options)
-                    continue
-            changes = (current.get(key) != new_text) if op.kind != "unset" else key in current
-            if e.privacy and changes and not trusted_confirm and confirm.get(key) != confirmation(new_text):
-                errors[key] = "privacy setting: confirm this exact value"
+            checked, err = _check_op(k, op, current, confirm, trusted_confirm, warnings)
+            if err:
+                errors[key] = err
+            else:
+                final[key] = checked
         if errors:
             raise Rejected(errors)
+        anchors = {k.name: f"# ===== {m.group_title(k.group)} =====" for k in m.keys.values()}
         try:
-            new = f.apply(ops, cat.anchors)
+            new = f.apply(final, anchors)
         except Unstorable as err:
             raise Rejected({err.key: "cannot be stored so that every reader reads the same text; edit by hand"})
-        whole_errors, whole_warnings = _validate_whole(new.values())
+        whole_errors, whole_warnings = validate_whole(new.values())
         if whole_errors:
             raise Rejected(whole_errors)
         warnings.extend(whole_warnings)
-        shadowed = env_overrides(list(ops))
         warnings.extend(f"this process has {k} set in its environment; a service started the same way ignores the "
-                        f"file value" for k in shadowed)
+                        f"file value" for k in env_overrides(list(final)))
         return new.render()
 
     try:
@@ -481,8 +591,7 @@ def save(body: Any, path: Path = Path(".env"), data_dir: Path = Path("data"), ro
     if isinstance(outcome, RecoveryRequired):
         return SaveResult(500, {"ok": False, "recovery": outcome.paths})
     if isinstance(outcome, Committed):
-        cat = catalog(root=root)
-        acts = sorted({a for k in ops if (e := cat.entries.get(k)) for r in e.readers if (a := activation(r))})
+        acts = sorted({m.readers[r] for key in ops if key in m.keys for r in m.keys[key].readers})
         log.info("saved .env keys: %s", ", ".join(sorted(ops)))
         return SaveResult(200, {"ok": True, "digest": outcome.digest, "activation": acts,
                                 "warnings": warnings + outcome.warnings})
@@ -491,6 +600,3 @@ def save(body: Any, path: Path = Path(".env"), data_dir: Path = Path("data"), ro
 
 def current_digest(path: Path = Path(".env")) -> str:
     return envfile.read_state(Path(path))[1]
-
-
-__all__ = ["ABSENT", "catalog", "view", "save", "confirmation", "current_digest", "SaveResult"]

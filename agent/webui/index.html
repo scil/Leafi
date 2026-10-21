@@ -431,17 +431,24 @@ function control(k){
   const p = PENDING[k.key], dis = (!k.editable || LOCKED) ? ' disabled' : '';
   const cur = p ? (p.op === 'set' ? p.value : '') : (k.value ?? '');
   if (k.secret) return `<input type="password" data-k="${esc(k.key)}" placeholder="${k.state === 'set' ? '已设置;留空 = 不改' : '未设置'}" autocomplete="off"${dis}>`;
-  if (k.kind === 'bool'){
+  if (k.type === 'bool'){
     const on = String(cur).toLowerCase();
     return `<select data-k="${esc(k.key)}"${dis}><option value="">(默认)</option>
       <option value="true" ${['true','1','yes','on'].includes(on)?'selected':''}>true</option>
       <option value="false" ${['false','0','no','off'].includes(on)?'selected':''}>false</option></select>`;
   }
-  if (k.kind === 'enum'){
-    const opts = (k.allowed || []).map(o => `<option ${cur===o?'selected':''}>${esc(o)}</option>`).join('');
+  if (k.type === 'enum'){
+    const opts = (k.options || []).map(o => `<option ${cur===o?'selected':''}>${esc(o)}</option>`).join('');
     return `<select data-k="${esc(k.key)}"${dis}><option value="">(默认)</option>${opts}</select>`;
   }
-  const t = k.kind === 'int' || k.kind === 'float' ? 'text" inputmode="decimal' : 'text';
+  if (k.type === 'list'){
+    // 多选:按 options 的顺序写回,不带空格;一个都不勾 = 设为空(不是恢复默认)
+    const now = (p || k.state !== 'default') ? String(cur).split(',').filter(Boolean)
+      : String((k.defaults.leafi || Object.values(k.defaults)[0] || {}).value || '').split(',').filter(Boolean);
+    return `<div data-list="${esc(k.key)}" style="display:flex;flex-wrap:wrap;gap:4px 14px">${(k.options || []).map(o =>
+      `<label style="font-family:var(--mono);font-size:13px"><input type="checkbox" value="${esc(o)}" ${now.includes(o)?'checked':''}${dis}> ${esc(o)}</label>`).join('')}</div>`;
+  }
+  const t = k.type === 'int' || k.type === 'float' ? 'text" inputmode="decimal' : 'text';
   return `<input type="${t}" data-k="${esc(k.key)}" value="${esc(cur)}"${dis}>`;
 }
 
@@ -449,6 +456,14 @@ function renderEnv(){
   const el = $('#envview');
   let h = '';
   if (ENVRESULT) h += `<div class="card result">${ENVRESULT}</div>`;
+  if (ENV.manifest_error){
+    el.innerHTML = h + `<div class="errs"><b>设置清单 config/env-schema.json 读不了,本页不可用。</b><br>${esc(ENV.manifest_error)}</div>`;
+    renderBar(); return;
+  }
+  if (ENV.agreement){
+    h += `<div class="errs"><b>设置清单和代码对不上,本页只读。</b>修正 config/env-schema.json(或代码)后重新读取:
+      <ul>${ENV.agreement.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>`;
+  }
   if (ENV.problems){
     h += `<div class="errs"><b>.env 不是规范格式,本页只读。</b>请用编辑器手改下面这些行(scripts\\win\\edit-env.bat),改完点「重新读取」。
       <ul>${ENV.problems.map(p => `<li>第 ${p.line || '—'} 行${p.key ? ' <code>' + esc(p.key) + '</code>' : ''}:${esc(p.rule)}</li>`).join('')}</ul></div>`;
@@ -461,15 +476,16 @@ function renderEnv(){
         + (k.privacy ? '<span class="tag warn">隐私</span>' : '')
         + (k.gated ? '<span class="tag bad">已闸门</span>' : '')
         + (k.reason && !k.gated ? '<span class="tag bad">未知</span>' : '');
-      const defs = Object.entries(k.defaults || {}).map(([r, v]) => `${esc(r)}=<code>${esc(v)}</code>`).join(' · ');
-      const reset = k.state !== 'default' && !LOCKED && !ENV.problems
+      const defs = k.secret ? '' : Object.entries(k.defaults || {}).map(([r, d]) => `${esc(r)}=<code>${esc(d.value)}</code>`).join(' · ');
+      const emptyNote = k.empty_notes && k.empty_notes.length ? '<br>设为空时:' + k.empty_notes.map(esc).join(';') : '';
+      const reset = k.state !== 'default' && !LOCKED && !ENV.problems && !ENV.agreement
         ? `<button data-unset="${esc(k.key)}">恢复默认</button>` : '';
       h += `<div class="kv ${PENDING[k.key] ? 'pending' : ''}">
         <div class="k">${esc(k.key)}<span class="st">${esc(STATE[k.state])}</span></div>
         <div><div class="ctl">${control(k)}${reset}</div>
           ${ENVERR[k.key] ? `<div class="errs" style="margin:6px 0 0;padding:6px 10px">${esc(ENVERR[k.key])}</div>` : ''}
           <div class="meta">${esc(k.help || '')}${k.reason ? '<br><b>' + esc(k.reason) + '</b>' : ''}
-            ${defs ? '<br>默认:' + defs : ''}${k.activation.length ? '<br>生效:' + k.activation.map(esc).join(';') : ''}
+            ${defs ? '<br>默认:' + defs : ''}${emptyNote}${k.activation.length ? '<br>生效:' + k.activation.map(esc).join(';') : ''}
             <br>${tags}</div></div></div>`;
     }
     h += `</fieldset></div>`;
@@ -480,6 +496,7 @@ function renderEnv(){
       const k = keyInfo(n.dataset.k), v = n.value;
       if (k.secret){ if (v === '') delete PENDING[k.key]; else PENDING[k.key] = {op:'set', value:v}; }
       else if ((n.tagName === 'SELECT' && v === '')) PENDING[k.key] = {op:'unset'};
+      else if (v === '' && !k.empty_allowed) PENDING[k.key] = {op:'unset'};
       else if (v === '') PENDING[k.key] = {op:'empty'};
       else PENDING[k.key] = {op:'set', value:v};
       const same = !k.secret && ((PENDING[k.key].op === 'unset' && k.state === 'default')
@@ -487,6 +504,14 @@ function renderEnv(){
       if (same) delete PENDING[k.key];
       renderBar(); n.closest('.kv').classList.toggle('pending', !!PENDING[k.key]);
     };
+  });
+  el.querySelectorAll('[data-list]').forEach(box => box.onchange = () => {
+    const k = keyInfo(box.dataset.list);
+    const picked = [...box.querySelectorAll('input:checked')].map(i => i.value);
+    const v = (k.options || []).filter(o => picked.includes(o)).join(',');
+    PENDING[k.key] = v === '' ? {op:'empty'} : {op:'set', value:v};
+    if (v === (k.value ?? null)) delete PENDING[k.key];
+    renderBar(); box.closest('.kv').classList.toggle('pending', !!PENDING[k.key]);
   });
   el.querySelectorAll('[data-unset]').forEach(b => b.onclick = () => {
     PENDING[b.dataset.unset] = {op:'unset'}; renderEnv();
@@ -505,7 +530,7 @@ function renderBar(){
     <ul>${keys.length ? keys.map(k => `<li>${esc(desc(k))}</li>`).join('') : '<li style="list-style:none;color:var(--ink-3)">没有待保存的改动</li>'}</ul>
     <div>${priv.map(k => `<label><input type="checkbox" data-confirm="${esc(k)}"> 确认修改隐私项 <code>${esc(k)}</code>(决定什么能离开家)</label>`).join('')}</div>
     <div style="display:flex;gap:8px"><button id="envreload">重新读取</button>
-      <button class="primary" id="envsave" ${keys.length && !LOCKED && !ENV.problems ? '' : 'disabled'}>保存到 .env</button></div></div>`;
+      <button class="primary" id="envsave" ${keys.length && !LOCKED && !ENV.problems && !ENV.agreement && !ENV.manifest_error ? '' : 'disabled'}>保存到 .env</button></div></div>`;
   $('#envreload').onclick = () => {
     if (keys.length && !confirm('丢弃未保存的改动并重新读取?')) return;
     PENDING = {}; ENVERR = {}; ENVRESULT = ''; LOCKED = false; loadEnv();
