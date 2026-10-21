@@ -92,6 +92,23 @@ def test_request_checks_reject_cross_site_posts(server, path, bad):
     assert server.env_path.read_bytes() == before
 
 
+def _raw_post(httpd, path, raw: bytes):
+    port = httpd.server_address[1]
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    c.request("POST", path, body=raw, headers={"Host": f"127.0.0.1:{port}", "Content-Type": "application/json",
+                                               "X-Leafi-Token": httpd.token})
+    r = c.getresponse()
+    r.read()
+    c.close()
+    return r.status
+
+
+@pytest.mark.parametrize("path", ["/api/env", "/api/tasks"])
+@pytest.mark.parametrize("raw", [b"[" * 200_000, b"[]", b"42", b"not json"], ids=["deep", "list", "number", "text"])
+def test_odd_bodies_get_400_not_a_crash(server, path, raw):
+    assert _raw_post(server, path, raw) == 400
+
+
 def test_get_checks_the_host_too(server):
     assert call(server, "GET", "/", Host="rebound.example:80")[0] == 403
     assert call(server, "GET", "/api/env", Host="rebound.example:80")[0] == 403

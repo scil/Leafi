@@ -165,6 +165,6 @@ def _parse(data: dict) -> Manifest:
 def load(path: Path = PATH) -> Manifest:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:  # JSON errors quote the text near the fault: report only the class
+    except (OSError, ValueError, RecursionError) as e:  # JSON errors quote the text near the fault: report only the class
         raise SchemaError(f"cannot read {Path(path).name}: {e.__class__.__name__}") from None
     return parse(data)

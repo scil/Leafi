@@ -103,9 +103,16 @@ class Handler(BaseHTTPRequestHandler):
             pass
         self._send(403, b"", "text/plain")
 
-    def _body(self):
+    def _body(self) -> dict:
+        """请求体必须是 JSON 对象;其它一律 ValueError(过深的嵌套 json 会抛 RecursionError,也归到这里)。"""
         n = int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(n) or b"{}")
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except RecursionError:
+            raise ValueError("JSON nested too deeply") from None
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+        return body
 
     def do_GET(self) -> None:
         if not self._host_ok():
@@ -141,7 +148,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self._body()
             specs = [TaskSpec.from_dict(d) for d in payload.get("tasks", [])]
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, AttributeError) as e:
             self._json(400, {"error": f"请求体解析失败:{e}"})
             return
 

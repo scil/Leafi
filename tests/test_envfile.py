@@ -96,6 +96,8 @@ def test_an_escaped_quote_does_not_end_the_value_and_no_later_line_names_a_key()
     "'CAM_PASSWORD'='first\nSecretCanary: hidden\nlast'\n",
     "CAM_PASSWORD = \"first\nSecretCanary=hidden\nlast\"\n",
     "x 'unbalanced\nSecretCanary: hidden\n",
+    "CAM_PASSWORD='x\\\\'\nSecretCanary: hidden'\n",
+    'CAM_PASSWORD="x\\\\\\\\"\nSecretCanary: hidden"\n',
 ])
 def test_no_line_after_an_unbalanced_quote_names_a_key(text):
     assert "Canary" not in repr(parse(text).problems())

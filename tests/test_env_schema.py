@@ -149,6 +149,24 @@ def test_agreement_reports_instead_of_crashing_on_unforeseen_shapes():
     assert any("not a registry or a collection" in f for f in found), found
 
 
+def test_a_manifest_key_without_a_settings_field_does_not_crash_the_page(tmp_path):
+    data = copy.deepcopy(RAW)
+    data["keys"]["ZZZ_NEW"] = {"group": data["groups"][0]["id"], "type": "bool", "readers": ["leafi"],
+                               "gate": {"values": ["true"]}, "help": ""}
+    root = _root_with(tmp_path / "repo", data)
+    env = tmp_path / ".env"
+    env.write_bytes(b"ZZZ_NEW=true\n")
+    body = envedit.view(env, root=root)
+    assert any("ZZZ_NEW" in a for a in body["agreement"])
+
+
+def test_a_too_deep_manifest_is_a_schema_error(tmp_path):
+    p = tmp_path / "env-schema.json"
+    p.write_text("[" * 200_000, encoding="utf-8")
+    with pytest.raises(envschema.SchemaError):
+        envschema.load(p)
+
+
 def test_gated_bool_values_are_not_offered():
     keys = {k["key"]: k for g in envedit.view(ROOT / "no-such.env")["groups"] for k in g["keys"]}
     assert keys["PRON_AUTO_JUDGE"]["options"] == ["false"]

@@ -140,13 +140,15 @@ class EnvFile:
                 continue
             key, rule = _diagnose(ln)
             problems.append(LineProblem(i, None if uncertain else key, rule))
-            # any unbalanced quote, wherever it is on the line, may open a value that continues: from here on, lines
-            # may be data, so treat what follows as continuation and name no key again
-            bare = re.sub(r"\\.", "", ln)
-            for qc in ("'", '"'):
-                if bare.count(qc) % 2:
-                    open_quote, uncertain = qc, True
-                    break
+            # A quote or a backslash on a non-canonical line may open a value that continues (escape rules differ
+            # between readers, so they are not modelled): from here on lines may be data, so no key is named again.
+            if "'" in ln or '"' in ln or "\\" in ln:
+                uncertain = True
+                bare = re.sub(r"\\.", "", ln)
+                for qc in ("'", '"'):
+                    if bare.count(qc) % 2:
+                        open_quote = qc
+                        break
         return cls(raw, text, nl, lines, final_nl, problems)
 
     def render(self) -> bytes:

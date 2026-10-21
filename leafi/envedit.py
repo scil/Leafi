@@ -76,7 +76,7 @@ def empty_rule(annotation: Any) -> str:
 def typed(k: Key, text: str) -> Any:
     """The value the first Settings reader would hold; raises ValueError naming the rule, never the value."""
     for reader, cls in settings_classes().items():
-        if reader in k.readers:
+        if reader in k.readers and k.name.lower() in cls.model_fields:  # a missing field is agreement's to report
             try:
                 return TypeAdapter(cls.model_fields[k.name.lower()].annotation).validate_strings(text)
             except ValidationError as err:
@@ -423,12 +423,14 @@ def view(path: Path = Path(".env"), root: Path = ROOT) -> dict:
         items = []
         for k in (k for k in m.keys.values() if k.group == g.id):
             state = "default" if k.name not in values else ("empty" if values[k.name] == "" else "set")
-            is_gated = state != "default" and gated(k, values[k.name])
+            # with a disagreeing manifest nothing is editable, and its rules are not trusted to evaluate
+            is_gated = not mismatches and state != "default" and gated(k, values[k.name])
             item = {"key": k.name, "state": state, "type": k.type, "help": k.help, "readers": list(k.readers),
                     "defaults": {r: {"value": "" if masked(k) else d.value, "empty": d.empty}
                                  for r, d in k.default.items()},
                     "activation": sorted({m.readers[r] for r in k.readers}), "secret": masked(k),
-                    "privacy": k.privacy, "options": None if masked(k) else offered(k), "gated": is_gated,
+                    "privacy": k.privacy, "options": None if masked(k) or mismatches else offered(k),
+                    "gated": is_gated,
                     "empty_allowed": all(d.empty != "error" for d in k.default.values()),
                     "empty_notes": _empty_notes(k),
                     "editable": not locked and not is_gated}
