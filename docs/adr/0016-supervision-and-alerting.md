@@ -21,7 +21,7 @@ Three rules came out of the design review and hold everywhere below:
 | Service (`SUPERVISE`) | Observation: GOOD / BAD / IDLE | Recovery | Grace after recovery |
 |---|---|---|---|
 | `camera` | go2rtc child not running or API fails → BAD; no demand (no consumer and Frigate does not list the camera) → IDLE; no live producer, or `frame.jpeg` not a JPEG ≥ 1 KiB → BAD; else GOOD. A frame is fetched only with demand (no extra Xiaomi cloud dials) | restart the go2rtc child | 90 s |
-| `habit-agent` | child process alive → GOOD, else BAD | restart the child (`python -m agent.main`) | 90 s |
+| `habit-agent` (opt-in: it speaks through the camera on its schedule) | child process alive → GOOD, else BAD | restart the child (`python -m agent.main`) | 90 s |
 | `docker` | `docker info` succeeds → GOOD, else BAD | restart Docker Desktop: end its process if present, then start it (covers both an absent Desktop and a hung engine) | 180 s |
 | `frigate` | `docker` not GOOD → IDLE; `GET /api/stats` 200 → GOOD, else BAD | `docker compose up -d frigate` (recreates a removed container), then `docker compose restart frigate` | 120 s |
 | `mosquitto` | `docker` not GOOD → IDLE; TCP connect to `127.0.0.1:18830` → GOOD, else BAD | `docker compose up -d mosquitto`, then `docker compose restart mosquitto` | 60 s |

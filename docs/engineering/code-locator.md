@@ -13,10 +13,10 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Invariant: host go2rtc, not the container, holds the cs2 P2P connection.
 - Check: health script shows dial count stable over 10 minutes.
 
-## "go2rtc keeps restarting" / "restarts paused" alert / no alert arrived / 告警
-- Start: `leafi/ops/watchdog.py` (`CameraPolicy`, `observe`, `Go2rtc`), `leafi/ops/alerts.py::deliver`, `leafi/core/alerts.py` (catalog), `scripts/win/keep.ps1`; ADR-0016.
-- Invariant: only the watchdog starts or kills go2rtc once the `leafi-watchdog` task exists; at most 3 restarts per outage; alerts leave only as catalog sentences, oldest unsent first.
-- Check: `python -m leafi alert --status` (budget, unsent rows), `data/logs/watchdog.log`, `data/logs/keep-watchdog.log`; `tests/test_watchdog.py`, `tests/test_alerts.py`.
+## "go2rtc / Frigate / Docker keeps restarting" / "restarts paused" alert / no alert arrived / 告警
+- Start: `leafi/ops/supervisor.py` (`ServicePolicy`, `poll`, `build`, `observe_camera`, `Child`), `leafi/ops/alerts.py::deliver`, `leafi/core/alerts.py` (catalog), `scripts/win/keep.ps1`; ADR-0016.
+- Invariant: once the `leafi-supervisor` task exists, only the supervisor starts or kills its children; at most 3 recoveries per service per outage; containers are not probed while Docker is down; alerts leave only as catalog sentences (toasts at once, Telegram oldest-first).
+- Check: `python -m leafi alert --status` (per-service budget, unsent rows), `data/logs/supervisor.log`, `data/logs/keep-supervisor.log`; `tests/test_supervisor.py`, `tests/test_alerts.py`.
 
 ## "task editor rejected my prompt" / 红线 01
 - Start: `agent/tasks.py::validate`, `GUARD_PHRASES`.
