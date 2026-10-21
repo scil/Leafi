@@ -89,13 +89,17 @@ class Settings(BaseSettings):
     # ---- speech lease ----
     lease_ttl_s: float = 60.0
 
-    # ---- watchdog (ADR-0016) ----
-    watchdog_poll_s: float = 60.0
-    watchdog_port: int = 18771  # POST /rearm only; outside the Windows excluded port ranges (2026-10-20)
+    # ---- supervisor (ADR-0016) ----
+    # habit-agent is opt-in: it makes the camera speak on its schedule (AGENTS.md: never unasked); also: ollama
+    supervise: str = "docker,camera,frigate,mosquitto"
+    supervisor_poll_s: float = 60.0
+    supervisor_port: int = 18771  # POST /rearm only; outside the Windows excluded port ranges (2026-10-20)
     go2rtc_exe: Path = Path("tools/go2rtc/go2rtc.exe")
     go2rtc_config: Path = Path("tools/go2rtc/go2rtc-host.yaml")
     frigate_url: str = "http://127.0.0.1:15000"
     frigate_camera: str = "hallway"  # the Frigate camera fed by STREAM_NAME (config/frigate/config.yml)
+    mqtt_port: int = 18830  # host port of mosquitto (docker-compose.yml)
+    docker_desktop_exe: str = ""  # empty: found next to the docker CLI (scoop) or under Program Files
 
     @property
     def db_path(self) -> Path:

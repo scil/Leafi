@@ -92,11 +92,11 @@ def cmd_forget(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_watchdog(args: argparse.Namespace) -> int:
-    from leafi.ops import watchdog
+def cmd_supervisor(args: argparse.Namespace) -> int:
+    from leafi.ops import supervisor
 
     try:
-        return asyncio.run(watchdog.run(_settings()))
+        return asyncio.run(supervisor.run(_settings()))
     except KeyboardInterrupt:
         return 130
 
@@ -111,12 +111,13 @@ def cmd_alert(args: argparse.Namespace) -> int:
     settings = _settings()
     store = Store(settings.db_path)
     if args.status:
-        st = store.one("SELECT kills, gave_up, latch, updated_at FROM watchdog_state WHERE id = 1")
-        if st is None:
-            print("watchdog: never ran")
-        else:
-            print(f"watchdog: camera {st['latch']}, restarts used {st['kills']}/3"
-                  f"{', GAVE UP (press the restart button)' if st['gave_up'] else ''}, updated {st['updated_at']}")
+        states = store.all("SELECT service, kills, gave_up, latch, updated_at FROM service_state ORDER BY service")
+        if not states:
+            print("supervisor: never ran")
+        for st in states:
+            print(f"{st['service']:<12} {st['latch']:<5} recoveries used {st['kills']}/3"
+                  f"{'  GAVE UP (rearm: 🔁 or POST /rearm?service=' + st['service'] + ')' if st['gave_up'] else ''}"
+                  f"  updated {st['updated_at']}")
         rows = store.all("SELECT id, key, state, reason, created_at, attempts FROM alert_outbox "
                          "WHERE sent_at IS NULL ORDER BY id")
         print(f"unsent alerts: {len(rows)}")
@@ -183,8 +184,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--session", type=int)
     g.add_argument("--book", type=int)
     f.set_defaults(fn=cmd_forget)
-    sub.add_parser("watchdog", help="own the host go2rtc, restart it when the camera sends no video, send alerts "
-                   "(ADR-0016)").set_defaults(fn=cmd_watchdog)
+    sub.add_parser("supervisor", help="keep every Leafi service running, recover the ones that stop answering, "
+                   "send alerts (ADR-0016)").set_defaults(fn=cmd_supervisor)
     a = sub.add_parser("alert", help="queue a coded alert and/or deliver due alerts once (ADR-0016)")
     a.add_argument("--insert", nargs=3, metavar=("KEY", "STATE", "REASON"))
     a.add_argument("--drain", action="store_true")

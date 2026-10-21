@@ -1,9 +1,10 @@
-"""The one alert deliverer (ADR-0016): oldest unsent outbox row first, toast once, Telegram until it succeeds.
+"""The one alert deliverer (ADR-0016): a toast for every new row at once, then Telegram oldest-first.
 
-Order is strict: only the oldest unsent row is worked on, and while it waits for a retry nothing newer is sent,
-so a recovery never reaches the owner before its outage. A toast is local and shown once per row (best effort);
-Telegram is retried at 30 s, 2 min, 10 min, then hourly. Without Telegram a row is done once its toast is shown.
-Concurrent deliverers (the watchdog and `alert --drain`) may rarely send a row twice; accepted for v1.
+Toasts are local and shown once per row (best effort), never held behind Telegram. Telegram order is strict:
+only the oldest unsent row is worked on, and while it waits for a retry nothing newer is sent, so a recovery
+never reaches the owner before its outage; retries at 30 s, 2 min, 10 min, then hourly. Without Telegram a row
+is done once its toast is shown. Concurrent deliverers (the supervisor and `alert --drain`) may rarely send a
+row twice; accepted for v1.
 """
 
 from __future__ import annotations
@@ -30,17 +31,18 @@ async def deliver(store: Store, toast: Callable[[str], Awaitable[None]] | None, 
     """Send what is due; returns how many rows were completed. Never raises for a channel failure."""
     done = 0
     telegram = notifier if notifier is not None and getattr(notifier, "can_send", False) else None
+    if toast is not None:  # every new row gets its toast now, whatever Telegram's retry schedule says
+        for row in store.all("SELECT * FROM alert_outbox WHERE toasted = 0 ORDER BY id"):
+            try:
+                await toast(alerts.render(row["key"], row["state"], row["reason"]))
+            except Exception:  # noqa: BLE001 - a toast is best effort and never blocks Telegram
+                log.warning("toast failed for alert %s", row["id"], exc_info=True)
+            store.execute("UPDATE alert_outbox SET toasted = 1 WHERE id = ?", (row["id"],))
     while True:
         row = store.one("SELECT * FROM alert_outbox WHERE sent_at IS NULL ORDER BY id LIMIT 1")
         if row is None or row["next_try_at"] > now():
             return done
         text = alerts.render(row["key"], row["state"], row["reason"])
-        if not row["toasted"] and toast is not None:
-            try:
-                await toast(text)
-            except Exception:  # noqa: BLE001 - a toast is best effort and never blocks Telegram
-                log.warning("toast failed for alert %s", row["id"], exc_info=True)
-            store.execute("UPDATE alert_outbox SET toasted = 1 WHERE id = ?", (row["id"],))
         if telegram is not None:
             try:
                 await telegram.send(text)

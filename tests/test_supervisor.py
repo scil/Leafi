@@ -1,7 +1,9 @@
-"""ADR-0016 watchdog: the camera state machine, the observation step and the rearm endpoint."""
+"""ADR-0016 supervisor: the per-service policy, observations, dependency suppression and the rearm endpoint."""
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import io
 import subprocess
 import sys
@@ -10,9 +12,13 @@ import httpx
 import pytest
 from PIL import Image
 
+from leafi.core import storage
 from leafi.core.storage import Store
-from leafi.ops import watchdog
-from leafi.ops.watchdog import BAD, GOOD, IDLE, CameraPolicy
+from leafi.ops import supervisor
+from leafi.ops.supervisor import BAD, GOOD, IDLE, Service, ServicePolicy
+
+CameraPolicy = functools.partial(ServicePolicy, service="camera", grace_s=90.0)
+STATE = "SELECT kills, gave_up, latch FROM service_state WHERE service = 'camera'"
 
 
 class T:
@@ -55,7 +61,7 @@ def test_a_dead_camera_gets_three_restarts_then_one_gave_up_alert(store):
     assert len(asked) == 3
     assert asked == [1, 4, 7]  # BAD, BAD -> restart; 90 s grace swallows one poll; then BAD, BAD again
     assert _rows(store) == [("camera", "down", "restart_gave_up")]
-    assert store.one("SELECT kills, gave_up, latch FROM watchdog_state")[:] == (3, 1, "down")
+    assert store.one(STATE)[:] == (3, 1, "down")
 
 
 def test_ten_good_minutes_reset_the_budget_and_send_one_up_row(store):
@@ -67,7 +73,7 @@ def test_ten_good_minutes_reset_the_budget_and_send_one_up_row(store):
     assert _rows(store) == [("camera", "down", "restart_gave_up")]  # 9 min is not enough
     _run(p, t, GOOD, 3)
     assert _rows(store)[-1] == ("camera", "up", "recovered")
-    assert store.one("SELECT kills, gave_up, latch FROM watchdog_state")[:] == (0, 0, "up")
+    assert store.one(STATE)[:] == (0, 0, "up")
     _run(p, t, GOOD, 20)
     assert len(_rows(store)) == 2  # no repeated up rows
 
@@ -78,7 +84,7 @@ def test_rearm_restarts_as_attempt_one_and_never_adds_a_second_down_row(store):
     p.started(t.mono - 1000)
     _run(p, t, BAD, 12)
     assert p.rearm(t.mono) is True
-    assert store.one("SELECT kills FROM watchdog_state")["kills"] == 1
+    assert store.one(STATE)["kills"] == 1
     p.started(t.mono)
     asked = _run(p, t, BAD, 15)
     assert len(asked) == 2  # attempts 2 and 3, then gave up again
@@ -128,7 +134,7 @@ def test_a_sleep_is_neither_an_outage_nor_healthy_time(store):
     assert p.step(BAD, t.mono, t.wall) is False
 
 
-def test_the_budget_survives_a_watchdog_restart(store):
+def test_the_budget_survives_a_supervisor_restart(store):
     t = T()
     p = CameraPolicy(store)
     p.started(t.mono - 1000)
@@ -136,6 +142,104 @@ def test_the_budget_survives_a_watchdog_restart(store):
     again = CameraPolicy(store)
     again.started(t.mono - 1000)
     assert len(_run(again, t, BAD, 10)) == 1  # only one left
+
+
+def test_each_service_has_its_own_budget_and_alert_key(store):
+    t = T()
+    cam = CameraPolicy(store)
+    agent = ServicePolicy(store, service="habit-agent", grace_s=90.0)
+    for p in (cam, agent):
+        p.started(t.mono - 1000)
+    for _ in range(12):
+        t.tick()
+        if agent.step(BAD, t.mono, t.wall):
+            agent.started(t.mono)
+        cam.step(GOOD, t.mono, t.wall)
+    assert _rows(store) == [("habit-agent", "down", "restart_gave_up")]
+    assert store.one(STATE)[:] == (0, 0, "up")
+
+
+def test_migration_moves_the_camera_budget_into_service_state(tmp_path, monkeypatch):
+    path = tmp_path / "old.db"
+    monkeypatch.setattr(storage, "MIGRATIONS", storage.MIGRATIONS[:3])
+    old = Store(path)
+    old.insert("watchdog_state", id=1, kills=2, gave_up=0, latch="down", updated_at="x")
+    old.close()
+    monkeypatch.undo()
+    new = Store(path)
+    assert new.one(STATE)[:] == (2, 0, "down")
+    assert new.one("SELECT name FROM sqlite_master WHERE name = 'watchdog_state'") is None
+
+
+# ---------------------------------------------------------------- one poll over all services
+
+
+class FakeService:
+    def __init__(self, name: str, obs: str, depends_docker: bool = False) -> None:
+        self.observed = 0
+        self.recovered = 0
+
+        async def observe() -> str:
+            self.observed += 1
+            return obs
+
+        async def recover() -> None:
+            self.recovered += 1
+
+        self.svc = Service(name, grace_s=60.0, observe=observe, recover=recover, depends_docker=depends_docker)
+
+
+async def test_containers_are_idle_while_docker_is_down(store):
+    t = T()
+    docker = FakeService("docker", BAD)
+    frigate = FakeService("frigate", BAD, depends_docker=True)
+    services = [docker.svc, frigate.svc]
+    policies = {s.name: ServicePolicy(store, s.name, s.grace_s) for s in services}
+    for p in policies.values():
+        p.started(t.mono - 1000)
+    for _ in range(12):
+        t.tick()
+        await supervisor.poll(services, policies, t.mono, t.wall)
+    assert frigate.observed == 0 and frigate.recovered == 0  # suppressed, never restarted behind a dead engine
+    assert docker.recovered == 3
+    assert _rows(store) == [("docker", "down", "restart_gave_up")]
+
+
+async def test_a_failed_recovery_is_logged_and_does_not_stop_the_poll(store):
+    t = T()
+    broken = FakeService("frigate", BAD)
+
+    async def boom() -> None:
+        raise RuntimeError("compose failed")
+
+    broken.svc.recover = boom
+    other = FakeService("mosquitto", BAD)
+    services = [broken.svc, other.svc]
+    policies = {s.name: ServicePolicy(store, s.name, s.grace_s) for s in services}
+    for p in policies.values():
+        p.started(t.mono - 1000)
+    for _ in range(3):
+        t.tick()
+        await supervisor.poll(services, policies, t.mono, t.wall)
+    assert other.recovered == 1
+
+
+async def test_mosquitto_probe_is_a_tcp_connect():
+    server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    assert await supervisor.tcp_probe("127.0.0.1", port) == GOOD
+    server.close()
+    await server.wait_closed()
+    assert await supervisor.tcp_probe("127.0.0.1", port) == BAD
+
+
+async def test_http_probe_is_good_only_on_200():
+    def handler(req):
+        return httpx.Response(200 if req.url.path == "/ok" else 503)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        assert await supervisor.http_probe(c, "http://x/ok") == GOOD
+        assert await supervisor.http_probe(c, "http://x/down") == BAD
 
 
 # ---------------------------------------------------------------- observe()
@@ -180,34 +284,36 @@ LIVE = {"producers": [{"remote_addr": "cs2+tcp", "bytes_recv": 10}], "consumers"
 ])
 async def test_observe_classifies_one_poll(settings, streams, frame, frigate, expected):
     client, _ = _go2rtc(streams, frame, frigate)
-    assert await watchdog.observe(client, settings) == expected
+    assert await supervisor.observe_camera(client, settings) == expected
 
 
 async def test_observe_never_fetches_a_frame_without_demand(settings):
     client, seen = _go2rtc({"cam_xiaomi": {"producers": [{"remote_addr": "x"}], "consumers": None}}, _jpeg())
-    assert await watchdog.observe(client, settings) == IDLE
+    assert await supervisor.observe_camera(client, settings) == IDLE
     assert "/api/frame.jpeg" not in seen
 
 
 # ---------------------------------------------------------------- rearm endpoint and Job Object
 
 
-async def test_rearm_endpoint_accepts_only_post_rearm():
+async def test_rearm_endpoint_accepts_only_post_rearm_for_a_known_service():
     called = []
-    server = await watchdog.serve_rearm("127.0.0.1", 0, lambda: called.append(1))
+    server = await supervisor.serve_rearm("127.0.0.1", 0, called.append, {"camera", "frigate"})
     port = server.sockets[0].getsockname()[1]
     async with httpx.AsyncClient() as c:
         assert (await c.post(f"http://127.0.0.1:{port}/rearm")).status_code == 200
+        assert (await c.post(f"http://127.0.0.1:{port}/rearm?service=frigate")).status_code == 200
+        assert (await c.post(f"http://127.0.0.1:{port}/rearm?service=nope")).status_code == 404
         assert (await c.get(f"http://127.0.0.1:{port}/rearm")).status_code == 404
         assert (await c.post(f"http://127.0.0.1:{port}/alert", content=b"x")).status_code == 404
     server.close()
     await server.wait_closed()
-    assert called == [1]
+    assert called == ["camera", "frigate"]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Job Objects")
 def test_closing_the_job_kills_its_process_tree():
-    job = watchdog.Job()
+    job = supervisor.Job()
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     job.assign(child)
     job.close()

@@ -1,11 +1,12 @@
-"""`python -m leafi watchdog` (ADR-0016): owns the host go2rtc, restarts it when the camera sends no video,
-gives up after three restarts per outage, and delivers the alert outbox.
+"""`python -m leafi supervisor` (ADR-0016): keeps every independent Leafi service running, recovers one that
+runs but does not answer, gives up after three recoveries per outage, and delivers the alert outbox.
 
-go2rtc runs inside a Windows Job Object with kill-on-close, one job per generation, so it (and any ffmpeg it
-spawned for a speaker push) dies with the watchdog however the watchdog dies. The restart budget lives in the
-`watchdog_state` row and is committed before the kill. The watchdog never fetches a frame unless something
-wants the stream (a consumer, or Frigate listing the camera): go2rtc is lazy, and each new connection asks
-Xiaomi's cloud for keys.
+Services (`SUPERVISE`): `camera` (the host go2rtc child), `habit-agent` (child), `docker` (Docker Desktop),
+`frigate` and `mosquitto` (containers, observed only while Docker answers), `ollama` (child, off by default).
+Child processes run inside a Windows Job Object each, with kill-on-close, so they die with the supervisor
+however it dies. Each service's budget lives in `service_state` and is committed before the recovery. The camera
+never fetches a frame unless something wants the stream: go2rtc is lazy, and each new connection asks Xiaomi's
+cloud for keys.
 """
 
 from __future__ import annotations
@@ -15,11 +16,13 @@ import ctypes
 import logging
 import logging.handlers
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -27,43 +30,47 @@ import httpx
 from leafi.core import alerts
 from leafi.core.storage import Store, now_iso
 
-log = logging.getLogger("leafi.watchdog")
+log = logging.getLogger("leafi.supervisor")
 
 GOOD, BAD, IDLE = "GOOD", "BAD", "IDLE"
 MAX_KILLS = 3
 HEALTHY_S = 600.0       # ten continuous GOOD minutes end an outage
-GRACE_START_S = 90.0    # BAD is ignored this long after go2rtc starts
-GRACE_RESUME_S = 120.0  # … and after the PC resumes from sleep
+GRACE_RESUME_S = 120.0  # BAD is ignored this long after the PC resumes from sleep
 RESUME_GAP_S = 180.0    # a wall-clock gap this long between polls is a resume
 MIN_FRAME_BYTES = 1024
 DELIVER_EVERY_S = 10.0
 
 
-# ---------------------------------------------------------------- state machine (pure apart from the store)
+# ---------------------------------------------------------------- policy (pure apart from the store)
 
-class CameraPolicy:
-    """ADR-0016's camera state machine. `step()` returns True when go2rtc must be restarted now; the caller
-    restarts it and then calls `started()`. Budget, give-up and latch are persisted; streak and timers are not."""
+class ServicePolicy:
+    """ADR-0016's policy for one service. `step()` returns True when the service must be recovered now; the
+    caller recovers it and then calls `started()`. Budget, give-up and latch are persisted per service; streak
+    and timers are not."""
 
-    def __init__(self, store: Store) -> None:
-        self.store = store
-        if store.one("SELECT id FROM watchdog_state WHERE id = 1") is None:
-            store.insert("watchdog_state", id=1, updated_at=now_iso())
+    def __init__(self, store: Store, service: str, grace_s: float) -> None:
+        self.store, self.service, self.grace_s = store, service, grace_s
+        if store.one("SELECT service FROM service_state WHERE service = ?", (service,)) is None:
+            store.insert("service_state", service=service, updated_at=now_iso())
         self.streak = 0
         self.good_since: float | None = None
         self.grace_until = 0.0
         self.last_wall: float | None = None
 
     def _state(self):
-        return self.store.one("SELECT kills, gave_up, latch FROM watchdog_state WHERE id = 1")
+        return self.store.one("SELECT kills, gave_up, latch FROM service_state WHERE service = ?", (self.service,))
+
+    def _set(self, sql: str) -> None:
+        self.store.execute(f"UPDATE service_state SET {sql}, updated_at = ? WHERE service = ?",
+                           (now_iso(), self.service))
 
     def started(self, mono: float) -> None:
         self.streak, self.good_since = 0, None
-        self.grace_until = mono + GRACE_START_S
+        self.grace_until = mono + self.grace_s
 
     def step(self, obs: str, mono: float, wall: float) -> bool:
         if self.last_wall is not None and wall - self.last_wall > RESUME_GAP_S:
-            log.info("resume detected (%.0f s gap): grace %.0f s", wall - self.last_wall, GRACE_RESUME_S)
+            log.info("%s: resume detected (%.0f s gap)", self.service, wall - self.last_wall)
             self.streak, self.good_since = 0, None
             self.grace_until = max(self.grace_until, mono + GRACE_RESUME_S)
         self.last_wall = wall
@@ -81,31 +88,29 @@ class CameraPolicy:
         if mono < self.grace_until:
             return False
         self.streak += 1
-        return self._want_restart() if self.streak >= 2 else False
+        return self._want_recovery() if self.streak >= 2 else False
 
     def rearm(self, mono: float) -> bool:
-        """The 🔁 button: a fresh budget; its own restart is attempt 1. The latch is kept (same outage)."""
+        """The 🔁 button: a fresh budget; its own recovery is attempt 1. The latch is kept (same outage)."""
         with self.store.transaction():
-            self.store.execute("UPDATE watchdog_state SET kills = 0, gave_up = 0, updated_at = ? WHERE id = 1",
-                               (now_iso(),))
-        log.info("rearmed by the owner")
-        return self._want_restart("rearmed")
+            self._set("kills = 0, gave_up = 0")
+        log.info("%s: rearmed by the owner", self.service)
+        return self._want_recovery("rearmed")
 
-    def _want_restart(self, cause: str = "camera broken") -> bool:
+    def _want_recovery(self, cause: str = "not answering") -> bool:
         st = self._state()
         if st["gave_up"]:
             return False
         with self.store.transaction():
             if st["kills"] < MAX_KILLS:
-                self.store.execute("UPDATE watchdog_state SET kills = kills + 1, updated_at = ? WHERE id = 1",
-                                   (now_iso(),))
-                log.warning("%s: restart %d of %d", cause, st["kills"] + 1, MAX_KILLS)
+                self._set("kills = kills + 1")
+                log.warning("%s %s: recovery %d of %d", self.service, cause, st["kills"] + 1, MAX_KILLS)
                 return True
-            self.store.execute("UPDATE watchdog_state SET gave_up = 1, latch = 'down', updated_at = ? WHERE id = 1",
-                               (now_iso(),))
+            self._set("gave_up = 1, latch = 'down'")
             if st["latch"] == "up":
-                alerts.insert(self.store, "camera", "down", "restart_gave_up")
-        log.error("camera still broken after %d restarts: restarts paused until 10 good minutes or 🔁", MAX_KILLS)
+                alerts.insert(self.store, self.service, "down", "restart_gave_up")
+        log.error("%s still failing after %d recoveries: paused until 10 good minutes or rearm", self.service,
+                  MAX_KILLS)
         return False
 
     def _recovered(self) -> None:
@@ -113,17 +118,66 @@ class CameraPolicy:
         if not (st["kills"] or st["gave_up"] or st["latch"] == "down"):
             return
         with self.store.transaction():
-            self.store.execute("UPDATE watchdog_state SET kills = 0, gave_up = 0, latch = 'up', updated_at = ? "
-                               "WHERE id = 1", (now_iso(),))
+            self._set("kills = 0, gave_up = 0, latch = 'up'")
             if st["latch"] == "down":
-                alerts.insert(self.store, "camera", "up", "recovered")
-        log.info("camera healthy for %.0f min: budget reset", HEALTHY_S / 60)
+                alerts.insert(self.store, self.service, "up", "recovered")
+        log.info("%s healthy for %.0f min: budget reset", self.service, HEALTHY_S / 60)
 
 
-# ---------------------------------------------------------------- one observation
+# ---------------------------------------------------------------- services and one poll
 
-async def observe(client: httpx.AsyncClient, settings) -> str:
-    """ADR-0016 observe steps, in order; a frame is fetched only when something wants the stream."""
+@dataclass
+class Service:
+    name: str
+    grace_s: float
+    observe: Callable[[], Awaitable[str]]
+    recover: Callable[[], Awaitable[None]]
+    depends_docker: bool = False
+
+
+async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono: float, wall: float) -> None:
+    """Observe every service once, in order (docker first), and recover the ones whose policy asks for it.
+    Containers are IDLE while Docker is not GOOD, so a stopped engine raises one alert, not three."""
+    docker_good = True
+    for svc in services:
+        if svc.depends_docker and not docker_good:
+            obs = IDLE
+        else:
+            try:
+                obs = await svc.observe()
+            except Exception:  # noqa: BLE001 - a broken probe is a bad observation, never a dead supervisor
+                log.exception("%s: probe failed", svc.name)
+                obs = BAD
+        if svc.name == "docker":
+            docker_good = obs == GOOD
+        if obs != GOOD:
+            log.info("%s: %s", svc.name, obs)
+        if policies[svc.name].step(obs, mono, wall):
+            try:
+                await svc.recover()
+            except Exception:  # noqa: BLE001 - logged; the next polls decide again within the budget
+                log.exception("%s: recovery failed", svc.name)
+            policies[svc.name].started(mono)
+
+
+async def http_probe(client: httpx.AsyncClient, url: str, limit_s: float = 3) -> str:
+    try:
+        return GOOD if (await client.get(url, timeout=limit_s)).status_code == 200 else BAD
+    except httpx.HTTPError:
+        return BAD
+
+
+async def tcp_probe(host: str, port: int, limit_s: float = 3) -> str:
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), limit_s)
+    except (OSError, TimeoutError):
+        return BAD
+    writer.close()
+    return GOOD
+
+
+async def observe_camera(client: httpx.AsyncClient, settings) -> str:
+    """ADR-0016 camera observation, in order; a frame is fetched only when something wants the stream."""
     base, name = settings.go2rtc_url.rstrip("/"), settings.stream_name
     try:
         r = await client.get(f"{base}/api/streams", timeout=3)
@@ -153,19 +207,69 @@ async def _frigate_lists_camera(client: httpx.AsyncClient, settings) -> bool:
         return False
 
 
+async def _run(cmd: list[str], limit_s: float) -> int:
+    def go() -> int:
+        return subprocess.run(cmd, capture_output=True, timeout=limit_s, cwd=str(Path.cwd()),
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode
+    try:
+        return await asyncio.to_thread(go)
+    except (subprocess.TimeoutExpired, OSError):
+        return -1
+
+
+async def docker_probe() -> str:
+    return GOOD if await _run(["docker", "info", "--format", "{{.ServerVersion}}"], 15) == 0 else BAD
+
+
+async def compose_recover(name: str) -> None:
+    """`up -d` recreates a removed container (a no-op for a running one); `restart` then kicks a hung one."""
+    await _run(["docker", "compose", "up", "-d", name], 180)
+    await _run(["docker", "compose", "restart", name], 120)
+
+
+def docker_desktop_exe(settings) -> Path | None:
+    if settings.docker_desktop_exe:
+        return Path(settings.docker_desktop_exe)
+    cli = shutil.which("docker")
+    if not cli:
+        return None
+    for up in Path(cli).resolve().parents:  # scoop: …\docker\resources\bin\docker.exe → …\docker\Docker Desktop.exe
+        cand = up / "Docker Desktop.exe"
+        if cand.exists():
+            return cand
+    std = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")  # the standard installer's location
+    return std if std.exists() else None
+
+
+async def docker_recover(settings) -> None:
+    """Restart Docker Desktop: end it if present (a hung engine), then start it, detached (Docker is not a child)."""
+    exe = docker_desktop_exe(settings)
+    if exe is None:
+        log.error("docker: Docker Desktop executable not found; set DOCKER_DESKTOP_EXE")
+        return
+    await _run(["taskkill", "/IM", "Docker Desktop.exe", "/T", "/F"], 30)
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    await asyncio.to_thread(subprocess.Popen, [str(exe)], cwd=str(exe.parent), creationflags=flags, close_fds=True)
+
+
 # ---------------------------------------------------------------- rearm endpoint
 
-async def serve_rearm(host: str, port: int, on_rearm: Callable[[], None]) -> asyncio.base_events.Server:
-    """A minimal HTTP listener: `POST /rearm` → 200 and `on_rearm()`; anything else → 404. Nothing else can
-    reach the watchdog, so nothing outside Leafi can insert an alert."""
+async def serve_rearm(host: str, port: int, on_rearm: Callable[[str], None],
+                      services: set[str]) -> asyncio.base_events.Server:
+    """A minimal HTTP listener: `POST /rearm[?service=S]` (default camera) → 200 and `on_rearm(S)`; anything
+    else → 404. Nothing else can reach the supervisor, so nothing outside Leafi can insert an alert."""
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
             line = head.split(b"\r\n", 1)[0].split()
-            hit = len(line) >= 2 and line[0] == b"POST" and line[1].split(b"?")[0] == b"/rearm"
+            target = line[1].decode("latin-1") if len(line) >= 2 else ""
+            path, _, query = target.partition("?")
+            params = dict(p.partition("=")[::2] for p in query.split("&") if p)
+            service = params.get("service", "camera")
+            hit = line[:1] == [b"POST"] and path == "/rearm" and service in services
             if hit:
-                on_rearm()
+                on_rearm(service)
             status = b"200 OK" if hit else b"404 Not Found"
             writer.write(b"HTTP/1.1 " + status + b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
@@ -177,10 +281,10 @@ async def serve_rearm(host: str, port: int, on_rearm: Callable[[], None]) -> asy
     return await asyncio.start_server(handle, host, port)
 
 
-# ---------------------------------------------------------------- go2rtc process in a Job Object
+# ---------------------------------------------------------------- child processes in Job Objects
 
 class Job:
-    """A Windows Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: closing it (or the watchdog dying) kills
+    """A Windows Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: closing it (or the supervisor dying) kills
     every process assigned to it, including their children."""
 
     def __init__(self) -> None:
@@ -223,42 +327,40 @@ class Job:
             self.handle = None
 
 
-class Go2rtc:
-    """The one owner of the host go2rtc process (ADR-0016 rule 1)."""
+class Child:
+    """One supervised child process (ADR-0016 rule 1): the supervisor is its only owner."""
 
-    def __init__(self, settings, out_log: logging.Logger) -> None:
-        self.exe = Path(settings.go2rtc_exe).resolve()
-        self.config = Path(settings.go2rtc_config)
-        self.out_log = out_log
+    def __init__(self, name: str, argv: list[str], out_log: logging.Logger, stray: Callable[[str, str], bool]) -> None:
+        self.name, self.argv, self.out_log, self.stray = name, argv, out_log, stray
         self.proc: subprocess.Popen | None = None
         self.job: Job | None = None
 
     def kill_strays(self) -> None:
-        """Kill a go2rtc.exe at this repository's path that we did not start (e.g. from go2rtc-host.bat)."""
+        """Kill instances we did not start; `stray(executable_path, command_line)` recognises them."""
         own = self.proc.pid if self.proc else None
-        query = ("Get-CimInstance Win32_Process -Filter \"Name='go2rtc.exe'\" | "
-                 "ForEach-Object { \"$($_.ProcessId)|$($_.ExecutablePath)\" }")
+        query = ("Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath } | "
+                 "ForEach-Object { \"$($_.ProcessId)`t$($_.ExecutablePath)`t$($_.CommandLine)\" }")
         out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", query], capture_output=True, text=True,
-                             timeout=30).stdout
+                             timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
         for line in out.splitlines():
-            pid, _, path = line.partition("|")
-            if pid.strip().isdigit() and int(pid) != own and path and Path(path).resolve() == self.exe:
-                log.warning("killing a go2rtc we do not own (pid %s)", pid)
+            pid, _, rest = line.partition("\t")
+            path, _, cmdline = rest.partition("\t")
+            if pid.strip().isdigit() and int(pid) not in (own, os.getpid()) and self.stray(path, cmdline):
+                log.warning("%s: killing an instance we do not own (pid %s)", self.name, pid)
                 subprocess.run(["taskkill", "/PID", pid.strip(), "/T", "/F"], capture_output=True, timeout=30)
 
     def start(self) -> None:
         job = Job()
-        proc = subprocess.Popen([str(self.exe), "-config", str(self.config)], cwd=str(Path.cwd()),
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+        proc = subprocess.Popen(self.argv, cwd=str(Path.cwd()), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
         job.assign(proc)
         self.proc, self.job = proc, job
         threading.Thread(target=self._pump, args=(proc,), daemon=True).start()
-        log.info("go2rtc started (pid %d)", proc.pid)
+        log.info("%s started (pid %d)", self.name, proc.pid)
 
     def stop(self) -> None:
         if self.job is not None:
-            self.job.close()  # kill-on-close: go2rtc and its ffmpeg children
+            self.job.close()  # kill-on-close: the child and everything it spawned
         if self.proc is not None:
             try:
                 self.proc.wait(10)
@@ -291,7 +393,7 @@ def _rotating(path: Path, name: str, fmt: str) -> logging.Logger:
 
 
 def _single_instance(path: Path):
-    """Exclusive lock for the watchdog's lifetime; a second instance exits at once."""
+    """Exclusive lock for the supervisor's lifetime; a second instance exits at once."""
     import msvcrt
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,70 +406,123 @@ def _single_instance(path: Path):
     return fh
 
 
+def _same_file(a: str, b: Path) -> bool:
+    try:
+        return bool(a) and Path(a).resolve() == b.resolve()
+    except OSError:
+        return False
+
+
+def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service], list[Child]]:
+    """The enabled services, docker first (containers depend on it), and the children to start."""
+    enabled = [s.strip() for s in settings.supervise.split(",") if s.strip()]
+    services: list[Service] = []
+    children: list[Child] = []
+    py = Path(sys.executable)
+
+    def child(name: str, argv: list[str], stray: Callable[[str, str], bool]) -> Child:
+        out = _rotating(logs / f"{name}.log", f"child.{name}", "%(asctime)s %(message)s")
+        out.propagate = False
+        c = Child(name, argv, out, stray)
+        children.append(c)
+        return c
+
+    if "docker" in enabled:
+        services.append(Service("docker", 180.0, docker_probe, lambda: docker_recover(settings)))
+    if "camera" in enabled:
+        exe = Path(settings.go2rtc_exe)
+        go2rtc = child("go2rtc", [str(exe.resolve()), "-config", str(settings.go2rtc_config)],
+                       lambda path, cmd: _same_file(path, exe))
+
+        async def observe_cam() -> str:
+            return await observe_camera(client, settings) if go2rtc.alive() else BAD
+
+        services.append(Service("camera", 90.0, observe_cam, lambda: asyncio.to_thread(go2rtc.restart)))
+    if "habit-agent" in enabled:
+        agent = child("habit-agent", [str(py), "-m", "agent.main"],
+                      lambda path, cmd: "-m agent.main" in cmd and "python" in Path(path).name.lower())
+
+        async def observe_agent() -> str:
+            return GOOD if agent.alive() else BAD
+
+        services.append(Service("habit-agent", 90.0, observe_agent, lambda: asyncio.to_thread(agent.restart)))
+    for name, probe in (("frigate", lambda: http_probe(client, f"{settings.frigate_url.rstrip('/')}/api/stats")),
+                        ("mosquitto", lambda: tcp_probe("127.0.0.1", settings.mqtt_port))):
+        if name in enabled:
+            services.append(Service(name, 120.0 if name == "frigate" else 60.0, probe,
+                                    lambda n=name: compose_recover(n), depends_docker=True))
+    if "ollama" in enabled:
+        ollama_exe = shutil.which("ollama") or "ollama"
+        ollama = child("ollama", [ollama_exe, "serve"], lambda path, cmd: " serve" in cmd and
+                       Path(path).stem.lower() == "ollama")
+
+        async def observe_ollama() -> str:
+            if not ollama.alive():
+                return BAD
+            return await http_probe(client, f"{settings.ollama_url.rstrip('/')}/api/tags")
+
+        services.append(Service("ollama", 60.0, observe_ollama, lambda: asyncio.to_thread(ollama.restart)))
+    return services, children
+
+
 async def run(settings) -> int:
     from leafi.devices.notifiers import NotifierDevice
     from leafi.ops.alerts import deliver, windows_toast
 
     logs = Path(settings.data_dir) / "logs"
-    lock = _single_instance(Path(settings.data_dir) / "watchdog.lock")
+    lock = _single_instance(Path(settings.data_dir) / "supervisor.lock")
     if lock is None:
-        print("another watchdog is running; exiting", file=sys.stderr)
+        print("another supervisor is running; exiting", file=sys.stderr)
         return 3
-    fmt = "%(asctime)s %(levelname)s %(message)s"
-    _rotating(logs / "watchdog.log", "leafi", "%(asctime)s %(name)s %(levelname)s %(message)s")
-    out_log = _rotating(logs / "go2rtc.log", "go2rtc.out", fmt)
-    out_log.propagate = False
+    _rotating(logs / "supervisor.log", "leafi", "%(asctime)s %(name)s %(levelname)s %(message)s")
 
     store = Store(settings.db_path)
-    policy = CameraPolicy(store)
-    go2rtc = Go2rtc(settings, out_log)
     notifier = NotifierDevice(options={"telegram_bot_token": settings.telegram_bot_token,
                                        "telegram_chat_id": settings.telegram_chat_id})
     loop = asyncio.get_running_loop()
-    rearm_requested = asyncio.Event()
-    server = await serve_rearm("127.0.0.1", settings.watchdog_port,
-                               lambda: loop.call_soon_threadsafe(rearm_requested.set))
+    rearms: asyncio.Queue[str] = asyncio.Queue()
 
-    async def delivery() -> None:
-        while True:
-            try:
-                await deliver(store, windows_toast, notifier)
-            except Exception:  # noqa: BLE001 - delivery must never stop the watchdog
-                log.exception("alert delivery failed")
-            await asyncio.sleep(DELIVER_EVERY_S)
+    async with httpx.AsyncClient() as client:
+        services, children = build(settings, client, logs)
+        by_name = {s.name: s for s in services}
+        policies = {s.name: ServicePolicy(store, s.name, s.grace_s) for s in services}
+        server = await serve_rearm("127.0.0.1", settings.supervisor_port,
+                                   lambda s: loop.call_soon_threadsafe(rearms.put_nowait, s), set(by_name))
 
-    await asyncio.to_thread(go2rtc.kill_strays)
-    go2rtc.start()
-    policy.started(time.monotonic())
-    sender = asyncio.create_task(delivery())
-    log.info("watchdog up: pid %d, stream %s, rearm on 127.0.0.1:%d", os.getpid(), settings.stream_name,
-             settings.watchdog_port)
-    try:
-        async with httpx.AsyncClient() as client:
+        async def delivery() -> None:
             while True:
                 try:
-                    await asyncio.wait_for(rearm_requested.wait(), settings.watchdog_poll_s)
+                    await deliver(store, windows_toast, notifier)
+                except Exception:  # noqa: BLE001 - delivery must never stop the supervisor
+                    log.exception("alert delivery failed")
+                await asyncio.sleep(DELIVER_EVERY_S)
+
+        for c in children:  # initial start: uncharged, even for a service whose budget has given up (ADR-0016)
+            await asyncio.to_thread(c.kill_strays)
+            c.start()
+        for p in policies.values():
+            p.started(time.monotonic())
+        sender = asyncio.create_task(delivery())
+        log.info("supervisor up: pid %d, services %s, rearm on 127.0.0.1:%d", os.getpid(), ",".join(by_name),
+                 settings.supervisor_port)
+        try:
+            next_poll = time.monotonic()
+            while True:
+                try:
+                    name = await asyncio.wait_for(rearms.get(), max(0.0, next_poll - time.monotonic()))
                 except TimeoutError:
-                    pass
-                if rearm_requested.is_set():
-                    rearm_requested.clear()
-                    if policy.rearm(time.monotonic()):
-                        await asyncio.to_thread(go2rtc.restart)
-                        policy.started(time.monotonic())
+                    await poll(services, policies, time.monotonic(), time.time())
+                    next_poll = time.monotonic() + settings.supervisor_poll_s
                     continue
-                if not go2rtc.alive():
-                    log.warning("go2rtc exited (code %s): starting it (not a charged restart)",
-                                go2rtc.proc.returncode if go2rtc.proc else None)
-                    await asyncio.to_thread(go2rtc.restart)
-                    policy.started(time.monotonic())
-                    continue
-                obs = await observe(client, settings)
-                log.info("observation %s", obs)
-                if policy.step(obs, time.monotonic(), time.time()):
-                    await asyncio.to_thread(go2rtc.restart)
-                    policy.started(time.monotonic())
-    finally:
-        sender.cancel()
-        server.close()
-        go2rtc.stop()
-        lock.close()
+                if policies[name].rearm(time.monotonic()):
+                    try:
+                        await by_name[name].recover()
+                    except Exception:  # noqa: BLE001
+                        log.exception("%s: recovery after rearm failed", name)
+                    policies[name].started(time.monotonic())
+        finally:
+            sender.cancel()
+            server.close()
+            for c in children:
+                c.stop()
+            lock.close()

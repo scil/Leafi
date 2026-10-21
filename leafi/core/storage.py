@@ -128,6 +128,15 @@ MIGRATIONS: list[str] = [
         id INTEGER PRIMARY KEY CHECK(id = 1), kills INTEGER NOT NULL DEFAULT 0, gave_up INTEGER NOT NULL DEFAULT 0,
         latch TEXT NOT NULL DEFAULT 'up' CHECK(latch IN ('up','down')), updated_at TEXT NOT NULL);
     """,
+    # 4 — one budget per supervised service (ADR-0016 amendment: one supervisor for every service)
+    """
+    CREATE TABLE service_state(
+        service TEXT PRIMARY KEY, kills INTEGER NOT NULL DEFAULT 0, gave_up INTEGER NOT NULL DEFAULT 0,
+        latch TEXT NOT NULL DEFAULT 'up' CHECK(latch IN ('up','down')), updated_at TEXT NOT NULL);
+    INSERT INTO service_state(service, kills, gave_up, latch, updated_at)
+        SELECT 'camera', kills, gave_up, latch, updated_at FROM watchdog_state;
+    DROP TABLE watchdog_state;
+    """,
 ]
 
 
@@ -145,7 +154,7 @@ class Store:
         self.conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
-        self.conn.execute("PRAGMA busy_timeout = 5000")  # the watchdog and a session write the same file (ADR-0016)
+        self.conn.execute("PRAGMA busy_timeout = 5000")  # the supervisor and a session write the same file (ADR-0016)
         self._depth = 0
         self.migrate()
 

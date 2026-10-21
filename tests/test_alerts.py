@@ -59,6 +59,13 @@ def test_render_maps_codes_to_fixed_sentences_and_never_echoes_input():
     assert alerts.render("camera", "sideways", "restart_gave_up") == alerts.UNKNOWN
 
 
+def test_every_supervised_service_has_a_gave_up_and_a_recovered_sentence():
+    for svc in ("camera", "habit-agent", "docker", "frigate", "mosquitto", "ollama"):
+        assert alerts.render(svc, "down", "restart_gave_up") != alerts.UNKNOWN, svc
+        assert alerts.render(svc, "up", "recovered") != alerts.UNKNOWN, svc
+    assert alerts.render("supervisor", "down", "repeated_exits") != alerts.UNKNOWN
+
+
 def test_every_catalog_sentence_is_plain_text_without_placeholders():
     for (key, state, reason), text in alerts.CATALOG.items():
         assert key in alerts.KEYS and state in alerts.STATES
@@ -80,12 +87,13 @@ async def test_a_failed_send_holds_later_rows_and_retries_without_a_second_toast
     alerts.insert(store, "camera", "up", "recovered")
     toast, tg, clock = FakeToast(), FakeTelegram(fail_times=1), Clock()
     assert await deliver(store, toast, tg, now=clock) == 0
-    assert tg.sent == [] and len(toast.shown) == 1  # the up row waits behind the unsent down row
+    assert tg.sent == []  # the up row waits behind the unsent down row on Telegram …
+    assert len(toast.shown) == 2  # … but both toasts went out at once: local notice never waits for Telegram
     assert await deliver(store, toast, tg, now=clock) == 0  # not due yet: next_try_at is 30 s away
     clock.t += 31
     assert await deliver(store, toast, tg, now=clock) == 2
     assert tg.sent[0] == alerts.render("camera", "down", "restart_gave_up")  # a recovery never precedes its outage
-    assert len(toast.shown) == 2  # the down row's toast was not repeated
+    assert len(toast.shown) == 2  # no toast repeated
     row = store.one("SELECT attempts FROM alert_outbox WHERE id = 1")
     assert row["attempts"] == 1
 
