@@ -179,6 +179,8 @@ async def test_session_continues_on_the_console_when_the_microphone_dies(setting
     assert read["tokens_committed"] == 15  # both sentences read: 9 by voice, 6 typed after the switch
     assert session.voice is False and session.listener is console
     assert console.script == []  # the typed line and /stop were consumed after the loss
+    rows = [tuple(r) for r in store.all("SELECT key, state, reason FROM alert_outbox")]
+    assert rows == [("study-mic", "event", "mic_lost")]  # ADR-0016: queued once, a code, not the device name
 
 
 async def test_session_stops_when_the_microphone_dies_and_there_is_no_console(settings):
@@ -191,6 +193,7 @@ async def test_session_stops_when_the_microphone_dies_and_there_is_no_console(se
     assert session.flags.listener_lost and session.flags.stopped
     assert any("no keyboard" in t for t in face.texts)
     assert store.one("SELECT ended_at FROM reading_sessions")["ended_at"] is not None
+    assert store.one("SELECT reason FROM alert_outbox")["reason"] == "mic_lost"
 
 
 # ---------------------------------------------------------------- session: lease lost (TD-15)
@@ -233,6 +236,8 @@ async def test_a_lost_lease_stops_the_session_and_silences_the_mouths(settings, 
     assert json.loads(settings.lease_path.read_text(encoding="utf-8"))["token"] == "another-launch"  # not unlinked
     reads = store.one("SELECT tokens_committed, ended_at FROM page_reads")
     assert reads["tokens_committed"] == 9 and reads["ended_at"] is not None  # the page read was settled
+    rows = [tuple(r) for r in store.all("SELECT key, state, reason FROM alert_outbox")]
+    assert rows == [("study-lease", "event", "lease_lost")]
 
 
 # ---------------------------------------------------------------- local_pc device resolution (P-6)

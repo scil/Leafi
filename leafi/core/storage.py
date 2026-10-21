@@ -118,6 +118,16 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE anki_outbox ADD COLUMN attempted_fields TEXT;
     """,
+    # 3 — operational alerts and the watchdog's restart budget (ADR-0016)
+    """
+    CREATE TABLE alert_outbox(
+        id INTEGER PRIMARY KEY, key TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('down','up','event')),
+        reason TEXT NOT NULL, created_at TEXT NOT NULL, toasted INTEGER NOT NULL DEFAULT 0, sent_at TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0, next_try_at REAL NOT NULL DEFAULT 0);
+    CREATE TABLE watchdog_state(
+        id INTEGER PRIMARY KEY CHECK(id = 1), kills INTEGER NOT NULL DEFAULT 0, gave_up INTEGER NOT NULL DEFAULT 0,
+        latch TEXT NOT NULL DEFAULT 'up' CHECK(latch IN ('up','down')), updated_at TEXT NOT NULL);
+    """,
 ]
 
 
@@ -135,6 +145,7 @@ class Store:
         self.conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA busy_timeout = 5000")  # the watchdog and a session write the same file (ADR-0016)
         self._depth = 0
         self.migrate()
 

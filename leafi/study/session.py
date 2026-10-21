@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from leafi.core import alerts
 from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate
 from leafi.core.ports import Display, ListenerLost, Utterance
@@ -244,6 +245,7 @@ class StudySession:
         when one exists (text mode from here on), else stop with the reading saved."""
         log.error("voice listener lost: %s", err)
         self.flags.listener_lost = True
+        alerts.insert(self.store, "study-mic", "event", "mic_lost")  # a code: `err` names the device (ADR-0016)
         self.flags.transitions.append("LISTENER_LOST")
         console = self.control_source if self.control_source is not None and \
             not getattr(self.control_source, "is_voice", False) else None
@@ -366,6 +368,7 @@ class StudySession:
                 self.flags.lease_lost = True
                 self.stopping = True  # text still shows on Faces; no Mouth plays
                 await self.hub.stop_speaking()
+                alerts.insert(self.store, "study-lease", "event", "lease_lost")  # after silencing (ADR-0016)
                 if self._lease_lost is not None and not self._lease_lost.done():
                     self._lease_lost.set_result(typed_utterance("/stop", "lease"))
                 return

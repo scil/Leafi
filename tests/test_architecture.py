@@ -91,6 +91,27 @@ def test_only_brain_claude_and_notifiers_import_anthropic_or_reach_the_internet(
     assert bad == []
 
 
+def test_ops_imports_only_core_and_devices():
+    bad = []
+    for f in _files("ops"):
+        for name in _imports(f):
+            if name.startswith(("leafi.services", "leafi.study", "leafi.app")):
+                bad.append(f"{f.name}: {name}")
+    assert bad == []
+
+
+def test_only_the_alert_deliverer_calls_notifier_send():
+    """ADR-0016: every operational alert is a catalog sentence sent by `ops/alerts.py::deliver`."""
+    bad = []
+    for f in LEAFI.rglob("*.py"):
+        rel = f.relative_to(ROOT).as_posix()
+        if rel in {"leafi/ops/alerts.py", "leafi/devices/notifiers.py"}:
+            continue
+        if ".send(" in f.read_text(encoding="utf-8") and "notif" in f.read_text(encoding="utf-8").lower():
+            bad.append(rel)
+    assert bad == []
+
+
 def test_no_environment_reads_outside_core_config():
     bad = []
     for f in LEAFI.rglob("*.py"):

@@ -108,6 +108,48 @@ async def test_no_canary_leaves_in_any_outbound_body(settings, monkeypatch):
             assert c.lower() not in blob, (c, str(r.url))
 
 
+async def test_operational_alerts_leave_only_as_catalog_sentences(settings, monkeypatch):
+    """ADR-0016: a microphone loss whose message names the device and the learner, and a hostile keeper insert,
+    reach Telegram only as fixed catalog sentences."""
+    from urllib.parse import parse_qs
+
+    from leafi.core import alerts
+    from leafi.core.ports import ListenerLost
+    from leafi.ops.alerts import deliver
+
+    sent: list[httpx.Request] = []
+
+    async def async_send(self, request, **kw):
+        sent.append(request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", async_send)
+
+    class DyingMic(ScriptedListener):
+        async def next_utterance(self, timeout_s):
+            raise ListenerLost(f"Microphone ({NAME}'s DJI Mic at {LABEL}) stopped")
+
+    store = Store(settings.db_path)
+    session = StudySession(store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none"), settings=settings,
+                           brain=None, listener=DyingMic([], voice=True))
+    await asyncio.wait_for(session.run(book_title="Canary book", page_text=PAGE, page_number=1), 10)
+    alerts.insert(store, f"keeper-{NAME}", "down", f"{SCHOOL} exploded")  # what keep.ps1 could be made to pass
+
+    notifier = NotifierDevice("ops", {"telegram_bot_token": "T", "telegram_chat_id": "C"})
+
+    async def no_toast(text):
+        return None
+
+    assert await deliver(store, no_toast, notifier) == 2
+    bodies = [parse_qs(r.content.decode())["text"][0] for r in sent]
+    assert bodies == [alerts.render("study-mic", "event", "mic_lost"), alerts.UNKNOWN]
+    for r in sent:
+        assert urlsplit(str(r.url)).hostname == "api.telegram.org"
+        blob = (str(r.url) + "\n" + r.content.decode("utf-8", "replace")).lower()
+        for c in CANARIES:
+            assert c.lower() not in blob, c
+
+
 def _env(tmp: Path, **extra: str) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("ANTHROPIC", "TELEGRAM", "BARK"))}
     env.update(PYTHONPATH=str(ROOT), LEAFI_NO_NETWORK="1", DATA_DIR=str(tmp / "data"), CACHE_DIR=str(tmp / "cache"),
