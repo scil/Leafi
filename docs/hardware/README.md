@@ -7,6 +7,7 @@ The one home for what a device or a combination of devices was **measured** to d
 | [`xiaomi-camera-069a01.md`](xiaomi-camera-069a01.md) | Xiaomi camera `chuangmi.camera.069a01` through the host go2rtc (Ear, Mouth, Eye) |
 | [`pc-dji-headset.md`](pc-dji-headset.md) | The desk PC with the DJI Mic Mini Bluetooth headset (Ear, Mouth) |
 | [`combinations.md`](combinations.md) | Ear × Mouth matrix: duplex, echo exposure, end-to-audible, what the gate must cover |
+| [`xiaomi-miss-protocol.md`](xiaomi-miss-protocol.md) | Static-analysis notes on Xiaomi's MISS library (not measurements) |
 
 ## Rules
 
