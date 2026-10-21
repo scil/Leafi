@@ -1,0 +1,42 @@
+# Read-only Leafi dashboard (ADR-0016). Gatus sends nothing and decides nothing: no `alerting`, no active
+# `endpoints`. The supervisor pushes every service observation and check result to these external endpoints
+# (POST /api/v1/endpoints/<group>_<name>/external, Bearer GATUS_TOKEN). Only leafi/supervisor, pushed every poll,
+# has a heartbeat, so a silent supervisor turns it red. Keep the lists in step with leafi/core/alerts.py
+# SERVICES and leafi/ops/checks.py NAMES (tests/test_checks.py enforces it).
+storage:
+  type: sqlite
+  path: /data/gatus.db
+ui:
+  title: Leafi
+  header: Leafi services
+# Gatus 5.37 refuses to start without one active endpoint ("configuration should contain at least one endpoint",
+# 2026-10-21), so it checks only itself; with no `alerting` section this decides and sends nothing.
+endpoints:
+  - name: dashboard
+    group: leafi
+    url: "http://localhost:8080/health"
+    interval: 5m
+    conditions:
+      - "[STATUS] == 200"
+external-endpoints:
+  - {name: supervisor, group: leafi, token: "${GATUS_TOKEN}", heartbeat: {interval: 5m}}
+  - {name: camera, group: services, token: "${GATUS_TOKEN}"}
+  - {name: docker, group: services, token: "${GATUS_TOKEN}"}
+  - {name: frigate, group: services, token: "${GATUS_TOKEN}"}
+  - {name: mosquitto, group: services, token: "${GATUS_TOKEN}"}
+  - {name: gatus, group: services, token: "${GATUS_TOKEN}"}
+  - {name: habit-agent, group: services, token: "${GATUS_TOKEN}"}
+  - {name: ollama, group: services, token: "${GATUS_TOKEN}"}
+  - {name: task, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: docker-autostart, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: go2rtc-patched, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: ports, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: power, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: toasts, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: active-hours, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: disk, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: models, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: redact-terms, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: telegram, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: heartbeat, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: devices, group: checks, token: "${GATUS_TOKEN}"}

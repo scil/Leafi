@@ -26,6 +26,13 @@ while ($true) {
     $p = Start-Process -FilePath $python -ArgumentList @("-m", "leafi", "supervisor") -WorkingDirectory $repo `
         -WindowStyle Hidden -PassThru
     $p.WaitForExit()
+    if ($p.ExitCode -eq 3) {
+        # Another supervisor holds the lock (this keep.ps1 was relaunched while the old supervisor lives on):
+        # not a crash; look again in a minute.
+        Write-Keep "supervisor already running; waiting"
+        Start-Sleep -Seconds 60
+        continue
+    }
     $ran = (Get-Date) - $started
     Write-Keep ("exit {0} after {1:N0} s" -f $p.ExitCode, $ran.TotalSeconds)
     if ($ran.TotalMinutes -ge 30) { $quick = 0; $alerted = $false; $exits.Clear() }

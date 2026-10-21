@@ -41,6 +41,7 @@ if ($null -eq $wt) {
 Push-Location $repo
 & .venv\Scripts\python.exe -m leafi alert --status 2>$null | ForEach-Object { "  $_" }
 Pop-Location
+Write-Output "  仪表盘(Gatus,只读): http://127.0.0.1:18080"
 foreach ($f in @("supervisor.log", "keep-supervisor.log")) {
     $p = Join-Path $repo "data\logs\$f"
     if (Test-Path $p) {

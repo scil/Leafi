@@ -43,6 +43,19 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
+  gatus:
+    # Read-only Leafi dashboard (ADR-0016): the supervisor pushes service and check states; no alerting, no probes.
+    image: ghcr.io/twin/gatus:v5.37.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:8080"   # loopback only
+    environment:
+      - GATUS_TOKEN=${GATUS_TOKEN:-change-me}   # same value as GATUS_TOKEN in .env (non-empty: Gatus requires a token)
+    volumes:
+      - ./config/gatus:/config:ro
+      - gatus-data:/data
+
 volumes:
   mosquitto-data:
   frigate-media:
+  gatus-data:
