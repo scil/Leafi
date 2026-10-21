@@ -56,6 +56,8 @@ _CHECK_FAILED = {
     "devices": "config/devices.yml no longer parses. Run python -m leafi devices on the PC.",
     "supervision-timing": "Some supervision timing settings conflict, so the supervisor uses their defaults. Run "
                           "python -m leafi timing on the PC to see which and why.",
+    "env-file": ".env is missing, not in canonical form, or a save left recovery files (data/env-recovery*.json, "
+                ".env.*.side). Open the settings page on the PC; it lists what to fix.",
 }
 
 CATALOG: dict[tuple[str, str, str], str] = {

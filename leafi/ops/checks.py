@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 
-from leafi.core import alerts
+from leafi.core import alerts, envfile
 from leafi.core.storage import Store, now_iso
 
 log = logging.getLogger("leafi.checks")
@@ -187,6 +187,7 @@ def build(settings) -> list[Check]:
         Check("heartbeat", threaded(lambda: channel_ok(settings, "heartbeat"))),
         Check("devices", threaded(lambda: _devices_ok(settings))),
         Check("supervision-timing", threaded(lambda: timing_ok(settings))),
+        Check("env-file", threaded(lambda: not envfile.health(Path(".env"), Path(settings.data_dir)))),
     ]
 
 
@@ -201,7 +202,7 @@ def timing_ok(settings) -> bool:
 
 
 NAMES = ("task", "docker-autostart", "go2rtc-patched", "ports", "power", "toasts", "active-hours", "disk",
-         "models", "redact-terms", "telegram", "heartbeat", "devices", "supervision-timing")
+         "models", "redact-terms", "telegram", "heartbeat", "devices", "supervision-timing", "env-file")
 
 
 class CheckRunner:

@@ -41,3 +41,4 @@ external-endpoints:
   - {name: heartbeat, group: checks, token: "${GATUS_TOKEN}"}
   - {name: devices, group: checks, token: "${GATUS_TOKEN}"}
   - {name: supervision-timing, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: env-file, group: checks, token: "${GATUS_TOKEN}"}
