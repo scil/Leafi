@@ -201,6 +201,7 @@ async def test_containers_are_idle_while_docker_is_down(store):
         t.tick()
         await supervisor.poll(services, policies, t.mono, t.wall)
     assert frigate.observed == 0 and frigate.recovered == 0  # suppressed, never restarted behind a dead engine
+    assert await supervisor.poll(services, policies, t.mono, t.wall) == {"docker": BAD, "frigate": IDLE}
     assert docker.recovered == 3
     assert _rows(store) == [("docker", "down", "restart_gave_up")]
 

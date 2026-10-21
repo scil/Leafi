@@ -135,10 +135,13 @@ class Service:
     depends_docker: bool = False
 
 
-async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono: float, wall: float) -> None:
+async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono: float,
+               wall: float) -> dict[str, str]:
     """Observe every service once, in order (docker first), and recover the ones whose policy asks for it.
-    Containers are IDLE while Docker is not GOOD, so a stopped engine raises one alert, not three."""
+    Containers are IDLE while Docker is not GOOD, so a stopped engine raises one alert, not three. Returns the
+    observations (for the dashboard)."""
     docker_good = True
+    seen: dict[str, str] = {}
     for svc in services:
         if svc.depends_docker and not docker_good:
             obs = IDLE
@@ -150,6 +153,7 @@ async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono
                 obs = BAD
         if svc.name == "docker":
             docker_good = obs == GOOD
+        seen[svc.name] = obs
         if obs != GOOD:
             log.info("%s: %s", svc.name, obs)
         if policies[svc.name].step(obs, mono, wall):
@@ -158,6 +162,7 @@ async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono
             except Exception:  # noqa: BLE001 - logged; the next polls decide again within the budget
                 log.exception("%s: recovery failed", svc.name)
             policies[svc.name].started(mono)
+    return seen
 
 
 async def http_probe(client: httpx.AsyncClient, url: str, limit_s: float = 3) -> str:
@@ -446,11 +451,12 @@ def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service
             return GOOD if agent.alive() else BAD
 
         services.append(Service("habit-agent", 90.0, observe_agent, lambda: asyncio.to_thread(agent.restart)))
-    for name, probe in (("frigate", lambda: http_probe(client, f"{settings.frigate_url.rstrip('/')}/api/stats")),
-                        ("mosquitto", lambda: tcp_probe("127.0.0.1", settings.mqtt_port))):
+    for name, grace, probe in (
+            ("frigate", 120.0, lambda: http_probe(client, f"{settings.frigate_url.rstrip('/')}/api/stats")),
+            ("mosquitto", 60.0, lambda: tcp_probe("127.0.0.1", settings.mqtt_port)),
+            ("gatus", 60.0, lambda: http_probe(client, f"{settings.gatus_url.rstrip('/')}/health"))):
         if name in enabled:
-            services.append(Service(name, 120.0 if name == "frigate" else 60.0, probe,
-                                    lambda n=name: compose_recover(n), depends_docker=True))
+            services.append(Service(name, grace, probe, lambda n=name: compose_recover(n), depends_docker=True))
     if "ollama" in enabled:
         ollama_exe = shutil.which("ollama") or "ollama"
         ollama = child("ollama", [ollama_exe, "serve"], lambda path, cmd: " serve" in cmd and
@@ -467,6 +473,7 @@ def build(settings, client: httpx.AsyncClient, logs: Path) -> tuple[list[Service
 
 async def run(settings) -> int:
     from leafi.devices.notifiers import NotifierDevice
+    from leafi.ops import checks
     from leafi.ops.alerts import deliver, windows_toast
 
     logs = Path(settings.data_dir) / "logs"
@@ -497,12 +504,34 @@ async def run(settings) -> int:
                     log.exception("alert delivery failed")
                 await asyncio.sleep(DELIVER_EVERY_S)
 
+        runner = checks.CheckRunner(store, checks.build(settings))
+
+        async def checking() -> None:
+            while True:
+                try:
+                    for name, ok in (await runner.run_all()).items():
+                        if ok is not None:
+                            await checks.push(client, settings.gatus_url, settings.gatus_token, "checks", name, ok,
+                                              "" if ok else "failed")
+                except Exception:  # noqa: BLE001 - checks must never stop the supervisor
+                    log.exception("configuration checks failed")
+                await asyncio.sleep(settings.checks_every_s)
+
+        async def report(seen: dict[str, str]) -> None:
+            """Heartbeat (dead man's switch) and the read-only dashboard; neither can fail the poll."""
+            await checks.heartbeat(client, settings.heartbeat_url)
+            await checks.push(client, settings.gatus_url, settings.gatus_token, "leafi", "supervisor", True, "")
+            for name, obs in seen.items():
+                await checks.push(client, settings.gatus_url, settings.gatus_token, "services", name, obs != BAD,
+                                  obs)
+
         for c in children:  # initial start: uncharged, even for a service whose budget has given up (ADR-0016)
             await asyncio.to_thread(c.kill_strays)
             c.start()
         for p in policies.values():
             p.started(time.monotonic())
         sender = asyncio.create_task(delivery())
+        checker = asyncio.create_task(checking())
         log.info("supervisor up: pid %d, services %s, rearm on 127.0.0.1:%d", os.getpid(), ",".join(by_name),
                  settings.supervisor_port)
         try:
@@ -511,7 +540,7 @@ async def run(settings) -> int:
                 try:
                     name = await asyncio.wait_for(rearms.get(), max(0.0, next_poll - time.monotonic()))
                 except TimeoutError:
-                    await poll(services, policies, time.monotonic(), time.time())
+                    await report(await poll(services, policies, time.monotonic(), time.time()))
                     next_poll = time.monotonic() + settings.supervisor_poll_s
                     continue
                 if policies[name].rearm(time.monotonic()):
@@ -522,6 +551,7 @@ async def run(settings) -> int:
                     policies[name].started(time.monotonic())
         finally:
             sender.cancel()
+            checker.cancel()
             server.close()
             for c in children:
                 c.stop()

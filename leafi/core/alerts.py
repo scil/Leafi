@@ -22,14 +22,45 @@ _GAVE_UP = {
     "mosquitto": "The MQTT broker is not answering after 3 restarts. Restarts are paused; see the health check on "
                  "the PC.",
     "ollama": "Ollama is not answering after 3 restarts. Restarts are paused; see data/logs on the PC.",
+    "gatus": "The Leafi dashboard (Gatus) is not answering after 3 restarts. Alerts still work; see the health "
+             "check on the PC.",
 }
 _NAMES = {"camera": "Leafi camera: video is", "habit-agent": "Leafi habit coach is", "docker": "Docker Desktop is",
-          "frigate": "Frigate is", "mosquitto": "The MQTT broker is", "ollama": "Ollama is"}
+          "frigate": "Frigate is", "mosquitto": "The MQTT broker is", "ollama": "Ollama is",
+          "gatus": "The Leafi dashboard is"}
 SERVICES = frozenset(_GAVE_UP)
+
+# Configuration checks (ADR-0016): what is wrong and what the owner should do; nothing is repaired automatically.
+_CHECK_FAILED = {
+    "task": "The leafi-supervisor logon task is missing or misconfigured. Run scripts\\win\\install-tasks.ps1.",
+    "docker-autostart": "Docker Desktop is not set to start at sign-in. Turn on 'Start Docker Desktop when you "
+                        "sign in' in its settings.",
+    "go2rtc-patched": "tools\\go2rtc\\go2rtc.exe is not the patched build Leafi expects. Read "
+                      "tools/go2rtc/PATCHES.md before replacing it; update GO2RTC_SHA256 after a patched rebuild.",
+    "ports": "Windows now reserves a port Leafi needs (go2rtc, Frigate, MQTT, the supervisor or the dashboard). "
+             "Run the health check; a reboot or a port change in .env fixes it.",
+    "power": "The PC is set to sleep or hibernate on mains power, which stops every Leafi service. Set both to "
+             "Never in the power settings.",
+    "toasts": "Windows notifications are turned off for PowerShell, so Leafi's pop-up alerts are invisible. Turn "
+              "them on in Settings > Notifications.",
+    "active-hours": "Windows Update active hours do not cover the household day, so an update may reboot the PC "
+                    "while it is needed. Widen them in Windows Update settings.",
+    "disk": "The data drive is almost full. Free some space on the PC.",
+    "models": "A Leafi model is missing or broken. Run python -m leafi doctor on the PC.",
+    "redact-terms": "REDACT_TERMS is empty, so names are not removed from cloud requests. Run python -m leafi "
+                    "setup --redact.",
+    "telegram": "Telegram alerts are not configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID in .env), so alerts "
+                "only appear on the PC.",
+    "heartbeat": "The heartbeat is not configured (HEARTBEAT_URL in .env), so nobody is told when the PC itself "
+                 "stops.",
+    "devices": "config/devices.yml no longer parses. Run python -m leafi devices on the PC.",
+}
 
 CATALOG: dict[tuple[str, str, str], str] = {
     **{(s, "down", "restart_gave_up"): text for s, text in _GAVE_UP.items()},
     **{(s, "up", "recovered"): f"{_NAMES[s]} back and has been steady for 10 minutes." for s in SERVICES},
+    **{(f"check-{c}", "down", "failed"): f"Leafi check: {text}" for c, text in _CHECK_FAILED.items()},
+    **{(f"check-{c}", "up", "recovered"): f"Leafi check '{c}' passes again." for c in _CHECK_FAILED},
     ("study-mic", "event", "mic_lost"):
         "Leafi reading session: the microphone stopped. The session continued on the keyboard or stopped; "
         "check the headset.",

@@ -132,6 +132,27 @@ def cmd_alert(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_checks(args: argparse.Namespace) -> int:
+    """Run every configuration check once and print the result; no alert is raised (ADR-0016)."""
+    from leafi.ops import checks
+
+    settings = _settings()
+
+    async def run_all() -> list[tuple[str, str]]:
+        out = []
+        for c in checks.build(settings):
+            try:
+                out.append((c.name, "ok" if await c.run() else "FAIL"))
+            except Exception as e:  # noqa: BLE001 - report, do not stop
+                out.append((c.name, f"could not run ({type(e).__name__})"))
+        return out
+
+    results = asyncio.run(run_all())
+    for name, verdict in results:
+        print(f"{name:<18}{verdict}")
+    return 0 if all(v == "ok" for _, v in results) else 1
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     env = Path(".env")
     text = env.read_text(encoding="utf-8") if env.exists() else ""
@@ -186,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     f.set_defaults(fn=cmd_forget)
     sub.add_parser("supervisor", help="keep every Leafi service running, recover the ones that stop answering, "
                    "send alerts (ADR-0016)").set_defaults(fn=cmd_supervisor)
+    sub.add_parser("checks", help="run the configuration checks once and print them; no alerts (ADR-0016)"
+                   ).set_defaults(fn=cmd_checks)
     a = sub.add_parser("alert", help="queue a coded alert and/or deliver due alerts once (ADR-0016)")
     a.add_argument("--insert", nargs=3, metavar=("KEY", "STATE", "REASON"))
     a.add_argument("--drain", action="store_true")

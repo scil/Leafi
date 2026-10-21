@@ -91,7 +91,7 @@ class Settings(BaseSettings):
 
     # ---- supervisor (ADR-0016) ----
     # habit-agent is opt-in: it makes the camera speak on its schedule (AGENTS.md: never unasked); also: ollama
-    supervise: str = "docker,camera,frigate,mosquitto"
+    supervise: str = "docker,camera,frigate,mosquitto,gatus"
     supervisor_poll_s: float = 60.0
     supervisor_port: int = 18771  # POST /rearm only; outside the Windows excluded port ranges (2026-10-20)
     go2rtc_exe: Path = Path("tools/go2rtc/go2rtc.exe")
@@ -100,6 +100,19 @@ class Settings(BaseSettings):
     frigate_camera: str = "hallway"  # the Frigate camera fed by STREAM_NAME (config/frigate/config.yml)
     mqtt_port: int = 18830  # host port of mosquitto (docker-compose.yml)
     docker_desktop_exe: str = ""  # empty: found next to the docker CLI (scoop) or under Program Files
+    # configuration checks, heartbeat and the read-only Gatus dashboard (ADR-0016)
+    checks_every_s: float = 900.0
+    go2rtc_sha256: str = "e4e5fc2d75094ffa5034bceaf00b4e06a643712e705646648169d5f7d73321c3"  # patched build, 2026-10-21
+    active_hours: str = "7-21"  # Windows Update active hours must cover these hours
+    min_free_gb: float = 5.0
+    required_channels: str = "telegram,heartbeat"  # remove one to accept toast-only / no heartbeat
+    heartbeat_url: str = ""  # Healthchecks.io ping URL (hc-ping.com/<uuid>); empty: no heartbeat
+    gatus_url: str = "http://127.0.0.1:18080"
+    gatus_token: str = ""  # shared with the gatus container (docker-compose.yml); empty: no dashboard pushes
+
+    @property
+    def docker_settings_file(self) -> Path:
+        return Path(os.environ.get("APPDATA", "")) / "Docker" / "settings-store.json"
 
     @property
     def db_path(self) -> Path:
