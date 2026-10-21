@@ -15,6 +15,7 @@ from .speaker import say
 from .tasks import TaskSpec, spec, title
 
 log = logging.getLogger("session")
+GLOBAL_VERIFY_MODES = ("presence", "vision")  # VERIFY_MODE 的取值;只有 "vision" 会启用动作验证
 
 
 async def run_task(task: str) -> None:

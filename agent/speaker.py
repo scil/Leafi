@@ -9,6 +9,7 @@ from .tts import synth
 
 log = logging.getLogger("speaker")
 LEASE_PATH = Path("data/leafi.lock")
+SPEAKER_BACKENDS = ("go2rtc", "local")  # SPEAKER_BACKEND 的取值;不是 "local" 的一律走 go2rtc
 
 
 def _study_lease_held() -> bool:

@@ -19,6 +19,7 @@ log = logging.getLogger("leafi.asr")
 
 REGISTRY = Registry("asr", {"sherpa": "leafi.services.asr.sherpa", "mock": "leafi.services.asr.mock"},
                     deferred={"whisper"})
+HOTWORDS_MODES = ("off", "lexicon")  # ASR_HOTWORDS values; sherpa treats anything but "off" as on
 
 
 class Recognizer(Protocol):

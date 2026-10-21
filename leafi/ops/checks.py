@@ -80,6 +80,15 @@ def sha256_matches(path: Path, expected: str) -> bool:
         return False
 
 
+CHANNELS = ("telegram", "heartbeat")  # what REQUIRED_CHANNELS may list (the settings page offers these)
+
+
+def parse_active_hours(text: str) -> tuple[int, int]:
+    """`ACTIVE_HOURS` "7-21" -> (7, 21); raises ValueError. Pure: also the settings page's validator."""
+    need_from, _, need_to = text.partition("-")
+    return int(need_from), int(need_to)
+
+
 def channel_ok(settings, channel: str) -> bool:
     required = {c.strip() for c in settings.required_channels.split(",") if c.strip()}
     if channel not in required:
@@ -154,8 +163,6 @@ class Check:
 
 
 def build(settings) -> list[Check]:
-    need_from, _, need_to = settings.active_hours.partition("-")
-
     def threaded(fn: Callable[[], bool]) -> Callable[[], Awaitable[bool]]:
         async def run() -> bool:
             return await asyncio.to_thread(fn)
@@ -164,7 +171,7 @@ def build(settings) -> list[Check]:
     def active_hours() -> bool:
         key = r"SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
         start, end = _reg("HKLM", key, "ActiveHoursStart"), _reg("HKLM", key, "ActiveHoursEnd")
-        return start is not None and end is not None and hours_cover(start, end, int(need_from), int(need_to))
+        return start is not None and end is not None and hours_cover(start, end, *parse_active_hours(settings.active_hours))
 
     return [
         Check("task", threaded(lambda: task_ok(_task_info()))),

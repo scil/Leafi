@@ -67,6 +67,9 @@ def entries(store: Store, book_id: int | None = None, language: str = "en") -> s
     return {r["word"] for r in rows}
 
 
+SNAP_MODES = ("off", "advisory", "auto")  # OCR_SNAP values; only "off" changes behaviour here, "auto" is gated
+
+
 def snap_candidates(store: Store, word: str, ocr_confidence: float | None, min_confidence: float,
                     book_id: int | None = None, mode: str = "advisory") -> list[str]:
     """OCR post-correction candidates within one edit, only when OCR confidence is low. Never applied

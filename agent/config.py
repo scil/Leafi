@@ -1,5 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import parsers
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -47,23 +49,12 @@ class Settings(BaseSettings):
     mock: bool = False
 
     def parsed_weekly_report(self) -> tuple[str, int, int] | None:
-        """"sun:20:45" -> ("sun", 20, 45);空串 = 禁用。"""
-        raw = self.weekly_report.strip()
-        if not raw:
-            return None
-        day, hh, mm = raw.split(":")
-        return day.strip().lower(), int(hh), int(mm)
+        """"sun:20:45" -> ("sun", 20, 45);空串 = 禁用。解析在 agent/parsers.py(设置页用同一个函数校验)。"""
+        return parsers.parse_weekly_report(self.weekly_report)
 
     def parsed_schedule(self) -> list[tuple[str, str]]:
         """SCHEDULE="water:07:20,brush_pm:20:30" -> [("water","07:20"), ...]"""
-        out = []
-        for item in self.schedule.split(","):
-            item = item.strip()
-            if not item:
-                continue
-            name, hhmm = item.split(":", 1)
-            out.append((name.strip(), hhmm.strip()))
-        return out
+        return parsers.parse_schedule(self.schedule)
 
 
 settings = Settings()

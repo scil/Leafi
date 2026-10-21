@@ -82,19 +82,31 @@ def violations(t: Timing, services) -> list[tuple[str, tuple[str, ...]]]:
     return out
 
 
+def parse_grace(text: str) -> dict[str, float]:
+    """`SUPERVISOR_GRACE` -> the per-service overrides; raises ValueError. Pure: also the settings page's validator."""
+    out: dict[str, float] = {}
+    for item in filter(None, (p.strip() for p in text.split(","))):
+        name, _, value = item.partition("=")
+        out[name.strip()] = float(value)
+    return out
+
+
+def parse_backoff(text: str) -> tuple[float, ...]:
+    """`KEEP_BACKOFF_S` -> the delays; raises ValueError. Pure: also the settings page's validator."""
+    return tuple(float(x) for x in text.split(",") if x.strip())
+
+
 def _parse(settings) -> tuple[Timing, list[str]]:
     """Read the settings; a value that does not parse is a problem and stays at its default."""
     problems: list[str] = []
     grace = dict(DEFAULT_GRACE)
     try:
-        for item in filter(None, (p.strip() for p in settings.supervisor_grace.split(","))):
-            name, _, value = item.partition("=")
-            grace[name.strip()] = float(value)
+        grace.update(parse_grace(settings.supervisor_grace))
     except ValueError:
         problems.append("grace")
         grace = dict(DEFAULT_GRACE)
     try:
-        backoff = tuple(float(x) for x in settings.keep_backoff_s.split(",") if x.strip())
+        backoff = parse_backoff(settings.keep_backoff_s)
     except ValueError:
         problems.append("keep-backoff")
         backoff = DEFAULTS.keep_backoff_s
