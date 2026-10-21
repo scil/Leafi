@@ -1,4 +1,4 @@
-﻿# 系统健康快照:摄像头流 / Frigate / 容器 / 近期错误
+# 系统健康快照:摄像头流 / Frigate / 容器 / 近期错误
 $ErrorActionPreference = 'SilentlyContinue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 
@@ -31,17 +31,17 @@ if ($null -eq $s) {
 }
 
 Write-Output ""
-Write-Output "===== 看门狗(ADR-0016:自动重启 go2rtc + 告警)====="
-$wt = Get-ScheduledTask -TaskName 'leafi-watchdog' -ErrorAction SilentlyContinue
+Write-Output "===== 监督进程 supervisor(ADR-0016:所有服务自动恢复 + 告警)====="
+$wt = Get-ScheduledTask -TaskName 'leafi-supervisor' -ErrorAction SilentlyContinue
 if ($null -eq $wt) {
-    Write-Output "  [--] 未安装登录任务(scripts\win\install-tasks.ps1);go2rtc 断线只能手动重启"
+    Write-Output "  [--] 未安装登录任务(scripts\win\install-tasks.ps1);服务断了只能手动重启"
 } else {
-    Write-Output "  任务 leafi-watchdog: $($wt.State)"
+    Write-Output "  任务 leafi-supervisor: $($wt.State)"
 }
 Push-Location $repo
 & .venv\Scripts\python.exe -m leafi alert --status 2>$null | ForEach-Object { "  $_" }
 Pop-Location
-foreach ($f in @("watchdog.log", "keep-watchdog.log")) {
+foreach ($f in @("supervisor.log", "keep-supervisor.log")) {
     $p = Join-Path $repo "data\logs\$f"
     if (Test-Path $p) {
         Write-Output "  $f 最近 5 行:"

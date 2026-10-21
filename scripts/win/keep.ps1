@@ -1,18 +1,15 @@
-# Keep one Leafi process running (ADR-0016). Started at logon by the Task Scheduler tasks that
-# scripts\win\install-tasks.ps1 registers; run by hand only for a test.
-#   keep.ps1 watchdog      -> python -m leafi watchdog   (which owns go2rtc)
-#   keep.ps1 habit-agent   -> python -m agent.main
-# After an exit it starts the process again after 5 s, 30 s, 2 min, then every 5 min; a run of 30 min resets
-# the backoff. Three exits within 30 min queue one keeper-<name> alert and deliver it (python -m leafi alert).
-param([Parameter(Mandatory)][ValidateSet("watchdog", "habit-agent")][string]$Name)
+# Outermost guard (ADR-0016): keep `python -m leafi supervisor` running. Started at logon by the Task Scheduler
+# task that scripts\win\install-tasks.ps1 registers; run by hand only for a test. The supervisor keeps every
+# other service running; this loop only restarts the supervisor itself.
+# After an exit it starts it again after 5 s, 30 s, 2 min, then every 5 min; a run of 30 min resets the backoff.
+# Three exits within 30 min queue one supervisor alert and deliver it (python -m leafi alert, no supervisor needed).
 $ErrorActionPreference = "Continue"
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location $repo
 $python = Join-Path $repo ".venv\Scripts\python.exe"
-$argsFor = @{ "watchdog" = @("-m", "leafi", "watchdog"); "habit-agent" = @("-m", "agent.main") }
 $logDir = Join-Path $repo "data\logs"
 New-Item -ItemType Directory -Force $logDir | Out-Null
-$log = Join-Path $logDir "keep-$Name.log"
+$log = Join-Path $logDir "keep-supervisor.log"
 $backoff = @(5, 30, 120, 300)
 
 function Write-Keep([string]$msg) {
@@ -25,8 +22,9 @@ $alerted = $false
 $quick = 0
 while ($true) {
     $started = Get-Date
-    Write-Keep "start $Name"
-    $p = Start-Process -FilePath $python -ArgumentList $argsFor[$Name] -WorkingDirectory $repo -WindowStyle Hidden -PassThru
+    Write-Keep "start supervisor"
+    $p = Start-Process -FilePath $python -ArgumentList @("-m", "leafi", "supervisor") -WorkingDirectory $repo `
+        -WindowStyle Hidden -PassThru
     $p.WaitForExit()
     $ran = (Get-Date) - $started
     Write-Keep ("exit {0} after {1:N0} s" -f $p.ExitCode, $ran.TotalSeconds)
@@ -35,7 +33,7 @@ while ($true) {
     $exits.RemoveAll({ param($t) $t -lt (Get-Date).AddMinutes(-30) }) | Out-Null
     if ($exits.Count -ge 3 -and -not $alerted) {
         Write-Keep "3 exits within 30 min: alerting"
-        & $python -m leafi alert --insert "keeper-$Name" down repeated_exits --drain *>> $log
+        & $python -m leafi alert --insert supervisor down repeated_exits --drain *>> $log
         $alerted = $true
     }
     $wait = $backoff[[Math]::Min($quick, $backoff.Count - 1)]
