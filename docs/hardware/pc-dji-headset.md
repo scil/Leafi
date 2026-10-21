@@ -36,7 +36,7 @@ All runs: 2026-10-20.
 
 | Mode | Symptom | Recovery | Evidence |
 |---|---|---|---|
-| Silent default device (TD-26) | when the headset drops off Bluetooth the OS default input becomes "Voicemeeter Out A1", a virtual device delivering zeros; capture "works" and hears nothing | name the microphone in `devices.yml`; TD-26 fix path | Plan Progress P-5 12:35 |
+| Silent default device (TD-26) | when the headset drops off Bluetooth the OS default input becomes "Voicemeeter Out A1", a virtual device delivering zeros; capture "works" and hears nothing | `devices.yml` names it (`${PC_INPUT_DEVICE:-DJI}`); `local_pc` logs the opened device and raises `ListenerLost` after 10 s of all-zero blocks (TD-26). With the headset off, "DJI" matches only a WDM-KS hands-free ghost | Plan Progress P-5 12:35 |
 
 ## Unmeasured
 

@@ -261,3 +261,76 @@ def test_local_pc_resolves_an_ambiguous_name_by_host_api_preference():
     assert LocalPcDevice(options={"input_device": "7"})._resolve_device(FakeSd()) == 7
     with pytest.raises(ListenerLost):
         LocalPcDevice(options={"input_device": "yeti"})._resolve_device(FakeSd())
+
+
+class FakeSounddevice:
+    """`sounddevice` stand-in whose stream calls back from a thread with fixed PCM every `block_s`."""
+
+    def __init__(self, pcm_byte: bytes, name: str = "Voicemeeter Out A1 (VB-Audio Voicemeeter VAIO)"):
+        self.pcm_byte = pcm_byte
+        self.name = name
+        fake = self
+
+        class RawInputStream:
+            device = 3
+            active = True
+
+            def __init__(self, *, samplerate, channels, dtype, device, blocksize, callback):
+                self.blocksize, self.callback = blocksize, callback
+                self._stop = None
+
+            def __enter__(self):
+                import threading
+
+                self._stop = threading.Event()
+
+                def run():
+                    while not self._stop.wait(0.01):
+                        self.callback(fake.pcm_byte * (2 * self.blocksize), self.blocksize, None, None)
+
+                threading.Thread(target=run, daemon=True).start()
+                return self
+
+            def __exit__(self, *exc):
+                self._stop.set()
+
+        self.RawInputStream = RawInputStream
+
+    def check_input_settings(self, **kw):
+        return None
+
+    def query_devices(self, device=None, kind=None):
+        return {"name": self.name, "default_samplerate": 16000.0}
+
+
+async def _drain(dev, seconds: float) -> int:
+    n = 0
+    async with asyncio.timeout(seconds):
+        async for _ in dev.listen():
+            n += 1
+    return n
+
+
+async def test_local_pc_treats_a_run_of_all_zero_blocks_as_a_lost_microphone(monkeypatch, caplog):
+    """TD-26: the default input silently became a virtual device that delivers zeros."""
+    import sys
+
+    from leafi.devices.local_pc import LocalPcDevice
+
+    monkeypatch.setitem(sys.modules, "sounddevice", FakeSounddevice(b"\x00"))
+    dev = LocalPcDevice(options={"block_s": 0.01, "zeros_lost_after_s": 0.2})
+    caplog.set_level("INFO", logger="leafi.local_pc")
+    with pytest.raises(ListenerLost, match="zeros"):
+        await _drain(dev, 5)
+    assert "Voicemeeter Out A1" in caplog.text  # the resolved default device is named at open
+
+
+async def test_local_pc_keeps_capturing_a_quiet_but_live_microphone(monkeypatch):
+    import sys
+
+    from leafi.devices.local_pc import LocalPcDevice
+
+    monkeypatch.setitem(sys.modules, "sounddevice", FakeSounddevice(b"\x01"))
+    dev = LocalPcDevice(options={"block_s": 0.01, "zeros_lost_after_s": 0.2})
+    with pytest.raises(TimeoutError):
+        await _drain(dev, 0.6)

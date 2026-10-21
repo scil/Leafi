@@ -28,7 +28,8 @@ devices:
     adapter: local_pc
     capabilities: [ear, mouth, face]
     options:
-      input_device: default           # sounddevice name or index
+      input_device: ${PC_INPUT_DEVICE:-DJI}  # name fragment, index or `default`
+      zeros_lost_after_s: 10          # all-zero capture this long → ListenerLost (TD-26); 0 disables
   - name: console
     adapter: console
     capabilities: [listener, face]    # typed input; always safe to leave on

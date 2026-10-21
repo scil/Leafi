@@ -14,6 +14,10 @@ Capture lifecycle measured by prototype P-6 on the deployment PC (2026-10-20, pl
   therefore runs a watchdog: no callback for `lost_after_s` while the stream claims to be active, or the
   stream going inactive, raises `ListenerLost` (TD-16). Replug = the session restarts capture on its next
   attempt; `VoiceListener` surfaces the loss once and the session falls back to the console.
+- A Bluetooth headset that drops makes Windows switch the default input, here to "Voicemeeter Out A1", a
+  virtual device that delivers digital zeros, so capture "works" and hears nothing (TD-26). The device name is
+  logged at open, and `zeros_lost_after_s` (10 s; 0 disables) of all-zero blocks raises `ListenerLost`. A real
+  microphone's room floor is never exactly zero (the DJI's is peak 2–5).
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ class LocalPcDevice:
         self.input_device = opts.get("input_device", "default")
         self.block_s = float(opts.get("block_s", 0.1))
         self.lost_after_s = float(opts.get("lost_after_s", 3.0))
+        self.zeros_lost_after_s = float(opts.get("zeros_lost_after_s", 10.0))
         self.overflows = 0
         self.resolved: int | None = None
         self._proc: asyncio.subprocess.Process | None = None
@@ -100,17 +105,32 @@ class LocalPcDevice:
             raise ListenerLost(f"capture could not start: {e}") from e
         with stream:
             self.resolved = stream.device
-            log.info("capturing from device %s at %d Hz", stream.device, rate)
+            try:
+                dev_name = sd.query_devices(stream.device, "input")["name"]
+            except Exception:  # noqa: BLE001 - the name is for the log only
+                dev_name = "?"
+            log.info("capturing from device %s (%s) at %d Hz", stream.device, dev_name, rate)
             wait = max(1.0, 10 * self.block_s)
+            zeros_since: float | None = None
             while True:
                 try:
-                    yield await asyncio.wait_for(queue.get(), wait)
+                    chunk = await asyncio.wait_for(queue.get(), wait)
                 except TimeoutError:
                     silent_for = time.monotonic() - last_cb[0]
                     if not stream.active:
                         raise ListenerLost("capture stream stopped (device unplugged?)") from None
                     if silent_for >= self.lost_after_s:
                         raise ListenerLost(f"no audio callback for {silent_for:.1f}s (device unplugged?)") from None
+                    continue
+                if self.zeros_lost_after_s > 0:
+                    if chunk.pcm.strip(b"\x00"):
+                        zeros_since = None
+                    elif zeros_since is None:
+                        zeros_since = chunk.t
+                    elif chunk.t - zeros_since >= self.zeros_lost_after_s:
+                        raise ListenerLost(f"{dev_name!r} delivered only zeros for {chunk.t - zeros_since:.1f}s "
+                                           "(headset dropped and the default input changed?)")
+                yield chunk
 
     # ---- Mouth
     async def play(self, clip: AudioClip) -> None:

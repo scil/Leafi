@@ -19,7 +19,8 @@ devices:
     adapter: local_pc
     capabilities: [ear, mouth]          # Face comes from the console; ear needs sounddevice (S3, P-6)
     options:
-      input_device: default
+      input_device: ${PC_INPUT_DEVICE:-DJI}   # name fragment, index or `default`; named so that a dropped
+      zeros_lost_after_s: 10                  # headset never falls back to a zero-delivering virtual input (TD-26)
   - name: console
     adapter: console
     capabilities: [listener, face]      # typed input; always safe to leave on
