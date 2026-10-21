@@ -1,4 +1,4 @@
-# 系统健康快照:摄像头流 / Frigate / 容器 / 近期错误
+﻿# 系统健康快照:摄像头流 / Frigate / 容器 / 近期错误
 $ErrorActionPreference = 'SilentlyContinue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 

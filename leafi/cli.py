@@ -115,9 +115,16 @@ def cmd_alert(args: argparse.Namespace) -> int:
         if not states:
             print("supervisor: never ran")
         for st in states:
+            if st["service"].startswith("check-"):
+                continue
             print(f"{st['service']:<12} {st['latch']:<5} recoveries used {st['kills']}/3"
                   f"{'  GAVE UP (rearm: 🔁 or POST /rearm?service=' + st['service'] + ')' if st['gave_up'] else ''}"
                   f"  updated {st['updated_at']}")
+        failing = [st["service"][6:] for st in states if st["service"].startswith("check-") and st["latch"] == "down"]
+        checked = [st for st in states if st["service"].startswith("check-")]
+        if checked:
+            print(f"configuration checks: {len(checked) - len(failing)}/{len(checked)} ok"
+                  f"{'; failing: ' + ', '.join(failing) if failing else ''}")
         rows = store.all("SELECT id, key, state, reason, created_at, attempts FROM alert_outbox "
                          "WHERE sent_at IS NULL ORDER BY id")
         print(f"unsent alerts: {len(rows)}")
