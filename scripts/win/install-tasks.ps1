@@ -6,8 +6,10 @@
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $keep = Join-Path $PSScriptRoot "keep.ps1"
 $user = "$env:USERDOMAIN\$env:USERNAME"
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $repo `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$keep`""
+# conhost --headless: no window at all. `powershell -WindowStyle Hidden` is not enough when Windows Terminal is the
+# default terminal (it ignores the flag and shows an empty window; closing it killed keep.ps1, 2026-10-21).
+$action = New-ScheduledTaskAction -Execute "conhost.exe" -WorkingDirectory $repo `
+    -Argument "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$keep`""
 $logon = New-ScheduledTaskTrigger -AtLogOn -User $user
 # Relaunch keep.ps1 within TASK_REPEAT_MIN (default 5) if it ever dies; IgnoreNew leaves a running one alone.
 . (Join-Path $PSScriptRoot "timing.ps1")

@@ -63,7 +63,8 @@ async def windows_toast(text: str) -> None:
     proc = await asyncio.create_subprocess_exec(
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(TOAST_SCRIPT),
         "-Title", "Leafi", "-Body", text,
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))  # never a console window on the owner's desktop
     try:
         _, err = await asyncio.wait_for(proc.communicate(), TOAST_TIMEOUT_S)
     except TimeoutError:

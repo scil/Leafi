@@ -31,8 +31,10 @@ $quick = 0
 while ($true) {
     $started = Get-Date
     Write-Keep "start supervisor"
+    # -NoNewWindow: share this keeper's headless console (install-tasks.ps1 starts it under conhost --headless);
+    # a new console would open a visible Windows Terminal window when that is the default terminal.
     $p = Start-Process -FilePath $python -ArgumentList @("-m", "leafi", "supervisor") -WorkingDirectory $repo `
-        -WindowStyle Hidden -PassThru
+        -NoNewWindow -PassThru
     $p.WaitForExit()
     if ($p.ExitCode -eq 3) {
         # Another supervisor holds the lock (this keep.ps1 was relaunched while the old supervisor lives on):
