@@ -76,7 +76,13 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `HEARTBEAT_URL` | `` (empty) | Healthchecks.io ping URL; the supervisor GETs it every poll (dead man's switch) |
 | `GATUS_URL` / `GATUS_TOKEN` | `http://127.0.0.1:18080` / `` | the read-only dashboard; the same `GATUS_TOKEN` must reach the `gatus` container (docker-compose.yml reads `.env`); empty: no pushes |
 | `SUPERVISE` | `docker,camera,frigate,mosquitto,gatus` | services the supervisor keeps running (ADR-0016). `habit-agent` is opt-in because the habit coach speaks through the camera on its schedule; add `ollama` when the vision judge is used daily |
-| `SUPERVISOR_POLL_S` | `60` | poll interval; two bad polls in a row trigger a recovery, at most 3 per outage |
+| `SUPERVISOR_POLL_S` | `60` | poll interval |
+| `SUPERVISOR_BAD_STREAK` / `SUPERVISOR_MAX_RECOVERIES` / `SUPERVISOR_HEALTHY_S` | `2` / `3` / `600` | bad polls before a recovery; recoveries per outage; continuous good time that ends an outage |
+| `SUPERVISOR_GRACE` | `camera=90,habit-agent=90,docker=180,frigate=120,mosquitto=60,gatus=60,ollama=60` | per-service grace after a recovery (minimums: docker 120, frigate 60, camera 60) |
+| `SUPERVISOR_RESUME_GAP_S` / `SUPERVISOR_RESUME_GRACE_S` | `180` / `120` | wall-clock gap read as sleep/resume (must exceed one poll plus its worst duration); grace after it |
+| `TASK_REPEAT_MIN` | `5` | the logon task's repeating trigger (read by `install-tasks.ps1`) |
+| `KEEP_BACKOFF_S` / `KEEP_CRASH_EXITS` / `KEEP_CRASH_WINDOW_MIN` | `5,30,120,300` / `3` / `30` | keep.ps1's restart delays and its "crashed repeatedly" rule (window > (exits − 1) × the longest delay) |
+| (all timing settings above) | — | validated together by `leafi/ops/timing.py` (ADR-0016): a value that breaks an invariant falls back to its default and the `supervision-timing` check alerts; `python -m leafi timing` shows the values in use, the derived recovery and give-up times, and any conflict |
 | `SUPERVISOR_PORT` | `18771` | the supervisor's `POST /rearm?service=S` listener on 127.0.0.1 (the 🔁 button rearms `camera`); outside Windows' excluded port ranges |
 | `GO2RTC_EXE` / `GO2RTC_CONFIG` | `tools/go2rtc/go2rtc.exe` / `tools/go2rtc/go2rtc-host.yaml` | the go2rtc child the supervisor starts |
 | `MQTT_PORT` | `18830` | mosquitto's host port, probed by TCP connect |

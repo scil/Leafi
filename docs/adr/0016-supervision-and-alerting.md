@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-10-20
 amends: 0011
-revised: 2026-10-20 (codex design rounds 1–5, gpt-6-astra high, records under `.scratch/review/2026-10-20-adr-0016-*`); 2026-10-21 cut to v1 by the owner — the rounds had grown the design past one household's needs; the rare-case machinery is listed under "Accepted for v1"; one v1 round (medium) fixed delivery order, the scripts' fallback and rule 3's scope; 2026-10-21 the owner merged the watchdog and the keepers into one supervisor for every service; one medium round scoped rules 1 and 3, charged child exits, restarted Docker Desktop and recreated containers on recovery, and freed toasts from the Telegram queue; 2026-10-21 the owner added configuration checks, a Healthchecks.io heartbeat and Gatus as a read-only dashboard; one medium round: heartbeat only on the supervisor's dashboard entry, the heartbeat alarm as rule 2's stated exception, channel checks switchable, `down.bat` disables the task
+revised: 2026-10-20 (codex design rounds 1–5, gpt-6-astra high, records under `.scratch/review/2026-10-20-adr-0016-*`); 2026-10-21 cut to v1 by the owner — the rounds had grown the design past one household's needs; the rare-case machinery is listed under "Accepted for v1"; one v1 round (medium) fixed delivery order, the scripts' fallback and rule 3's scope; 2026-10-21 the owner merged the watchdog and the keepers into one supervisor for every service; one medium round scoped rules 1 and 3, charged child exits, restarted Docker Desktop and recreated containers on recovery, and freed toasts from the Telegram queue; 2026-10-21 the owner added configuration checks, a Healthchecks.io heartbeat and Gatus as a read-only dashboard; one medium round: heartbeat only on the supervisor's dashboard entry, the heartbeat alarm as rule 2's stated exception, channel checks switchable, `down.bat` disables the task; 2026-10-21 the owner made every supervision timing a validated setting (one medium round: reporting time in `W`, no grace ≥ poll rule, saturated crash window, fallback revalidated until stable, exact derived formulas, bounded script read)
 ---
 
 # Supervision and alerting v1: one Leafi supervisor keeps every service running and sends every alert from one outbox
@@ -48,6 +48,46 @@ POST /rearm?service=S (default camera) -> commit kills = 0, gave_up = false; wan
 
 A recovery runs as a background task, so a slow one (a `compose up` that takes a minute or more) never pauses the poll, the other services, the dashboard or the heartbeat. While it runs, the service is reported RECOVERING and not observed, so no second recovery starts; its grace starts when the recovery ends. A rearm during a running recovery is ignored. A crashed child is therefore restarted after about two minutes, a crash loop gets three restarts and then one alert, and one outage sends one down row whatever the button does. Traces checked in review for the camera hold for every service: a sleep is never counted as healthy time, and the budget survives a supervisor restart.
 
+## Timing settings and their invariants
+
+Every number above is a setting in `.env` (defaults in `leafi/core/config.py`). One module, `leafi/ops/timing.py`, parses them all and is the only place that validates them. The supervisor, the checks, `--status` and both scripts read the result.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SUPERVISOR_POLL_S` | 60 | poll interval |
+| `SUPERVISOR_BAD_STREAK` | 2 | consecutive BAD polls before a recovery |
+| `SUPERVISOR_MAX_RECOVERIES` | 3 | recoveries per outage before giving up |
+| `SUPERVISOR_HEALTHY_S` | 600 | continuous GOOD time that ends an outage |
+| `SUPERVISOR_GRACE` | `camera=90,habit-agent=90,docker=180,frigate=120,mosquitto=60,gatus=60,ollama=60` | per-service grace after a recovery |
+| `SUPERVISOR_RESUME_GAP_S` / `SUPERVISOR_RESUME_GRACE_S` | 180 / 120 | wall-clock gap read as a sleep/resume; grace after it |
+| `CHECKS_EVERY_S` | 900 | configuration check interval |
+| `TASK_REPEAT_MIN` | 5 | the logon task's repeating trigger (read by `install-tasks.ps1`) |
+| `KEEP_BACKOFF_S` / `KEEP_CRASH_EXITS` / `KEEP_CRASH_WINDOW_MIN` | `5,30,120,300` / 3 / 30 | keep.ps1's restart delays and its "crashed repeatedly" rule |
+
+Timeouts (go2rtc API 3 s, frame 15 s, `docker info` 15 s, HTTP and TCP probes 3 s, heartbeat 5 s, dashboard push 3 s) stay constants. They give the worst-case duration of one poll iteration (`W`: every enabled probe, plus the heartbeat and one push per service and one for the supervisor), which the invariants use.
+
+| Invariant | What breaks without it |
+|---|---|
+| `RESUME_GAP_S > POLL_S + W` | a slow poll is read as a resume, and the BAD streak resets forever |
+| `RESUME_GRACE_S ≥ POLL_S` | the resume grace ends before the first poll after waking |
+| every grace `> 0`, and `docker ≥ 120`, `frigate ≥ 60`, `camera ≥ 60` (measured start-up times; a grace shorter than one poll is fine, because the next poll comes after start-up) | a service just restarted is judged BAD before it is up, and the budget burns |
+| `HEALTHY_S ≥ 3 × POLL_S` and `HEALTHY_S > max(grace)` | one or two lucky polls refill the budget, so a flapping service restarts without end |
+| `2 ≤ BAD_STREAK ≤ 10`, `1 ≤ MAX_RECOVERIES ≤ 10` | a single blip restarts a service, or recovery never gives up |
+| `CHECKS_EVERY_S ≥ 60` | check runs overlap |
+| `TASK_REPEAT_MIN ≥ 1` | Task Scheduler rejects the trigger |
+| `KEEP_BACKOFF_S` positive and non-decreasing; `KEEP_CRASH_EXITS ≥ 2`; `KEEP_CRASH_WINDOW_MIN × 60 > (KEEP_CRASH_EXITS − 1) ×` the longest delay (a crash loop ends up waiting the longest delay, and that many exits are separated by that many waits) | three crashes can never land inside the window, so the crash alert never fires |
+| the Gatus `leafi/supervisor` heartbeat in `config/gatus/config.yaml` `> POLL_S + W` | the dashboard shows the supervisor red while it is fine (a file in git: reported, not replaced) |
+
+**On a violation**, every setting involved in the broken invariant falls back to its default. The result is validated again, and the fallback repeats until no invariant is broken: a reset can expose a new violation, for example a restored 180 s Docker grace against a short healthy window. Every problem found along the way is kept. The defaults satisfy every invariant together, which a test proves, so the loop ends. The Gatus heartbeat is report-only and stays outside the loop. The supervisor logs this and keeps running; it never exits over timing, because an exit would make keep.ps1 crash-loop and send a misleading alert. The `supervision-timing` configuration check reports the violation as one `check-supervision-timing` alert through its latch, and `python -m leafi checks` shows it. The Healthchecks.io period lives on its website and cannot be read. The docs tell the owner to set it above `POLL_S + W`.
+
+**Derived timings.** `python -m leafi alert --status` prints, for each service, upper bounds measured from the moment it breaks. Each recovery's own run time comes on top:
+- the first recovery by `BAD_STREAK × POLL_S` (the outage is seen within one poll, then `BAD_STREAK − 1` more polls);
+- giving up by `BAD_STREAK × POLL_S + MAX_RECOVERIES × (⌈grace / POLL_S⌉ × POLL_S + (BAD_STREAK − 1) × POLL_S)`. The grace swallows whole polls, then the streak builds again. A test checks this against the policy itself: with the defaults the camera restarts at about 1, 4 and 7 minutes and gives up at 10 minutes after its first BAD poll.
+
+It also prints any violation, so the owner sees the effect of a change before an outage.
+
+**Scripts.** `python -m leafi timing --env` prints the validated values as `KEY=value` lines. keep.ps1 reads them at start with a 15 s limit, and uses its built-in defaults if the command fails or hangs. A hung read must never stop the supervisor from starting, since `IgnoreNew` would then leave a stuck keep.ps1 in place. `install-tasks.ps1` reads `TASK_REPEAT_MIN` the same way.
+
 ## Configuration checks (every 15 min)
 
 Restarts cannot fix a setting that is wrong. The supervisor also runs a list of configuration checks (`leafi/ops/checks.py`), one function each, returning ok or a reason code. Each check has its own latch: a failure inserts one `check-<name>/down/<reason>` row, and the first passing run afterwards inserts the `up` row. **Checks never repair anything.** Changing Windows, Docker or `.env` settings is the owner's decision; the alert says what to change.
@@ -67,6 +107,7 @@ Restarts cannot fix a setting that is wrong. The supervisor also runs a list of 
 | `telegram` | `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set (only while `telegram` is in `REQUIRED_CHANNELS`, default `telegram,heartbeat`: the owner chose both; toast-only is a supported choice by removing it) |
 | `heartbeat` | `HEARTBEAT_URL` is set (only while `heartbeat` is in `REQUIRED_CHANNELS`) |
 | `devices` | `config/devices.yml` parses |
+| `supervision-timing` | the timing settings satisfy every invariant, and the Gatus supervisor heartbeat is longer than one poll (section above) |
 
 Autologon is the owner's open decision and is not checked.
 

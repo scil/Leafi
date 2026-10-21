@@ -18,6 +18,11 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Invariant: once the `leafi-supervisor` task exists, only the supervisor starts or kills its children; at most 3 recoveries per service per outage; containers are not probed while Docker is down; alerts leave only as catalog sentences (toasts at once, Telegram oldest-first).
 - Check: `python -m leafi alert --status` (per-service budget, unsent rows), `data/logs/supervisor.log`, `data/logs/keep-supervisor.log`; `tests/test_supervisor.py`, `tests/test_alerts.py`.
 
+## "supervision timing settings conflict" / changed a timing and nothing happened
+- Start: `leafi/ops/timing.py` (`resolve`, `violations`, `derived`, `as_env`), `scripts/win/timing.ps1`; ADR-0016 "Timing settings".
+- Invariant: one parser; a broken invariant resets every setting involved to its default, repeated until consistent; the supervisor never exits over timing.
+- Check: `python -m leafi timing` (values in use, derived times, conflicts), `tests/test_timing.py`.
+
 ## "Leafi check: …" alert / dashboard red / heartbeat alarm from Healthchecks.io
 - Start: `leafi/ops/checks.py` (one pure rule per check, `build`, `CheckRunner`, `heartbeat`, `push`), `config/gatus/config.yaml`; ADR-0016.
 - Invariant: checks never repair; one alert per drift and one when it passes again; Gatus has no alerting provider; the heartbeat is a bodyless GET.
