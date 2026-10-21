@@ -78,6 +78,14 @@ def test_non_canonical_lines_are_reported_and_block_apply(text, rule):
         f.apply({"B": Op("set", "1")})
 
 
+def test_a_multi_line_value_never_reports_its_inner_lines_as_keys():
+    f = parse("CAM_PASSWORD='first\nSecretCanary\nSecret=Canary2\nlast'\nA=1\n")
+    problems = f.problems()
+    assert [p.line for p in problems] == [1, 2, 3, 4]
+    assert all(p.key in (None, "CAM_PASSWORD") for p in problems)
+    assert "Canary" not in repr(problems)
+
+
 @pytest.mark.parametrize("value", ["a%b", "a=b", "x@y:z", "p$q", "p #q", "#", "a+", "名字,学校", "", "two words"])
 def test_written_values_read_back_identically(tmp_path, value):
     f = parse("# head\nA=old   # keep me\nB=1\n").apply({"A": Op("set", value), "C": Op("set", value)})
@@ -276,6 +284,45 @@ def test_cleanup_failure_after_a_successful_install_is_a_warning(tmp_path, monke
     monkeypatch.setattr(Path, "unlink", real_unlink)
     assert isinstance(out, Committed) and env.read_bytes() == b"A=2\n"
     assert out.warnings and ".side" in out.warnings[0]
+
+
+def test_an_unreadable_result_needs_recovery_and_keeps_every_file(tmp_path, monkeypatch):
+    env, data = tmp_path / ".env", tmp_path / "data"
+    env.write_bytes(b"A=1\n")
+    state = {"installed": False}
+
+    def replaced(path, tmp, side):
+        side.write_bytes(path.read_bytes())
+        envfile.os.replace(tmp, path)
+        state["installed"] = True
+        return 0
+
+    real_read = Path.read_bytes
+
+    def read(self):
+        if state["installed"] and self == env:
+            raise PermissionError(self)
+        return real_read(self)
+
+    monkeypatch.setattr(envfile, "_replace_file", replaced)
+    monkeypatch.setattr(Path, "read_bytes", read)
+    out = update_env(env, read_state(env)[1], transform({"A": Op("set", "2")}), data)
+    monkeypatch.setattr(Path, "read_bytes", real_read)
+    assert isinstance(out, RecoveryRequired)
+    assert Path(out.paths["side"]).exists() and Path(out.paths["marker"]).exists()
+
+
+def test_a_replace_that_raises_is_classified_not_propagated(tmp_path, monkeypatch):
+    env, data = tmp_path / ".env", tmp_path / "data"
+    env.write_bytes(b"A=1\n")
+
+    def raises(path, tmp, side):
+        raise PermissionError(path)
+
+    monkeypatch.setattr(envfile, "_replace_file", raises)
+    out = update_env(env, read_state(env)[1], transform({"A": Op("set", "2")}), data)
+    assert isinstance(out, RolledBack) and env.read_bytes() == b"A=1\n"
+    assert not list(tmp_path.glob(".env.*.tmp"))
 
 
 HOLDER = """

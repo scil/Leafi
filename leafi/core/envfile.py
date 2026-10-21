@@ -57,7 +57,8 @@ class Op:
 
 
 def _diagnose(text: str) -> tuple[str | None, str]:
-    m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)", text)
+    # a key name is reported only for a line that is shaped like an assignment, never for free text (which may be data)
+    m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=:]", text)
     key = m.group(1) if m else None
     if text[:1].isspace():
         rule = "leading space"
@@ -117,7 +118,13 @@ class EnvFile:
         if final_nl:
             lines = lines[:-1]
         seen: dict[str, int] = {}
+        open_quote = None  # a quoted value continuing over lines: its lines are data, never reported as keys
         for i, ln in enumerate(lines, 1):
+            if open_quote:
+                problems.append(LineProblem(i, None, "continuation of a multi-line quoted value"))
+                if open_quote in ln:
+                    open_quote = None
+                continue
             if ln == "" or ln.startswith("#"):
                 continue
             m = ASSIGN.match(ln)
@@ -131,6 +138,9 @@ class EnvFile:
                 continue
             key, rule = _diagnose(ln)
             problems.append(LineProblem(i, key, rule))
+            q = re.match(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*[=:]\s*(['\"])(.*)$", ln)
+            if q and q.group(1) not in q.group(2).replace("\\" + q.group(1), ""):
+                open_quote = q.group(1)
         return cls(raw, text, nl, lines, final_nl, problems)
 
     def render(self) -> bytes:
@@ -428,15 +438,24 @@ def update_env(path: Path, expected_digest: str, transform: Callable[[bytes], by
             except OSError as e:
                 reason = f"could not create .env ({e.__class__.__name__})"
         else:
-            err = _replace_file(path, tmp, side)
+            try:
+                err = _replace_file(path, tmp, side)
+            except OSError as e:  # os.replace off Windows, or ctypes itself failing
+                err = -1
+                reason = f"replace failed ({e.__class__.__name__})"
             if err:
-                reason = f"replace failed (Windows error {err})"
+                reason = reason or f"replace failed (Windows error {err})"
                 if err == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2:
                     try:
                         os.replace(side, path)
                     except OSError:
                         pass
-        after = path.read_bytes() if path.exists() else None
+        try:
+            after = path.read_bytes()
+        except FileNotFoundError:
+            after = None
+        except OSError:
+            after = b"\0unknown"  # the state cannot be established: treat as needing recovery, remove nothing
         before = old if existed else None
         if after == new or after == before:
             warnings = []

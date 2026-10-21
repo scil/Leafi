@@ -50,6 +50,10 @@ def test_generated_example_is_canonical_and_its_active_values_validate():
     (lambda d: d["keys"]["REDACT_TERMS"].pop("privacy"), "REDACT_TERMS: must be a privacy key"),
     (lambda d: d["keys"]["ASR_HOTWORDS"].pop("gate"), "ASR_HOTWORDS=lexicon: must be gated"),
     (lambda d: d["keys"]["NOTIFY_WITH_SNAPSHOT"].update(example={"value": "true"}), "NOTIFY_WITH_SNAPSHOT: privacy key"),
+    (lambda d: d["keys"]["ASR_BACKEND"].update(example={"value": "Sherpa"}), "ASR_BACKEND: active example"),
+    (lambda d: (d["keys"]["GATUS_TOKEN"]["readers"].remove("compose:gatus"),
+                d["keys"]["GATUS_TOKEN"]["default"].pop("compose:gatus")),
+     "GATUS_TOKEN: used in config.yaml but compose:gatus"),
 ])
 def test_agreement_catches_drift(mutate, expect):
     data = copy.deepcopy(RAW)
@@ -64,12 +68,46 @@ def test_agreement_catches_drift(mutate, expect):
     lambda d: d["keys"]["ASR_THREADS"].update(group="nowhere"),
     lambda d: d["keys"]["OCR_SNAP"]["gate"].update(values=["sometimes"]),
     lambda d: d["keys"]["ASR_THREADS"].update(help="costs $5"),
+    lambda d: d["groups"][0].pop("title"),
+    lambda d: d.update(keys=["not", "a", "mapping"]),
+    lambda d: d["keys"]["ASR_THREADS"].update(default={"leafi": "4"}),
 ])
 def test_bad_shape_is_a_schema_error(mutate):
     data = copy.deepcopy(RAW)
     mutate(data)
     with pytest.raises(envschema.SchemaError):
         envschema.parse(data)
+
+
+def _root_with(tmp_path, data):
+    """A repository root with every file agreement reads, and a modified manifest."""
+    import shutil
+
+    for rel in ("docker-compose.yml", "config/devices.yml", "config/gatus/config.yaml", "scripts/win/timing.ps1",
+                *[p.relative_to(ROOT).as_posix() for p in (ROOT / "config" / "frigate").glob("*.yml")]):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / rel, tmp_path / rel)
+    (tmp_path / "config" / "env-schema.json").write_text(json.dumps(data), encoding="utf-8")
+    return tmp_path
+
+
+def test_a_weakened_manifest_still_masks_floor_secrets_and_shows_no_values(tmp_path):
+    data = copy.deepcopy(RAW)
+    data["keys"]["BARK_URL"].pop("secret", None)
+    data["keys"]["BARK_URL"]["type"] = "text"
+    root = _root_with(tmp_path / "repo", data)
+    env = tmp_path / ".env"
+    env.write_bytes(b"BARK_URL=https://api.day.app/canary-bark\nASR_THREADS=4\n")
+    body = envedit.view(env, root=root)
+    assert body["agreement"]
+    assert "canary-bark" not in repr(body)
+    assert all("value" not in k for g in body["groups"] for k in g["keys"])
+
+
+def test_gated_bool_values_are_not_offered():
+    keys = {k["key"]: k for g in envedit.view(ROOT / "no-such.env")["groups"] for k in g["keys"]}
+    assert keys["PRON_AUTO_JUDGE"]["options"] == ["false"]
+    assert keys["AUDIO_KEEP_CLIPS"]["options"] == ["true", "false"]
 
 
 def test_a_broken_manifest_makes_the_page_read_only(tmp_path):

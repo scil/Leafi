@@ -1,6 +1,7 @@
 """Validators are the consumers' own parsers (design §8.7-§8.9): import-safe, and really used by the consumer."""
 
 import asyncio
+import importlib
 import json
 import os
 import re
@@ -40,50 +41,70 @@ def test_validator_modules_import_without_reading_env_or_building_settings(tmp_p
     assert "SEEN []" in out.stdout, out.stdout
 
 
-def spy(monkeypatch, target, attr, result):
-    calls = []
+def _run_settings_method(method):
+    def run(field, text, monkeypatch):
+        from agent import config
 
-    def fake(text):
-        calls.append(text)
-        return result
-
-    monkeypatch.setattr(target, attr, fake)
-    return calls
+        return getattr(config.Settings(_env_file=None, **{field: text}), method)()
+    return run
 
 
-def test_habit_parsers_drive_the_settings_methods(monkeypatch):
-    from agent import config, parsers
-
-    calls = spy(monkeypatch, parsers, "parse_weekly_report", ("sentinel", 1, 2))
-    s = config.Settings(_env_file=None, weekly_report="TEXT-W", schedule="TEXT-S")
-    assert s.parsed_weekly_report() == ("sentinel", 1, 2) and calls == ["TEXT-W"]
-    calls = spy(monkeypatch, parsers, "parse_schedule", [("sentinel", "00:00")])
-    assert s.parsed_schedule() == [("sentinel", "00:00")] and calls == ["TEXT-S"]
-
-
-def test_timing_parsers_drive_resolve(monkeypatch):
+def _run_timing(field, text, monkeypatch):
     from leafi.core.config import Settings
     from leafi.ops import timing
 
-    g = spy(monkeypatch, timing, "parse_grace", {"camera": 95.0})
-    b = spy(monkeypatch, timing, "parse_backoff", (6.0, 30.0, 120.0, 300.0))
-    t, problems = timing.resolve(Settings(_env_file=None, supervisor_grace="TEXT-G", keep_backoff_s="TEXT-B"))
-    assert g == ["TEXT-G"] and b == ["TEXT-B"]
-    assert t.grace["camera"] == 95.0 and t.keep_backoff_s == (6.0, 30.0, 120.0, 300.0) and problems == []
+    return timing.resolve(Settings(_env_file=None, **{field: text}))
 
 
-def test_active_hours_parser_drives_the_check(monkeypatch):
+def _run_checks_build(field, text, monkeypatch):
     from leafi.core.config import Settings
     from leafi.ops import checks
 
-    calls = spy(monkeypatch, checks, "parse_active_hours", (3, 4))
-    seen = []
     monkeypatch.setattr(checks, "_reg", lambda *a: 7)
+    built = checks.build(Settings(_env_file=None, **{field: text}))
+    return [asyncio.run(c.run()) for c in built if c.name == "active-hours"]
+
+
+# How to drive each consumer the manifest names; a new consumer must be added here, so its binding is tested.
+CONSUMERS = {
+    "agent.config:Settings.parsed_weekly_report": _run_settings_method("parsed_weekly_report"),
+    "agent.config:Settings.parsed_schedule": _run_settings_method("parsed_schedule"),
+    "leafi.ops.timing:resolve": _run_timing,
+    "leafi.ops.checks:build": _run_checks_build,
+}
+BOUND = [k for k in envedit.load()[0].keys.values() if k.validator]
+
+
+@pytest.mark.parametrize("key", BOUND, ids=[k.name for k in BOUND])
+def test_the_declared_consumer_calls_the_declared_validator(monkeypatch, key):
+    """Spy on exactly the function the manifest names and run exactly the consumer it names: the spy must receive the
+    setting's text. Pointing a key at another parser (or another consumer) fails here."""
+    assert key.validator.consumer in CONSUMERS, f"add a runner for {key.validator.consumer}"
+    module, _, attr = key.validator.fn.partition(":")
+    target = importlib.import_module(module)
+    real = getattr(target, attr)
+    good = next(d.value for r, d in key.default.items() if r in ("leafi", "habit agent"))
+    calls = []
+    monkeypatch.setattr(target, attr, lambda text: calls.append(text) or real(good))
+    CONSUMERS[key.validator.consumer](key.name.lower(), "TEXT-" + key.name, monkeypatch)
+    assert calls == ["TEXT-" + key.name]
+
+
+def test_parsed_results_drive_the_consumers(monkeypatch):
+    """The value a validator returns is what the consumer uses (not recomputed elsewhere)."""
+    from leafi.core.config import Settings
+    from leafi.ops import checks, timing
+
+    monkeypatch.setattr(timing, "parse_grace", lambda text: {"camera": 95.0})
+    monkeypatch.setattr(timing, "parse_backoff", lambda text: (6.0, 30.0, 120.0, 300.0))
+    t, problems = timing.resolve(Settings(_env_file=None))
+    assert t.grace["camera"] == 95.0 and t.keep_backoff_s == (6.0, 30.0, 120.0, 300.0) and problems == []
+    monkeypatch.setattr(checks, "parse_active_hours", lambda text: (3, 4))
+    monkeypatch.setattr(checks, "_reg", lambda *a: 7)
+    seen = []
     monkeypatch.setattr(checks, "hours_cover", lambda *a: seen.append(a) or True)
-    check = next(c for c in checks.build(Settings(_env_file=None, active_hours="TEXT-H")) if c.name == "active-hours")
-    assert calls == []  # parsed when the check runs, not at build time
-    assert asyncio.run(check.run()) is True
-    assert calls == ["TEXT-H"] and seen == [(7, 7, 3, 4)]
+    check = next(c for c in checks.build(Settings(_env_file=None)) if c.name == "active-hours")
+    assert asyncio.run(check.run()) is True and seen == [(7, 7, 3, 4)]
 
 
 NEW_DOMAIN_CONSTANTS = ["HOTWORDS_MODES", "SNAP_MODES", "LOOKUPS", "GLOBAL_VERIFY_MODES", "SPEAKER_BACKENDS", "CHANNELS"]

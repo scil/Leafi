@@ -80,12 +80,25 @@ def _need(cond: bool, msg: str) -> None:
 
 
 def parse(data: dict) -> Manifest:
+    """Any malformed shape is a SchemaError naming where, never a KeyError/TypeError escaping to the caller."""
+    try:
+        return _parse(data)
+    except SchemaError:
+        raise
+    except (KeyError, TypeError, AttributeError, ValueError) as e:
+        raise SchemaError(f"malformed manifest ({e.__class__.__name__}: {e})") from None
+
+
+def _parse(data: dict) -> Manifest:
     _need(isinstance(data, dict) and data.get("version") == 1, "version must be 1")
     readers = {}
     for name, spec in (data.get("readers") or {}).items():
         _need(isinstance(spec, dict) and isinstance(spec.get("action"), str) and spec["action"],
               f"reader {name}: needs an action")
         readers[name] = spec["action"]
+    for g in data.get("groups") or []:
+        _need(isinstance(g, dict) and isinstance(g.get("id"), str) and isinstance(g.get("title"), str)
+              and all(isinstance(n, str) for n in g.get("notes") or ()), "every group needs a string id and title")
     groups = tuple(Group(g["id"], g["title"], tuple(g.get("notes") or ())) for g in data.get("groups") or [])
     _need(len({g.id for g in groups}) == len(groups), "duplicate group id")
     gids = {g.id for g in groups}

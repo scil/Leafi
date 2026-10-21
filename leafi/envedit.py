@@ -99,10 +99,16 @@ def gated(k: Key, text: str) -> bool:
 
 
 def offered(k: Key) -> list[str] | None:
-    """The options the page offers: every option the code knows, minus the gated ones."""
-    if k.options is None:
+    """The options the page offers: every option the code knows (true/false for a bool), minus the gated ones."""
+    options = ("true", "false") if k.type == "bool" else k.options
+    if options is None:
         return None
-    return [o for o in k.options if not gated(k, o)]
+    return [o for o in options if not gated(k, o)]
+
+
+def masked(k: Key) -> bool:
+    """Secret by the manifest, by the protection floor, or by its name: the floor holds even if the manifest is weakened."""
+    return k.secret or k.name in envprotect.SECRET_FLOOR or bool(re.search(envprotect.CREDENTIAL_NAME, k.name))
 
 
 def normalise_list(k: Key, text: str) -> str:
@@ -210,14 +216,17 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
             if r.startswith("devices.yml:") and (k.name, r) not in devices:
                 out.append(f"{k.name}: says {r} reads it, but config/devices.yml has no such reference")
 
-    # Gatus and Frigate YAML read container environment built by Compose
-    for f in [root / "config" / "gatus" / "config.yaml", *sorted((root / "config" / "frigate").glob("*.yml"))]:
-        if f.exists():
-            text = "\n".join(ln for ln in f.read_text(encoding="utf-8").splitlines() if not ln.lstrip().startswith("#"))
-            for ref in REF.finditer(text):
-                k = m.keys.get(ref.group(1))
-                if k is None or not any(r.startswith("compose:") for r in k.readers):
-                    out.append(f"{ref.group(1)}: used in {f.name} but no Compose reader passes it")
+    # Gatus and Frigate YAML read the container environment that their own Compose service builds
+    for svc, files in (("gatus", [root / "config" / "gatus" / "config.yaml"]),
+                       ("frigate", sorted((root / "config" / "frigate").glob("*.yml")))):
+        for f in files:
+            if f.exists():
+                text = "\n".join(ln for ln in f.read_text(encoding="utf-8").splitlines()
+                                 if not ln.lstrip().startswith("#"))
+                for ref in REF.finditer(text):
+                    k = m.keys.get(ref.group(1))
+                    if k is None or f"compose:{svc}" not in k.readers:
+                        out.append(f"{ref.group(1)}: used in {f.name} but compose:{svc} does not pass it")
 
     # timing.ps1's fallback table equals the leafi defaults
     ps1 = root / "scripts" / "win" / "timing.ps1"
@@ -288,6 +297,14 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
                 out.append(f"{k.name}: example cannot be stored canonically")
             if gated(k, k.example):
                 out.append(f"{k.name}: active example sets a gated value")
+            if k.type == "enum" and k.example != "" and k.example not in k.options:
+                out.append(f"{k.name}: active example is not one of its options")
+            if k.type == "list" and k.example != "":
+                try:
+                    if normalise_list(k, k.example) != k.example:
+                        out.append(f"{k.name}: active example is not written in options order")
+                except ValueError:
+                    out.append(f"{k.name}: active example has an item outside its options")
             if k.privacy and k.example not in values:
                 out.append(f"{k.name}: privacy key's active example must equal its default")
 
@@ -369,7 +386,9 @@ def view(path: Path = Path(".env"), root: Path = ROOT) -> dict:
         return {"digest": digest, "manifest_error": mismatches[0], "groups": []}
     f = EnvFile.parse(raw)
     problems = f.problems()
+    # a disagreeing manifest may have lost a protection: show no values at all until it is fixed
     values = {} if problems else f.values()
+    shown = {} if mismatches else values
     locked = bool(problems or mismatches)
     groups: list[dict] = []
     for g in m.groups:
@@ -378,9 +397,9 @@ def view(path: Path = Path(".env"), root: Path = ROOT) -> dict:
             state = "default" if k.name not in values else ("empty" if values[k.name] == "" else "set")
             is_gated = state != "default" and gated(k, values[k.name])
             item = {"key": k.name, "state": state, "type": k.type, "help": k.help, "readers": list(k.readers),
-                    "defaults": {r: {"value": "" if k.secret else d.value, "empty": d.empty}
+                    "defaults": {r: {"value": "" if masked(k) else d.value, "empty": d.empty}
                                  for r, d in k.default.items()},
-                    "activation": sorted({m.readers[r] for r in k.readers}), "secret": k.secret,
+                    "activation": sorted({m.readers[r] for r in k.readers}), "secret": masked(k),
                     "privacy": k.privacy, "options": offered(k), "gated": is_gated,
                     "empty_allowed": all(d.empty != "error" for d in k.default.values()),
                     "empty_notes": _empty_notes(k),
@@ -389,8 +408,8 @@ def view(path: Path = Path(".env"), root: Path = ROOT) -> dict:
                 item["reason"] = "gated by ADR-0011: change by hand only after its evaluation; only removal is offered"
             if not k.readers:
                 item["reason"] = "documented in .env.example; no program in this repository reads it"
-            if not problems and not k.secret and k.name in values:
-                item["value"] = values[k.name]
+            if not masked(k) and k.name in shown:
+                item["value"] = shown[k.name]
             items.append(item)
         if items:
             groups.append({"name": g.title, "keys": items})

@@ -432,10 +432,10 @@ function control(k){
   const cur = p ? (p.op === 'set' ? p.value : '') : (k.value ?? '');
   if (k.secret) return `<input type="password" data-k="${esc(k.key)}" placeholder="${k.state === 'set' ? '已设置;留空 = 不改' : '未设置'}" autocomplete="off"${dis}>`;
   if (k.type === 'bool'){
-    const on = String(cur).toLowerCase();
-    return `<select data-k="${esc(k.key)}"${dis}><option value="">(默认)</option>
-      <option value="true" ${['true','1','yes','on'].includes(on)?'selected':''}>true</option>
-      <option value="false" ${['false','0','no','off'].includes(on)?'selected':''}>false</option></select>`;
+    // 只给服务端允许的取值(被闸门挡住的 true 不出现)
+    const on = String(cur).toLowerCase(), alias = {true:['true','1','yes','on'], false:['false','0','no','off']};
+    return `<select data-k="${esc(k.key)}"${dis}><option value="">(默认)</option>${(k.options || []).map(o =>
+      `<option value="${o}" ${alias[o].includes(on)?'selected':''}>${o}</option>`).join('')}</select>`;
   }
   if (k.type === 'enum'){
     const opts = (k.options || []).map(o => `<option ${cur===o?'selected':''}>${esc(o)}</option>`).join('');
@@ -551,7 +551,11 @@ async function saveEnv(){
   ENVERR = {}; ENVRESULT = '';
   if (r.status === 409){
     await loadEnv();
-    ENVRESULT = '<b>.env 在你编辑期间被改过,已重新读取。</b>你的改动还在下面,请核对后再保存;隐私确认已清空。';
+    // 重新读取后已经不存在的项(比如被手工删掉的未知项)不再保留待提交的改动
+    const gone = Object.keys(PENDING).filter(k => !keyInfo(k));
+    gone.forEach(k => delete PENDING[k]);
+    ENVRESULT = '<b>.env 在你编辑期间被改过,已重新读取。</b>你的改动还在下面,请核对后再保存;隐私确认已清空。'
+      + (gone.length ? '<br>这些项已不在文件里,对应改动已丢弃:' + gone.map(esc).join('、') : '');
     renderEnv(); return;
   }
   if (r.status === 500 && d.recovery){
