@@ -9,7 +9,7 @@ One row per fact type → owner → layer → enforced by → reading rule. Node
 | Known technical debt | `docs/plans/tech-debt.md` | 1 | reviewed at each plan close | item · owner · grade · trigger |
 | Goals, users, principles, requirements with state, non-goals | `docs/product.md` | 2 | requirement ids referenced by tests (`B3` …) | decision states Candidate/Proposed/Accepted/Implemented |
 | Vocabulary | `GLOSSARY.md` | 2 | Matt Pocock `domain-modeling` format | tests and docs use these terms |
-| Architecture overview, boundaries, C4 L1/L2 | `docs/architecture/overview.md`, `c4-context.md`, `c4-container.md` | 2 | `tests/test_architecture.py`; Mermaid renders on GitHub | |
+| Architecture overview, boundaries, C4 L1/L2 | `docs/architecture/overview.md`, `c4-context.md`, `c4-container.md`, `device-ports.md` | 2 | `tests/test_architecture.py`; Mermaid renders on GitHub | |
 | Data-model meaning | `docs/architecture/data-model.md` | 2 | `leafi/core/storage.py` schema is the fact; `tests/test_storage.py` | read with the schema |
 | The reading algorithm (alignment, completion, practice, controls, difficulties, CHECK) | `docs/adr/0013-reading-algorithm-v1.md` (pseudocode) → `leafi/study/alignment.py`, `session.py` | 2 | `tests/test_alignment.py` walkthroughs, `tests/test_practice.py`, `tests/test_session_controls.py` | the ADR is the only place the rules are stated; flows draw them |
 | Supervision and alerting (service policy, configuration checks, heartbeat, dashboard, alert outbox) | `docs/adr/0016-supervision-and-alerting.md` → `leafi/ops/`, `leafi/core/alerts.py`, `scripts/win/keep.ps1` | 2 | `tests/test_supervisor.py`, `tests/test_checks.py`, `tests/test_alerts.py` | the ADR states the rules; `flows/supervision.md` only draws them |

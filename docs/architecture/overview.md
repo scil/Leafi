@@ -1,6 +1,6 @@
 # Architecture overview
 
-Diagrams: [`c4-context.md`](c4-context.md), [`c4-container.md`](c4-container.md). Flows: [`flows/`](flows/). Decisions: [`../adr/`](../adr/).
+Diagrams: [`c4-context.md`](c4-context.md), [`c4-container.md`](c4-container.md), [`device-ports.md`](device-ports.md) (ports, adapters, Hub build). Flows: [`flows/`](flows/). Decisions: [`../adr/`](../adr/).
 
 ## Shape
 
