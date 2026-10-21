@@ -12,6 +12,10 @@ Objective: a study session never ends because a model or device failed; it degra
 | Crash between correction insert and revision insert | single transaction rolls back; nothing applied | `tests/test_corrections.py::test_rollback` |
 | Process crash mid-session | `reading_sessions.ended_at` null; next start closes it (`summary.interrupted=true`, open candidates → `unsure (interrupted)`, reading state kept); a new session on the same book offers to continue from the committed cursor in a new page read (ADR-0013) | `tests/test_storage.py::test_close_stale_sessions`, `tests/test_session_resume.py` |
 | go2rtc speaker push rejected (space in src, codec) | logged with the src string; no retry storm (one retry) | existing `agent/speaker.py` behaviour, to be kept in the adapter |
+| go2rtc running but the camera sends no video (Mi Home app viewed, TD-25), or its API hangs | the watchdog restarts go2rtc after two bad polls, at most 3 times per outage, then sends one `camera` alert and stops; ten good minutes or the 🔁 button rearm it (ADR-0016) | `tests/test_watchdog.py` |
+| go2rtc, the watchdog or the habit agent exits | the watchdog starts go2rtc again; `keep.ps1` starts the watchdog / habit agent again (5 s, 30 s, 2 min, then 5 min) and alerts after 3 exits in 30 min | `tests/test_watchdog.py`, manual drill |
+| microphone lost / speech lease lost in a session | besides LISTENER_LOST / WRAP, one coded alert (`study-mic`, `study-lease`) to toast + Telegram | `tests/test_voice_mode.py`, `tests/test_privacy.py` |
+| Telegram unreachable | alerts stay in `alert_outbox`, oldest first, retried at 30 s, 2 min, 10 min, then hourly | `tests/test_alerts.py` |
 
 Timeouts: `say()` 20 s; Brain 12 s overall with 1 retry (`BRAIN_DEADLINE_S`); OCR 15 s; ASR per utterance 10 s after VAD stop; Anki 10 s.
 

@@ -13,6 +13,11 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Invariant: host go2rtc, not the container, holds the cs2 P2P connection.
 - Check: health script shows dial count stable over 10 minutes.
 
+## "go2rtc keeps restarting" / "restarts paused" alert / no alert arrived / 告警
+- Start: `leafi/ops/watchdog.py` (`CameraPolicy`, `observe`, `Go2rtc`), `leafi/ops/alerts.py::deliver`, `leafi/core/alerts.py` (catalog), `scripts/win/keep.ps1`; ADR-0016.
+- Invariant: only the watchdog starts or kills go2rtc once the `leafi-watchdog` task exists; at most 3 restarts per outage; alerts leave only as catalog sentences, oldest unsent first.
+- Check: `python -m leafi alert --status` (budget, unsent rows), `data/logs/watchdog.log`, `data/logs/keep-watchdog.log`; `tests/test_watchdog.py`, `tests/test_alerts.py`.
+
 ## "task editor rejected my prompt" / 红线 01
 - Start: `agent/tasks.py::validate`, `GUARD_PHRASES`.
 - Invariant: a vision-judge prompt must say it does not identify people; empty prompt only allowed for built-in kinds.

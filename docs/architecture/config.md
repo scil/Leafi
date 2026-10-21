@@ -69,6 +69,10 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `VAD_SILENCE_S` / `VAD_THRESHOLD` | `0.6` / `0.5` | Silero VAD (`models/vad/silero_vad.onnx`): silence that closes an utterance; speech probability threshold. Sentence completion is still `SENTENCE_PAUSE_S` |
 | `OCR_VERSION` | `PP-OCRv6` | `PP-OCRv6` (ships inside the rapidocr wheel) · `PP-OCRv5` (English recogniser, fetched by `doctor --download`); P-3 on desk captures (2026-10-20): v6 gave 6–8 confident lines where v5 gave 1–5 |
 | `OCR_AUTO_ROTATE` | `true` | when 0° yields < 3 confident lines, read 90/270/180 too and keep the best (the desk book lay at 270°); up to four passes of ~1.5 s once per page |
+| `WATCHDOG_POLL_S` | `60` | watchdog poll interval (ADR-0016); two bad polls in a row trigger a go2rtc restart |
+| `WATCHDOG_PORT` | `18771` | the watchdog's `POST /rearm` listener on 127.0.0.1 (the 🔁 button); outside Windows' excluded port ranges |
+| `GO2RTC_EXE` / `GO2RTC_CONFIG` | `tools/go2rtc/go2rtc.exe` / `tools/go2rtc/go2rtc-host.yaml` | what the watchdog starts |
+| `FRIGATE_URL` / `FRIGATE_CAMERA` | `http://127.0.0.1:15000` / `hallway` | Frigate listing this camera counts as demand for the stream, so a dead producer is not mistaken for idle |
 | `PAGE_DIFF_THRESHOLD` | `6.0` | page-turn watcher: mean grey diff (64×64) that counts as motion. Desk camera noise 2.3–3.0, a hand 37–66 (P-3); rendered test pages differ by 1.7, so tests use 1.0 |
 | `OCR_SNAP` | `advisory` | `off` · `advisory` (candidates shown) · `auto` (not in v1) |
 | `STUDY_BRAIN_MODEL` | `claude-opus-5-5` | study track: cloud model for enrichment turns (ADR-0003); the habit track keeps its own `BRAIN_MODEL` in `agent/config.py` |

@@ -16,6 +16,7 @@
 | edge-tts | Leafi-authored lines only, after `REDACT_TERMS` redaction; a line that embeds learner-originated text (a typed correction, a learner answer) is marked local-only and is shown on Faces / spoken by a local backend, never sent to a cloud TTS | `leafi/services/tts/edge.py` | `TTS_BACKEND_ZH`, `TTS_BACKEND_EN` |
 | Open Library | ISBN digits | `leafi/services/catalog/openlibrary.py` | `BOOK_LOOKUP` |
 | Bark / Telegram | text | `leafi/devices/notifiers.py` | `BARK_URL`, `TELEGRAM_*` |
+| Telegram (operational alerts, ADR-0016) | one fixed catalog sentence (`leafi/core/alerts.py::render`), chosen by codes; never a device name, IP, stream name, exception text or learner data | `leafi/ops/alerts.py::deliver` → `NotifierDevice.send` | `TELEGRAM_*` |
 | Xiaomi cloud | P2P keys, by go2rtc, outside Leafi | — | — |
 | Model downloads | only `python -m leafi doctor --download` | `leafi/doctor.py` | explicit |
 
