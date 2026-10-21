@@ -135,14 +135,58 @@ class Service:
     depends_docker: bool = False
 
 
-async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono: float,
-               wall: float) -> dict[str, str]:
-    """Observe every service once, in order (docker first), and recover the ones whose policy asks for it.
-    Containers are IDLE while Docker is not GOOD, so a stopped engine raises one alert, not three. Returns the
-    observations (for the dashboard)."""
+RECOVERING = "RECOVERING"
+
+
+class Recoveries:
+    """Recoveries run as background tasks, so a `compose up` that takes minutes never pauses the poll, the other
+    services or the heartbeat. While a service recovers it is not observed (no second recovery); its grace starts
+    when the recovery ends."""
+
+    def __init__(self) -> None:
+        self.tasks: dict[str, asyncio.Task] = {}
+
+    def busy(self, name: str) -> bool:
+        task = self.tasks.get(name)
+        return task is not None and not task.done()
+
+    def start(self, svc: Service) -> None:
+        log.info("%s: recovery started in the background", svc.name)
+        self.tasks[svc.name] = asyncio.create_task(svc.recover(), name=f"recover-{svc.name}")
+
+    def finished(self, name: str) -> bool:
+        """True once per completed recovery (and logs its failure, if any)."""
+        task = self.tasks.get(name)
+        if task is None or not task.done():
+            return False
+        del self.tasks[name]
+        if not task.cancelled() and task.exception() is not None:
+            log.error("%s: recovery failed", name, exc_info=task.exception())
+        else:
+            log.info("%s: recovery finished", name)
+        return True
+
+    def cancel_all(self) -> None:
+        for task in self.tasks.values():
+            task.cancel()
+
+
+async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono: float, wall: float,
+               recoveries: Recoveries) -> dict[str, str]:
+    """Observe every service once, in order (docker first), and start a background recovery for the ones whose
+    policy asks for it. Containers are IDLE while Docker is not GOOD, so a stopped engine raises one alert, not
+    three. Returns the observations (for the dashboard); a service being recovered reports RECOVERING."""
     docker_good = True
     seen: dict[str, str] = {}
     for svc in services:
+        if recoveries.finished(svc.name):
+            policies[svc.name].started(mono)
+        if recoveries.busy(svc.name):
+            seen[svc.name] = RECOVERING
+            policies[svc.name].last_wall = wall  # a long recovery is not a sleep/resume gap
+            if svc.name == "docker":
+                docker_good = False
+            continue
         if svc.depends_docker and not docker_good:
             obs = IDLE
         else:
@@ -157,11 +201,7 @@ async def poll(services: list[Service], policies: dict[str, ServicePolicy], mono
         if obs != GOOD:
             log.info("%s: %s", svc.name, obs)
         if policies[svc.name].step(obs, mono, wall):
-            try:
-                await svc.recover()
-            except Exception:  # noqa: BLE001 - logged; the next polls decide again within the budget
-                log.exception("%s: recovery failed", svc.name)
-            policies[svc.name].started(mono)
+            recoveries.start(svc)
     return seen
 
 
@@ -522,14 +562,15 @@ async def run(settings) -> int:
             await checks.heartbeat(client, settings.heartbeat_url)
             await checks.push(client, settings.gatus_url, settings.gatus_token, "leafi", "supervisor", True, "")
             for name, obs in seen.items():
-                await checks.push(client, settings.gatus_url, settings.gatus_token, "services", name, obs != BAD,
-                                  obs)
+                await checks.push(client, settings.gatus_url, settings.gatus_token, "services", name,
+                                  obs in (GOOD, IDLE), obs)
 
         for c in children:  # initial start: uncharged, even for a service whose budget has given up (ADR-0016)
             await asyncio.to_thread(c.kill_strays)
             c.start()
         for p in policies.values():
             p.started(time.monotonic())
+        recoveries = Recoveries()
         sender = asyncio.create_task(delivery())
         checker = asyncio.create_task(checking())
         log.info("supervisor up: pid %d, services %s, rearm on 127.0.0.1:%d", os.getpid(), ",".join(by_name),
@@ -540,16 +581,15 @@ async def run(settings) -> int:
                 try:
                     name = await asyncio.wait_for(rearms.get(), max(0.0, next_poll - time.monotonic()))
                 except TimeoutError:
-                    await report(await poll(services, policies, time.monotonic(), time.time()))
+                    await report(await poll(services, policies, time.monotonic(), time.time(), recoveries))
                     next_poll = time.monotonic() + settings.supervisor_poll_s
                     continue
-                if policies[name].rearm(time.monotonic()):
-                    try:
-                        await by_name[name].recover()
-                    except Exception:  # noqa: BLE001
-                        log.exception("%s: recovery after rearm failed", name)
-                    policies[name].started(time.monotonic())
+                if recoveries.busy(name):
+                    log.info("%s: rearm ignored, a recovery is already running", name)
+                elif policies[name].rearm(time.monotonic()):
+                    recoveries.start(by_name[name])
         finally:
+            recoveries.cancel_all()
             sender.cancel()
             checker.cancel()
             server.close()

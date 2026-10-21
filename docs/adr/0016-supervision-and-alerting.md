@@ -46,7 +46,7 @@ GOOD for 10 min -> commit kills = 0, gave_up = false and, if latch is down, latc
 POST /rearm?service=S (default camera) -> commit kills = 0, gave_up = false; want_recovery (attempt 1 of 3; latch kept)
 ```
 
-A crashed child is therefore restarted after about two minutes, a crash loop gets three restarts and then one alert, and one outage sends one down row whatever the button does. Traces checked in review for the camera hold for every service: a sleep is never counted as healthy time, and the budget survives a supervisor restart.
+A recovery runs as a background task, so a slow one (a `compose up` that takes a minute or more) never pauses the poll, the other services, the dashboard or the heartbeat. While it runs, the service is reported RECOVERING and not observed, so no second recovery starts; its grace starts when the recovery ends. A rearm during a running recovery is ignored. A crashed child is therefore restarted after about two minutes, a crash loop gets three restarts and then one alert, and one outage sends one down row whatever the button does. Traces checked in review for the camera hold for every service: a sleep is never counted as healthy time, and the budget survives a supervisor restart.
 
 ## Configuration checks (every 15 min)
 

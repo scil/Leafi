@@ -189,21 +189,65 @@ class FakeService:
         self.svc = Service(name, grace_s=60.0, observe=observe, recover=recover, depends_docker=depends_docker)
 
 
+async def _polls(services, policies, t: T, n: int, recoveries) -> dict[str, str]:
+    """`n` polls one minute apart; between polls the loop runs (as the real 60 s sleep lets it)."""
+    seen: dict[str, str] = {}
+    for _ in range(n):
+        t.tick()
+        seen = await supervisor.poll(services, policies, t.mono, t.wall, recoveries)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    return seen
+
+
+def _setup(store, t: T, *fakes: FakeService):
+    services = [f.svc for f in fakes]
+    policies = {s.name: ServicePolicy(store, s.name, s.grace_s) for s in services}
+    for p in policies.values():
+        p.started(t.mono - 1000)
+    return services, policies, supervisor.Recoveries()
+
+
 async def test_containers_are_idle_while_docker_is_down(store):
     t = T()
     docker = FakeService("docker", BAD)
     frigate = FakeService("frigate", BAD, depends_docker=True)
-    services = [docker.svc, frigate.svc]
-    policies = {s.name: ServicePolicy(store, s.name, s.grace_s) for s in services}
-    for p in policies.values():
-        p.started(t.mono - 1000)
-    for _ in range(12):
-        t.tick()
-        await supervisor.poll(services, policies, t.mono, t.wall)
+    services, policies, rec = _setup(store, t, docker, frigate)
+    await _polls(services, policies, t, 12, rec)
     assert frigate.observed == 0 and frigate.recovered == 0  # suppressed, never restarted behind a dead engine
-    assert await supervisor.poll(services, policies, t.mono, t.wall) == {"docker": BAD, "frigate": IDLE}
+    assert await _polls(services, policies, t, 1, rec) == {"docker": BAD, "frigate": IDLE}
     assert docker.recovered == 3
     assert _rows(store) == [("docker", "down", "restart_gave_up")]
+
+
+async def test_a_slow_recovery_never_pauses_the_other_services_or_the_poll(store):
+    """A `compose up` that takes minutes runs in the background: the poll returns at once, other services are
+    still observed, the recovering service is not observed (no second recovery) and its grace starts when the
+    recovery ends."""
+    t = T()
+    release = asyncio.Event()
+    slow = FakeService("frigate", BAD)
+    started_recovering = []
+
+    async def slow_recover() -> None:
+        started_recovering.append(1)
+        await release.wait()
+
+    slow.svc.recover = slow_recover
+    other = FakeService("mosquitto", GOOD)
+    services, policies, rec = _setup(store, t, slow, other)
+    await asyncio.wait_for(_polls(services, policies, t, 2, rec), 1)  # second BAD asks for the recovery
+    assert started_recovering == [1]
+    observed_before = slow.observed
+    seen = await asyncio.wait_for(_polls(services, policies, t, 5, rec), 1)  # five polls while it still runs
+    assert seen == {"frigate": supervisor.RECOVERING, "mosquitto": GOOD}
+    assert slow.observed == observed_before and other.observed == 7
+    assert started_recovering == [1]  # never started twice
+    release.set()
+    await asyncio.sleep(0)
+    await _polls(services, policies, t, 1, rec)  # sees the finished recovery: grace starts now
+    assert policies["frigate"].grace_until == t.mono + 60.0
+    assert store.one("SELECT kills FROM service_state WHERE service = 'frigate'")["kills"] == 1
 
 
 async def test_a_failed_recovery_is_logged_and_does_not_stop_the_poll(store):
@@ -215,13 +259,8 @@ async def test_a_failed_recovery_is_logged_and_does_not_stop_the_poll(store):
 
     broken.svc.recover = boom
     other = FakeService("mosquitto", BAD)
-    services = [broken.svc, other.svc]
-    policies = {s.name: ServicePolicy(store, s.name, s.grace_s) for s in services}
-    for p in policies.values():
-        p.started(t.mono - 1000)
-    for _ in range(3):
-        t.tick()
-        await supervisor.poll(services, policies, t.mono, t.wall)
+    services, policies, rec = _setup(store, t, broken, other)
+    await _polls(services, policies, t, 4, rec)
     assert other.recovered == 1
 
 
