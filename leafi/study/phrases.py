@@ -50,6 +50,7 @@ LINES: dict[str, list[str]] = {
     "mic_lost": ["I can't hear the microphone any more. Type what you read, or restart me when it's back."],
     "mic_lost_stop": ["I can't hear the microphone any more, and there's no keyboard here. Let's stop; "
                       "your reading is saved."],
+    "eye_offline": ["I can't see the camera right now. Say \"next page\" when you turn the page."],
     "playback_stop_hint": ["Tip: type /stop any time, even while I'm talking."],
 }
 

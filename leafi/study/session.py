@@ -56,6 +56,7 @@ log = logging.getLogger("leafi.session")
 READ, PRACTICE, CHECK, WRAP, FIND_PAGE, REVIEW_DUE = "READ", "PRACTICE", "CHECK", "WRAP", "FIND_PAGE", "REVIEW_DUE"
 PRON_CONFIRM_BELOW = 0.5  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
 ANSWER_WORDS = {"yes", "no", "good", "again"}  # spoken one-word answers in CHECK are answers, not commands
+EYE_OFFLINE_AFTER = 10  # consecutive empty page-watch frames before "camera offline" is shown (TD-20)
 
 
 @dataclass
@@ -103,6 +104,7 @@ class StudySession:
         self._control_task: asyncio.Task | None = None
         self._page_task: asyncio.Task | None = None
         self._page_open = False
+        self._eye_misses = 0  # consecutive empty frames; kept across watcher restarts
         self.flags = SessionFlags()
         self.session_id: int | None = None
         self.guard: coach.AsyncGuard | None = None
@@ -266,7 +268,11 @@ class StudySession:
             eye = self.hub.eye()
             frame = await eye.snapshot(None) if eye is not None else None
             if frame is None:
+                await self._eye_missed()
                 continue
+            if self._eye_misses >= EYE_OFFLINE_AFTER:
+                log.info("Eye frames are back after %d empty polls", self._eye_misses)
+            self._eye_misses = 0
             if tracker.last is None:
                 tracker.last = frame
                 continue
@@ -275,6 +281,14 @@ class StudySession:
                 if settled is not None and tracker.changed(settled):
                     log.info("page turn seen by the Eye")
                     return typed_utterance("/page", "eye")
+
+    async def _eye_missed(self) -> None:
+        """TD-20: a dead Eye (offline camera, empty `frame.jpeg`) is shown once per outage, on the Faces only;
+        page turns then rely on the learner's "next page"."""
+        self._eye_misses += 1
+        if self._eye_misses == EYE_OFFLINE_AFTER:
+            log.warning("Eye returned no frame for %d polls; camera offline?", self._eye_misses)
+            await self.hub.show(Display("status", phrases.say("eye_offline")))
 
     def _cancel_inputs(self) -> None:
         for t in (self._main_task, self._control_task, self._page_task):

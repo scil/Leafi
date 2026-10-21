@@ -101,6 +101,27 @@ async def test_a_physical_page_turn_settles_candidates_and_finds_the_new_page(se
     assert s.flags.transitions.count("FIND_PAGE") == 2
 
 
+async def test_a_dead_eye_is_reported_once_per_outage_on_the_face(settings):
+    """TD-20: empty frames for EYE_OFFLINE_AFTER polls show one status line; a frame resets it."""
+    from leafi.study import session as session_mod
+
+    settings.sentence_pause_s = 0.05
+    settings.page_poll_s = 0.01
+    store = Store(settings.db_path)
+    eye = FakeEye([None])
+    tracker = PageTracker(store, eye, MockOcr(), settings, sleep=lambda s: asyncio.sleep(0), settle_frames=1)
+    face = RecordingFace()
+    hub = Hub(faces={"f": face}, eyes={"desk": eye}, policy="none", study_eye="desk")
+    frame = render(PAGES[0], number=1)
+    assert session_mod.EYE_OFFLINE_AFTER * settings.page_poll_s < 0.5  # both outages outlast the threshold
+    script = [0.05] * 20 + [lambda: eye.show(frame), 0.1, lambda: eye.show(None)] + [0.05] * 20 + ["/stop"]
+    s = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(unavailable=True),
+                     listener=SlowVoice(script, voice=True), page_tracker=tracker, ocr=MockOcr())
+    await asyncio.wait_for(s.run(book_title="B", page_text=PAGE, page_number=1), 20)
+    offline = [d for d in face.shown if d.kind == "status" and "camera" in d.text.lower()]
+    assert len(offline) == 2, [d.text for d in face.shown]
+
+
 async def test_a_timed_out_listen_does_not_answer_the_next_listen(settings):
     """Review 2 D1: the pause that completes a sentence must not hand PRACTICE an instant timeout."""
     settings.sentence_pause_s = 0.1
