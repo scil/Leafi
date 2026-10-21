@@ -168,10 +168,19 @@ def _device_refs(root: Path) -> dict[tuple[str, str], tuple[str, str, str]]:
     return out
 
 
+def _secret_name(m: Manifest, name: str) -> bool:
+    k = m.keys.get(name)
+    return (k is not None and masked(k)) or name in envprotect.SECRET_FLOOR or bool(re.search(envprotect.CREDENTIAL_NAME, name))
+
+
 def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
-    """Every way the manifest disagrees with the code, the readers or the protection floor; [] = agree."""
+    """Every way the manifest disagrees with the code, the readers or the protection floor; [] = agree. The messages
+    reach the page, so a secret key's default or fallback value is never quoted in them."""
     out: list[str] = []
     classes = settings_classes()
+
+    def q(name: str, value: str) -> str:
+        return "<secret>" if _secret_name(m, name) else repr(value)
 
     # Settings fields, types and defaults, both ways
     for reader, cls in classes.items():
@@ -185,7 +194,7 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
             want = (show(f.default), empty_rule(f.annotation))
             got = k.default.get(reader)
             if got is None or (got.value, got.empty) != want:
-                out.append(f"{k.name}: default for {reader} should be {want[0]!r} (empty: {want[1]})")
+                out.append(f"{k.name}: default for {reader} should be {q(k.name, want[0])} (empty: {want[1]})")
     for k in m.keys.values():
         for reader, cls in classes.items():
             if reader in k.readers and k.name.lower() not in cls.model_fields:
@@ -197,7 +206,7 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
         k = m.keys.get(key)
         d = k.default.get(reader) if k else None
         if k is None or reader not in k.readers or d is None or (d.value, d.empty) != (value, rule):
-            out.append(f"{key}: {reader} reads it with default {value!r} (empty: {rule}); declare exactly that")
+            out.append(f"{key}: {reader} reads it with default {q(key, value)} (empty: {rule}); declare exactly that")
     for k in m.keys.values():
         for r in k.readers:
             if r.startswith("compose:") and (k.name, r) not in compose:
@@ -210,7 +219,7 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
         d = k.default.get(reader) if k else None
         want_absent = absent if absent != rule else None
         if k is None or reader not in k.readers or d is None or (d.value, d.empty, d.absent) != (value, rule, want_absent):
-            out.append(f"{key}: {reader} reads it with default {value!r} (empty: {rule}, absent: {absent})")
+            out.append(f"{key}: {reader} reads it with default {q(key, value)} (empty: {rule}, absent: {absent})")
     for k in m.keys.values():
         for r in k.readers:
             if r.startswith("devices.yml:") and (k.name, r) not in devices:
@@ -242,7 +251,7 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
                 except ValueError:
                     same = False
                 if not same:
-                    out.append(f"{key}: timing.ps1 falls back to {value!r}, leafi's default is {d.value!r}")
+                    out.append(f"{key}: timing.ps1 falls back to {q(key, value)}, leafi's default is {q(key, d.value)}")
             reader = "logon task" if key == "TASK_REPEAT_MIN" else "keep.ps1"
             if k is not None and reader not in k.readers:
                 out.append(f"{key}: {reader} reads it (activation) but it is not declared")
@@ -371,7 +380,7 @@ def _empty_notes(k: Key) -> list[str]:
     notes = []
     for r, d in k.default.items():
         if d.empty == "default":
-            notes.append(f"{r} uses {d.value!r}")
+            notes.append(f"{r} uses its built-in fallback" if masked(k) else f"{r} uses {d.value!r}")
         elif d.empty == "disables-device":
             notes.append(f"{r}: the device is disabled")
         elif d.empty == "current-dir":

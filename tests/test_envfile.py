@@ -86,6 +86,33 @@ def test_a_multi_line_value_never_reports_its_inner_lines_as_keys():
     assert "Canary" not in repr(problems)
 
 
+def test_an_escaped_quote_does_not_end_the_value_and_no_later_line_names_a_key():
+    f = parse("CAM_PASSWORD='first\nescaped\\'\nSecretCanary: hidden\nlast'\nOther: x\n")
+    assert "Canary" not in repr(f.problems())
+    assert all(p.key in (None, "CAM_PASSWORD") for p in f.problems())
+
+
+def test_a_conflict_survives_a_failing_cleanup(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+
+    def appears(src, dst):
+        dst.write_bytes(b"B=2\n")
+        raise FileExistsError(dst)
+
+    real_unlink = Path.unlink
+
+    def sticky(self, missing_ok=False):
+        if self.suffix == ".tmp":
+            raise PermissionError(self)
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(envfile, "_link", appears)
+    monkeypatch.setattr(Path, "unlink", sticky)
+    out = update_env(env, ABSENT, transform({"A": Op("set", "1")}), tmp_path / "data")
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    assert isinstance(out, Conflict)
+
+
 @pytest.mark.parametrize("value", ["a%b", "a=b", "x@y:z", "p$q", "p #q", "#", "a+", "名字,学校", "", "two words"])
 def test_written_values_read_back_identically(tmp_path, value):
     f = parse("# head\nA=old   # keep me\nB=1\n").apply({"A": Op("set", value), "C": Op("set", value)})

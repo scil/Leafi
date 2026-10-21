@@ -142,6 +142,14 @@ def _parse(data: dict) -> Manifest:
         help_ = spec.get("help", "")
         _need(isinstance(help_, str) and "$" not in help_ and "\n" not in help_, f"{where}: help has '$' or a newline")
         ex = spec.get("example")
+        _need(ex is None or (isinstance(ex, dict) and isinstance(ex.get("value"), str)
+                             and isinstance(ex.get("commented", False), bool)), f"{where}: example needs a string value")
+        _need(all(isinstance(r, str) for r in rs), f"{where}: readers must be strings")
+        _need(all(isinstance(g, str) for g in gvalues) and isinstance(gate.get("nonempty", False), bool),
+              f"{where}: gate values must be strings")
+        _need(all(isinstance(spec.get(f, False), bool) for f in ("secret", "privacy")), f"{where}: flags must be booleans")
+        _need(all(isinstance(n, str) for n in (*(spec.get("notes") or ()), *(spec.get("notes_after") or ()))),
+              f"{where}: notes must be strings")
         keys[name] = Key(
             name=name, group=spec["group"], type=t, readers=rs, help=help_,
             options=tuple(options) if options else None, domain=spec.get("domain"), default=default,

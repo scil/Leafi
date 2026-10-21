@@ -71,6 +71,8 @@ def test_agreement_catches_drift(mutate, expect):
     lambda d: d["groups"][0].pop("title"),
     lambda d: d.update(keys=["not", "a", "mapping"]),
     lambda d: d["keys"]["ASR_THREADS"].update(default={"leafi": "4"}),
+    lambda d: d["keys"]["ASR_THREADS"].update(example={"value": 42}),
+    lambda d: d["keys"]["ASR_THREADS"].update(secret="yes"),
 ])
 def test_bad_shape_is_a_schema_error(mutate):
     data = copy.deepcopy(RAW)
@@ -102,6 +104,15 @@ def test_a_weakened_manifest_still_masks_floor_secrets_and_shows_no_values(tmp_p
     assert body["agreement"]
     assert "canary-bark" not in repr(body)
     assert all("value" not in k for g in body["groups"] for k in g["keys"])
+
+
+def test_secret_fallbacks_never_reach_the_page_or_the_agreement_messages():
+    keys = {k["key"]: k for g in envedit.view(ROOT / "no-such.env")["groups"] for k in g["keys"]}
+    assert "change-me" not in repr(keys["GATUS_TOKEN"]) and "change-me" not in repr(keys["CAM_PASSWORD"])
+    data = copy.deepcopy(RAW)
+    data["keys"]["GATUS_TOKEN"]["default"]["compose:gatus"]["value"] = "other"
+    found = agree(data)
+    assert found and "change-me" not in repr(found) and "other" not in repr(found)
 
 
 def test_gated_bool_values_are_not_offered():

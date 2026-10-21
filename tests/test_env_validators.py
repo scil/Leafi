@@ -53,16 +53,21 @@ def _run_timing(field, text, monkeypatch):
     from leafi.core.config import Settings
     from leafi.ops import timing
 
-    return timing.resolve(Settings(_env_file=None, **{field: text}))
+    t, _ = timing.resolve(Settings(_env_file=None, **{field: text}))
+    return t
 
 
 def _run_checks_build(field, text, monkeypatch):
     from leafi.core.config import Settings
     from leafi.ops import checks
 
+    seen = []
     monkeypatch.setattr(checks, "_reg", lambda *a: 7)
-    built = checks.build(Settings(_env_file=None, **{field: text}))
-    return [asyncio.run(c.run()) for c in built if c.name == "active-hours"]
+    monkeypatch.setattr(checks, "hours_cover", lambda *a: seen.append(a[2:]) or True)
+    for c in checks.build(Settings(_env_file=None, **{field: text})):
+        if c.name == "active-hours":
+            asyncio.run(c.run())
+    return seen
 
 
 # How to drive each consumer the manifest names; a new consumer must be added here, so its binding is tested.
@@ -72,22 +77,32 @@ CONSUMERS = {
     "leafi.ops.timing:resolve": _run_timing,
     "leafi.ops.checks:build": _run_checks_build,
 }
+# Per validator: a distinguishable result, and how to see it in what the consumer produced.
+SENTINELS = {
+    "agent.parsers:parse_weekly_report": (("sentinel", 1, 2), lambda out, s: out == s),
+    "agent.parsers:parse_schedule": ([("sentinel", "00:00")], lambda out, s: out == s),
+    "leafi.ops.timing:parse_grace": ({"camera": 95.0}, lambda t, s: t.grace["camera"] == 95.0),
+    "leafi.ops.timing:parse_backoff": ((6.0, 30.0, 120.0, 300.0), lambda t, s: t.keep_backoff_s == s),
+    "leafi.ops.checks:parse_active_hours": ((3, 4), lambda seen, s: seen == [s]),
+}
 BOUND = [k for k in envedit.load()[0].keys.values() if k.validator]
 
 
 @pytest.mark.parametrize("key", BOUND, ids=[k.name for k in BOUND])
-def test_the_declared_consumer_calls_the_declared_validator(monkeypatch, key):
+def test_the_declared_consumer_uses_the_declared_validator(monkeypatch, key):
     """Spy on exactly the function the manifest names and run exactly the consumer it names: the spy must receive the
-    setting's text. Pointing a key at another parser (or another consumer) fails here."""
+    setting's text, and its distinguishable result must show up in what the consumer produced. Pointing a key at
+    another parser, or a consumer that calls the parser but ignores its result, fails here."""
     assert key.validator.consumer in CONSUMERS, f"add a runner for {key.validator.consumer}"
+    assert key.validator.fn in SENTINELS, f"add a sentinel for {key.validator.fn}"
     module, _, attr = key.validator.fn.partition(":")
     target = importlib.import_module(module)
-    real = getattr(target, attr)
-    good = next(d.value for r, d in key.default.items() if r in ("leafi", "habit agent"))
+    sentinel, reached = SENTINELS[key.validator.fn]
     calls = []
-    monkeypatch.setattr(target, attr, lambda text: calls.append(text) or real(good))
-    CONSUMERS[key.validator.consumer](key.name.lower(), "TEXT-" + key.name, monkeypatch)
+    monkeypatch.setattr(target, attr, lambda text: calls.append(text) or sentinel)
+    out = CONSUMERS[key.validator.consumer](key.name.lower(), "TEXT-" + key.name, monkeypatch)
     assert calls == ["TEXT-" + key.name]
+    assert reached(out, sentinel)
 
 
 def test_parsed_results_drive_the_consumers(monkeypatch):

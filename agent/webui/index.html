@@ -409,9 +409,13 @@ function showTab(which){
 $('#tab-tasks').onclick = () => showTab('tasks');
 $('#tab-env').onclick = () => showTab('env');
 
+let GONE = [];
 async function loadEnv(){
   const r = await fetch('/api/env');
   ENV = await r.json();
+  // 先对账再渲染:重新读取后已经不存在的项(比如被手工删掉的未知项)丢弃其待提交改动
+  GONE = Object.keys(PENDING).filter(k => !keyInfo(k));
+  GONE.forEach(k => delete PENDING[k]);
   renderEnv();
 }
 
@@ -551,11 +555,8 @@ async function saveEnv(){
   ENVERR = {}; ENVRESULT = '';
   if (r.status === 409){
     await loadEnv();
-    // 重新读取后已经不存在的项(比如被手工删掉的未知项)不再保留待提交的改动
-    const gone = Object.keys(PENDING).filter(k => !keyInfo(k));
-    gone.forEach(k => delete PENDING[k]);
     ENVRESULT = '<b>.env 在你编辑期间被改过,已重新读取。</b>你的改动还在下面,请核对后再保存;隐私确认已清空。'
-      + (gone.length ? '<br>这些项已不在文件里,对应改动已丢弃:' + gone.map(esc).join('、') : '');
+      + (GONE.length ? '<br>这些项已不在文件里,对应改动已丢弃:' + GONE.map(esc).join('、') : '');
     renderEnv(); return;
   }
   if (r.status === 500 && d.recovery){

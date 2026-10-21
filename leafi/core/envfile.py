@@ -118,11 +118,13 @@ class EnvFile:
         if final_nl:
             lines = lines[:-1]
         seen: dict[str, int] = {}
-        open_quote = None  # a quoted value continuing over lines: its lines are data, never reported as keys
+        # A quoted value may continue over lines, and its lines are data. Once a quote may be open, line boundaries
+        # are no longer trustworthy, so no later problem names a key at all (a "key" could be part of a secret).
+        open_quote, uncertain = None, False
         for i, ln in enumerate(lines, 1):
             if open_quote:
                 problems.append(LineProblem(i, None, "continuation of a multi-line quoted value"))
-                if open_quote in ln:
+                if open_quote in re.sub(r"\\.", "", ln):
                     open_quote = None
                 continue
             if ln == "" or ln.startswith("#"):
@@ -132,15 +134,15 @@ class EnvFile:
             if m and not empty_then_comment and not (m.group("quoted") is not None and "${" in m.group("quoted")):
                 k = m.group(1)
                 if k in seen:
-                    problems.append(LineProblem(i, k, f"duplicate of line {seen[k]}"))
+                    problems.append(LineProblem(i, None if uncertain else k, f"duplicate of line {seen[k]}"))
                 else:
                     seen[k] = i
                 continue
             key, rule = _diagnose(ln)
-            problems.append(LineProblem(i, key, rule))
+            problems.append(LineProblem(i, None if uncertain else key, rule))
             q = re.match(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*[=:]\s*(['\"])(.*)$", ln)
-            if q and q.group(1) not in q.group(2).replace("\\" + q.group(1), ""):
-                open_quote = q.group(1)
+            if q and q.group(1) not in re.sub(r"\\.", "", q.group(2)):
+                open_quote, uncertain = q.group(1), True
         return cls(raw, text, nl, lines, final_nl, problems)
 
     def render(self) -> bytes:
@@ -433,7 +435,10 @@ def update_env(path: Path, expected_digest: str, transform: Callable[[bytes], by
             try:
                 _link(tmp, path)
             except FileExistsError:
-                tmp.unlink(missing_ok=True)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    log.warning("could not remove %s after a conflict", tmp.name)
                 return Conflict()
             except OSError as e:
                 reason = f"could not create .env ({e.__class__.__name__})"
