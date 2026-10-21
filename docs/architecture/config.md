@@ -69,7 +69,13 @@ Rules: unknown `adapter` or capability → startup error naming the device. A de
 | `VAD_SILENCE_S` / `VAD_THRESHOLD` | `0.6` / `0.5` | Silero VAD (`models/vad/silero_vad.onnx`): silence that closes an utterance; speech probability threshold. Sentence completion is still `SENTENCE_PAUSE_S` |
 | `OCR_VERSION` | `PP-OCRv6` | `PP-OCRv6` (ships inside the rapidocr wheel) · `PP-OCRv5` (English recogniser, fetched by `doctor --download`); P-3 on desk captures (2026-10-20): v6 gave 6–8 confident lines where v5 gave 1–5 |
 | `OCR_AUTO_ROTATE` | `true` | when 0° yields < 3 confident lines, read 90/270/180 too and keep the best (the desk book lay at 270°); up to four passes of ~1.5 s once per page |
-| `SUPERVISE` | `docker,camera,frigate,mosquitto` | services the supervisor keeps running (ADR-0016). `habit-agent` is opt-in because the habit coach speaks through the camera on its schedule; add `ollama` when the vision judge is used daily |
+| `CHECKS_EVERY_S` | `900` | configuration checks interval (ADR-0016); `python -m leafi checks` runs them once and prints the result |
+| `GO2RTC_SHA256` | the patched build of 2026-10-21 | the `go2rtc-patched` check's expected hash; update it after a patched rebuild (`tools/go2rtc/PATCHES.md`) |
+| `ACTIVE_HOURS` / `MIN_FREE_GB` | `7-21` / `5` | Windows Update active hours must cover these hours; free space required on the data drive |
+| `REQUIRED_CHANNELS` | `telegram,heartbeat` | the `telegram` and `heartbeat` checks fail while a listed channel is not configured; remove one to accept toast-only or no heartbeat |
+| `HEARTBEAT_URL` | `` (empty) | Healthchecks.io ping URL; the supervisor GETs it every poll (dead man's switch) |
+| `GATUS_URL` / `GATUS_TOKEN` | `http://127.0.0.1:18080` / `` | the read-only dashboard; the same `GATUS_TOKEN` must reach the `gatus` container (docker-compose.yml reads `.env`); empty: no pushes |
+| `SUPERVISE` | `docker,camera,frigate,mosquitto,gatus` | services the supervisor keeps running (ADR-0016). `habit-agent` is opt-in because the habit coach speaks through the camera on its schedule; add `ollama` when the vision judge is used daily |
 | `SUPERVISOR_POLL_S` | `60` | poll interval; two bad polls in a row trigger a recovery, at most 3 per outage |
 | `SUPERVISOR_PORT` | `18771` | the supervisor's `POST /rearm?service=S` listener on 127.0.0.1 (the 🔁 button rearms `camera`); outside Windows' excluded port ranges |
 | `GO2RTC_EXE` / `GO2RTC_CONFIG` | `tools/go2rtc/go2rtc.exe` / `tools/go2rtc/go2rtc-host.yaml` | the go2rtc child the supervisor starts |

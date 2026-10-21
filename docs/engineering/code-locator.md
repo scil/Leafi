@@ -18,6 +18,11 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Invariant: once the `leafi-supervisor` task exists, only the supervisor starts or kills its children; at most 3 recoveries per service per outage; containers are not probed while Docker is down; alerts leave only as catalog sentences (toasts at once, Telegram oldest-first).
 - Check: `python -m leafi alert --status` (per-service budget, unsent rows), `data/logs/supervisor.log`, `data/logs/keep-supervisor.log`; `tests/test_supervisor.py`, `tests/test_alerts.py`.
 
+## "Leafi check: …" alert / dashboard red / heartbeat alarm from Healthchecks.io
+- Start: `leafi/ops/checks.py` (one pure rule per check, `build`, `CheckRunner`, `heartbeat`, `push`), `config/gatus/config.yaml`; ADR-0016.
+- Invariant: checks never repair; one alert per drift and one when it passes again; Gatus has no alerting provider; the heartbeat is a bodyless GET.
+- Check: `python -m leafi checks` (each check ok / FAIL), the dashboard at http://127.0.0.1:18080, `tests/test_checks.py`.
+
 ## "task editor rejected my prompt" / 红线 01
 - Start: `agent/tasks.py::validate`, `GUARD_PHRASES`.
 - Invariant: a vision-judge prompt must say it does not identify people; empty prompt only allowed for built-in kinds.
