@@ -175,7 +175,16 @@ def _secret_name(m: Manifest, name: str) -> bool:
 
 def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
     """Every way the manifest disagrees with the code, the readers or the protection floor; [] = agree. The messages
-    reach the page, so a secret key's default or fallback value is never quoted in them."""
+    reach the page, so a secret key's values are never quoted in them, and a manifest the checks did not foresee
+    yields a message, never an exception (the page then stays read-only)."""
+    try:
+        return _agreement(m, root)
+    except Exception as e:  # noqa: BLE001 - any surprise makes the page read-only, never crashes it
+        log.warning("agreement could not run: %s", e.__class__.__name__)
+        return [f"the agreement check could not run ({e.__class__.__name__}); fix config/env-schema.json"]
+
+
+def _agreement(m: Manifest, root: Path) -> list[str]:
     out: list[str] = []
     classes = settings_classes()
 
@@ -264,16 +273,23 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
             except (ImportError, AttributeError):
                 out.append(f"{k.name}: domain {k.domain} does not resolve")
                 continue
-            values = set(dom.backends) | set(dom.deferred) if hasattr(dom, "backends") else set(dom)
+            if hasattr(dom, "backends"):
+                values = set(dom.backends) | set(dom.deferred)
+            elif isinstance(dom, (tuple, list, set, frozenset)) and all(isinstance(v, str) for v in dom):
+                values = set(dom)
+            else:
+                out.append(f"{k.name}: domain {k.domain} is not a registry or a collection of strings")
+                continue
             if set(k.options) != values:
-                out.append(f"{k.name}: options {sorted(k.options)} differ from {k.domain} {sorted(values)}")
+                detail = "" if _secret_name(m, k.name) else f" {sorted(k.options)} vs {sorted(values)}"
+                out.append(f"{k.name}: options differ from {k.domain}{detail}")
             if hasattr(dom, "deferred") and not set(dom.deferred) <= set(k.gate_values):
                 out.append(f"{k.name}: deferred backends must be gated")
         for g in k.gate_values:
             try:
                 typed(k, g)
             except ValueError:
-                out.append(f"{k.name}: gate value {g!r} is not a valid value")
+                out.append(f"{k.name}: gate value {q(k.name, g)} is not a valid value")
 
     # validators: resolve, and accept every example and default of their key
     for k in m.keys.values():
@@ -284,6 +300,9 @@ def agreement(m: Manifest, root: Path = ROOT) -> list[str]:
             _resolve(k.validator.consumer)
         except (ImportError, AttributeError):
             out.append(f"{k.name}: validator or consumer does not resolve")
+            continue
+        if not callable(fn):
+            out.append(f"{k.name}: validator {k.validator.fn} is not a function")
             continue
         texts = [d.value for r, d in k.default.items() if r in (READER_LEAFI, READER_HABIT)]
         if k.example is not None and not k.example_commented:
@@ -409,7 +428,7 @@ def view(path: Path = Path(".env"), root: Path = ROOT) -> dict:
                     "defaults": {r: {"value": "" if masked(k) else d.value, "empty": d.empty}
                                  for r, d in k.default.items()},
                     "activation": sorted({m.readers[r] for r in k.readers}), "secret": masked(k),
-                    "privacy": k.privacy, "options": offered(k), "gated": is_gated,
+                    "privacy": k.privacy, "options": None if masked(k) else offered(k), "gated": is_gated,
                     "empty_allowed": all(d.empty != "error" for d in k.default.values()),
                     "empty_notes": _empty_notes(k),
                     "editable": not locked and not is_gated}

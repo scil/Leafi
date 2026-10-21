@@ -140,9 +140,13 @@ class EnvFile:
                 continue
             key, rule = _diagnose(ln)
             problems.append(LineProblem(i, None if uncertain else key, rule))
-            q = re.match(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*[=:]\s*(['\"])(.*)$", ln)
-            if q and q.group(1) not in re.sub(r"\\.", "", q.group(2)):
-                open_quote, uncertain = q.group(1), True
+            # any unbalanced quote, wherever it is on the line, may open a value that continues: from here on, lines
+            # may be data, so treat what follows as continuation and name no key again
+            bare = re.sub(r"\\.", "", ln)
+            for qc in ("'", '"'):
+                if bare.count(qc) % 2:
+                    open_quote, uncertain = qc, True
+                    break
         return cls(raw, text, nl, lines, final_nl, problems)
 
     def render(self) -> bytes:

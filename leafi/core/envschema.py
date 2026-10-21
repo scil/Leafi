@@ -86,7 +86,8 @@ def parse(data: dict) -> Manifest:
     except SchemaError:
         raise
     except (KeyError, TypeError, AttributeError, ValueError) as e:
-        raise SchemaError(f"malformed manifest ({e.__class__.__name__}: {e})") from None
+        # never the exception's text: it can quote a manifest value, and this message reaches the page
+        raise SchemaError(f"malformed manifest ({e.__class__.__name__})") from None
 
 
 def _parse(data: dict) -> Manifest:
@@ -109,7 +110,7 @@ def _parse(data: dict) -> Manifest:
         _need(isinstance(spec, dict), f"{where}: not an object")
         _need(spec.get("group") in gids, f"{where}: unknown group")
         t = spec.get("type")
-        _need(t in TYPES, f"{where}: unknown type {t!r}")
+        _need(t in TYPES, f"{where}: unknown type")  # messages name the field and rule, never a manifest value
         rs = tuple(spec.get("readers") or ())
         _need(all(r in readers for r in rs), f"{where}: a reader has no activation entry")
         options = spec.get("options")
@@ -120,7 +121,7 @@ def _parse(data: dict) -> Manifest:
             if t == "list":
                 _need(all("," not in o and " " not in o for o in options), f"{where}: list options contain ',' or ' '")
         else:
-            _need(options is None, f"{where}: options only for enum and list")
+            _need(options is None and spec.get("domain") is None, f"{where}: options and domain only for enum and list")
         default = {}
         for r, d in (spec.get("default") or {}).items():
             _need(r in rs, f"{where}: default for a reader it does not list")
@@ -164,6 +165,6 @@ def _parse(data: dict) -> Manifest:
 def load(path: Path = PATH) -> Manifest:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError) as e:  # JSON errors quote the text near the fault: report only the class
         raise SchemaError(f"cannot read {Path(path).name}: {e.__class__.__name__}") from None
     return parse(data)

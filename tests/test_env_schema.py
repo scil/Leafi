@@ -73,6 +73,7 @@ def test_agreement_catches_drift(mutate, expect):
     lambda d: d["keys"]["ASR_THREADS"].update(default={"leafi": "4"}),
     lambda d: d["keys"]["ASR_THREADS"].update(example={"value": 42}),
     lambda d: d["keys"]["ASR_THREADS"].update(secret="yes"),
+    lambda d: d["keys"]["ASR_THREADS"].update(domain="leafi.envedit:TYPE_ANNOTATIONS"),
 ])
 def test_bad_shape_is_a_schema_error(mutate):
     data = copy.deepcopy(RAW)
@@ -113,6 +114,39 @@ def test_secret_fallbacks_never_reach_the_page_or_the_agreement_messages():
     data["keys"]["GATUS_TOKEN"]["default"]["compose:gatus"]["value"] = "other"
     found = agree(data)
     assert found and "change-me" not in repr(found) and "other" not in repr(found)
+
+
+def test_manifest_values_never_reach_schema_errors():
+    data = copy.deepcopy(RAW)
+    data["keys"]["CAM_PASSWORD"]["type"] = "SecretCanary"
+    with pytest.raises(envschema.SchemaError) as e:
+        envschema.parse(data)
+    assert "Canary" not in str(e.value)
+    data = copy.deepcopy(RAW)
+    data["groups"][0] = {"id": 1, "title": "SecretCanary"}
+    with pytest.raises(envschema.SchemaError) as e:
+        envschema.parse(data)
+    assert "Canary" not in str(e.value)
+
+
+def test_a_secret_enum_never_shows_its_options(tmp_path):
+    data = copy.deepcopy(RAW)
+    data["keys"]["CAM_PASSWORD"].update(type="enum", options=["SecretCanary"], domain="leafi.core.envschema:TYPES")
+    data["keys"]["CAM_PASSWORD"].pop("secret", None)
+    root = _root_with(tmp_path / "repo", data)
+    body = envedit.view(tmp_path / "none.env", root=root)
+    assert body["agreement"] and "Canary" not in repr(body)
+
+
+def test_agreement_reports_instead_of_crashing_on_unforeseen_shapes():
+    data = copy.deepcopy(RAW)
+    data["keys"]["WEEKLY_REPORT"]["validator"]["fn"] = "leafi.core.envschema:TYPES"
+    found = agree(data)
+    assert any("not a function" in f for f in found), found
+    data = copy.deepcopy(RAW)
+    data["keys"]["OCR_SNAP"]["domain"] = "leafi.core.envschema:PATH"
+    found = agree(data)
+    assert any("not a registry or a collection" in f for f in found), found
 
 
 def test_gated_bool_values_are_not_offered():
