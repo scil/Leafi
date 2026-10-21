@@ -16,6 +16,17 @@ if ($null -eq $s) {
         } else {
             Write-Output "  [--] $name  未连接(无人观看时属正常:go2rtc 是懒连接)"
         }
+        # TD-25: 取一帧(静默,不推喇叭)。HTTP 200 但 0 字节 = P2P 生产者已死(常因米家 App 看过摄像头)
+        $tmp = [IO.Path]::GetTempFileName()
+        $code = curl.exe -s -m 15 -o $tmp -w "%{http_code}" "http://127.0.0.1:2984/api/frame.jpeg?src=$name"
+        $size = (Get-Item $tmp).Length
+        Remove-Item $tmp
+        if ($code -eq "200" -and $size -gt 0) {
+            Write-Output "       取帧 OK  $([math]::Round($size / 1KB))KB"
+        } else {
+            Write-Output "  [X]  $name  取帧失败(HTTP $code,$size 字节)—— 点【重启 go2rtc】(scripts\win\go2rtc-restart.bat);"
+            Write-Output "       重启后仍失败:摄像头离线或 IP 变了(查 go2rtc-host.yaml 的地址,勿打印整个文件)"
+        }
     }
 }
 
@@ -50,6 +61,10 @@ if (Test-Path $log) {
     $errs = @($lines | Select-String -Pattern "ERR|WRN").Count
     Write-Output "  向小米云拨号取密钥: $dials 次(频繁增长=连接不稳)"
     Write-Output "  错误/警告行:       $errs"
+    $displaced = @($lines | Select-String -SimpleMatch "unknown msg f1f00000").Count
+    if ($displaced -gt 0) {
+        Write-Output "  [X] P2P 会话被米家 App 挤掉 $displaced 次(cs2: unknown msg f1f00000)—— 点【重启 go2rtc】"
+    }
     if ($errs -gt 0) {
         Write-Output "  最近 3 条:"
         $lines | Select-String -Pattern "ERR|WRN" | Select-Object -Last 3 |

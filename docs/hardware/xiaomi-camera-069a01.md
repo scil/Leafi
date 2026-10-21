@@ -62,7 +62,7 @@ All runs: 2026-10-20, the owner (adult) ~1 m from the camera in its current wide
 
 | Mode | Symptom | Recovery | Evidence |
 |---|---|---|---|
-| Mi Home app viewing displaces go2rtc's P2P session (TD-25) | `cs2: unknown msg f1f00000`, EOF on every dial, push → HTTP 500 "can't find consumer", empty frames | restart the host go2rtc | Plan Surprises (P-5) |
+| Mi Home app viewing displaces go2rtc's P2P session (TD-25) | `cs2: unknown msg f1f00000`, EOF on every dial, push → HTTP 500 "can't find consumer", empty frames | `scripts\win\go2rtc-restart.bat`; `health.ps1` flags it (one silent frame per stream) | Plan Surprises (P-5) |
 | Camera unreachable | P2P dial times out after 5 s and retries; `frame.jpeg` → HTTP 200 with an empty body after 5.2 s (TD-20). ICMP ping fails even when P2P works, so "no ping" is not "offline" | check the camera's DHCP address in `go2rtc-host.yaml` (do not print the file) | Plan Surprises (P-2, P-3) |
 | No internet | P2P keys are fetched per connection; firewalling the camera breaks it | do not firewall | `AGENTS.md` Known traps |
 | Stock go2rtc | static on the speaker and dropped connections | the patched exe only (`tools/go2rtc/PATCHES.md`) | PATCHES.md |
