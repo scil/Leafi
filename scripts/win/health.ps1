@@ -31,6 +31,25 @@ if ($null -eq $s) {
 }
 
 Write-Output ""
+Write-Output "===== 看门狗(ADR-0016:自动重启 go2rtc + 告警)====="
+$wt = Get-ScheduledTask -TaskName 'leafi-watchdog' -ErrorAction SilentlyContinue
+if ($null -eq $wt) {
+    Write-Output "  [--] 未安装登录任务(scripts\win\install-tasks.ps1);go2rtc 断线只能手动重启"
+} else {
+    Write-Output "  任务 leafi-watchdog: $($wt.State)"
+}
+Push-Location $repo
+& .venv\Scripts\python.exe -m leafi alert --status 2>$null | ForEach-Object { "  $_" }
+Pop-Location
+foreach ($f in @("watchdog.log", "keep-watchdog.log")) {
+    $p = Join-Path $repo "data\logs\$f"
+    if (Test-Path $p) {
+        Write-Output "  $f 最近 5 行:"
+        Get-Content $p -Tail 5 | ForEach-Object { "    $_" }
+    }
+}
+
+Write-Output ""
 Write-Output "===== Frigate(:15000)====="
 $st = curl.exe -s -m 5 http://127.0.0.1:15000/api/stats | ConvertFrom-Json
 if ($null -eq $st) {
@@ -56,7 +75,7 @@ Write-Output ""
 Write-Output "===== 宿主 go2rtc 近期日志 ====="
 $log = Join-Path $repo "tools\go2rtc\host.log"
 if (Test-Path $log) {
-    $lines = Get-Content $log
+    $lines = Get-Content $log -Tail 2000
     $dials = @($lines | Select-String -SimpleMatch "xiaomi: dial").Count
     $errs = @($lines | Select-String -Pattern "ERR|WRN").Count
     Write-Output "  向小米云拨号取密钥: $dials 次(频繁增长=连接不稳)"
