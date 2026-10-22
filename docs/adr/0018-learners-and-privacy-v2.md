@@ -1,35 +1,35 @@
 ---
 status: proposed
 date: 2026-10-21
-revised: 2026-10-22 (codex design reviews 1–6 and the code-plan-review of 2026-10-21 with the owner's eight decisions; see Reviews)
-supersedes: 0011 (egress policy section only; its v1 scope list stays except the Ollama deferral, lifted here under §2's conditions)
-amends: 0010 (§9 deletion covers the new tables)
+revised: 2026-10-22 (v3: the owner's decision to defer every parent feature for a simple household setup; the second code-plan-review pass; the domain prior-art map §3; the harness-libraries research §1 and §6). Earlier: code-plan-review pass 1 with the owner's eight decisions, codex design reviews 1–6 (see Reviews).
+supersedes: 0011 (egress policy section only; its v1 scope list stays except the Ollama deferral, lifted here under §2's condition)
+amends: 0010 (§9 deletion covers the new tables), 0003 (red line on cloud payloads), 0016 (alert and egress rows)
 ---
 
-# Several learners, recognised locally; learner text may go to the cloud by the learner's setting, pseudonymised; audio and images only with bound per-item consent
+# Several learners, recognised locally; learner text may go to the cloud by the learner's setting, pseudonymised; audio and images only with per-item consent
 
-Owner decisions of 2026-10-21 (research [`../research/2026-10-21-ai-led-study.md`](../research/2026-10-21-ai-led-study.md) §1, decisions 2, 4–7; pool D14, D18, D20) and of 2026-10-22 on the code-plan-review (guest kept one week; guests never consent to media; a household time zone; a Learners tab with a parent PIN; `forget` reaches every local store; a voice disagreement is not a failure; face only after measurement; locality by model allow-list). The previous rule — text only, never the learner's name or own words — was judged too strict by the owner. The habit track (`agent/`) is outside this ADR; its `NOTIFY_WITH_SNAPSHOT` opt-in stays governed by AGENTS.md as before. **`security.md` owns the egress table** once this ADR is accepted; this ADR records the decision and §2 states the table the rewrite starts from.
+Owner decisions of 2026-10-21 (research [`../research/2026-10-21-ai-led-study.md`](../research/2026-10-21-ai-led-study.md) §1, decisions 2, 4–7) and 2026-10-22 (guest kept one week; guests never consent to media; a household time zone; `forget` reaches every local store; a voice disagreement is not a failure; face only after measurement; locality by model allow-list; **every parent-related feature deferred: in-home use, simplicity first**, §5). The previous rule — text only, never the learner's name or own words — was judged too strict by the owner. Provenance of each mechanism: [`../research/2026-10-22-domain-prior-art.md`](../research/2026-10-22-domain-prior-art.md) §3 (this ADR applies its recommended column except the parent-consent rows, which are deferred). The habit track (`agent/`) is outside this ADR. **`security.md` owns the egress table** once this ADR is accepted; §2 states the table the rewrite starts from.
 
 ## 1. Learners and identity
 
-`learners` (id, kind ∈ `learner` | `guest` | `anonymous`, display_name, birth_year?, school_year?, alias, alias_age_band, settings json, recognition json, settings_version, created_at, guest_expires_at?). `anonymous` is one permanent row that owns the counts of discarded guest sessions; it is never deleted and has no settings. Ownership:
+`learners` (id `INTEGER PRIMARY KEY AUTOINCREMENT` — ids are never reused —, kind ∈ `learner` | `guest` | `anonymous`, display_name, birth_year?, school_year?, alias, alias_age_band, settings json, settings_version, recognition json, guest_reason?, guest_expires_at?, forgetting (bool), created_at). `anonymous` is one permanent row that owns the counts of deleted guest sessions. Ownership:
 
-- Direct `learner_id` (NOT NULL): `reading_sessions`, `knowledge_items`, `difficulties`, `retrieval_events`, `learner_notes`, `book_notes`, `review_answers`, `anki_outbox`, `consents`, `egress_log`.
-- Through `session_id` (a NOT NULL column on each; queries join): `activities`, `cycles`, `brain_calls`, `page_reads`, `utterances`, `encounters` (with `session_id` now required; the parent trigger uses the parent's session of record, §6.1). `observations`, `miscues`, `practices` reach a session through `utterances` / `page_reads`.
-- Shared by the household: `books`, `pages`, `page_revisions`, `page_images`, `corrections` (with `source_learner_id`, §3), `lexicon`.
+- Direct `learner_id` (NOT NULL): `reading_sessions`, `knowledge_items`, `difficulties`, `retrieval_events`, `learner_notes`, `book_notes`, `review_answers`, `anki_outbox`, `consents`, `encounters` (with `session_id` nullable, for encounters made outside a session).
+- `egress_log.learner_id` is nullable, with a CHECK that it is NULL exactly for `ops` purposes (§2).
+- Through `session_id` (NOT NULL; queries join): `activities`, `cycles`, `brain_calls`, `page_reads`, `utterances`; `observations`, `miscues`, `practices` reach a session through `utterances` / `page_reads`.
+- Shared by the household: `books`, `pages`, `page_revisions`, `page_images`, `corrections`, `lexicon`.
 
-Keys: `knowledge_items` unique on `(learner_id, kind, language, key, sense_hint)`; `difficulties` per learner; `anki_item_key` per learner and each learner's own deck; card dedupe by `(learner_id, lemma)`; interrupted-session and "continue from page N?" lookups by `(learner_id, book_id)`. All of these go through one learner-scoped store API (§6.1).
+Keys: `knowledge_items` unique on `(learner_id, kind, language, key, sense_hint)`; `difficulties` per learner; each learner's own Anki deck; card dedupe by `(learner_id, lemma)`; "continue from page N?" by `(learner_id, book_id)`. The direct-owner tables are written through one learner-scoped store API in `leafi/core/learner_store.py` (a core module, so both `leafi.study` and `leafi.privacy` may import it under ADR-0002's layer rule); `egress` writes `egress_log` and `consents` through it too.
 
-**Forget.** `forget --learner <id>` deletes the direct rows, every row reached through that learner's sessions (including `brain_calls` payloads, `activities`, `cycles`, `egress_log`), `data/learners/<id>/`, the learner's `data/evals/decisions/` records, `cache/tts` clips synthesised from lines with that learner as a source (`cache/tts` keys record provenance, §3), and DEBUG text logs naming the session; it offers deleting the learner's Anki deck as a separate confirmation; magpie's own logs are outside Leafi and the parent is told so. It refuses while that learner owns a session with `ended_at IS NULL` and the speech lease is held, and works in small transactions so a running session of another learner is never blocked past `busy_timeout`. `forget --session` / `--book` (ADR-0010 §9) also delete `activities`, `cycles`, `brain_calls`, `retrieval_events` and `egress_log` rows of the sessions they reach.
+**Forget.** `forget --learner <id>`: one conditional update sets `forgetting = true` and is refused while that learner owns a session with `ended_at IS NULL`; `identify` never offers a learner who is being forgotten; then small transactions delete the direct rows, every row reached through the learner's sessions (`brain_calls`, `activities`, `cycles`, `egress_log`, `utterances` …), `data/learners/<id>/`, the learner's `data/evals/decisions/` records, the learner as a source in `cache/tts` (a clip is deleted when no source is left, §3), DEBUG text logs naming the learner's sessions, and every note or assessment of another learner that names this learner as a source (§3); the last transaction deletes the `learners` row. It offers deleting the learner's Anki deck as a separate confirmation; magpie's own logs are outside Leafi and the command says so. `forget --session` / `--book` (ADR-0010 §9) also delete the `activities`, `cycles`, `brain_calls`, `retrieval_events` and `egress_log` rows of the sessions they reach.
 
-**Who is studying.** `identify(s)` runs inside the session (ADR-0017 §2), so the control latch, the deadline and `finalize` cover it. The session starts owned by a fresh guest row; confirming a learner re-keys that session and its rows to the learner, deletes the empty guest row and bumps the epoch, in one transaction. Identification utterances are used in memory and never stored. Until confirmed: the egress filter treats `cloud.text` as off, `cloud.media` is `never`, recognition results are not stored, and prompts use the local TTS only. Every `ask` and `confirm` waits `ASK_S` (8 s), capped by the session deadline. In text mode there is no voice match: the console list is the identification.
+**Who is studying.** `identify(s)` runs inside the session (ADR-0017 §2). The session starts owned by a fresh guest row; confirming a learner re-keys that session to the learner, deletes the empty guest row and bumps the epoch, in one transaction. Identification utterances are used in memory and never stored. Until confirmed: `cloud.text` is treated as off, media consent is impossible, recognition results are not stored, prompts use the local TTS only. Every `ask` and `confirm` waits `ASK_S` (8 s), capped by the session deadline. In text mode, or after a `ListenerLost` with a console, identification is the console list (no voice match); a `ListenerLost` without a console is terminal (ADR-0017 §1).
 
 ```
 identify(s) -> Learner:
-  u = ask("Hello! Who's reading today?")                   # u is the utterance recognition uses; typed → no voice match
-  if no valid samples arrived while asking: raise ListenerLost                          # a dead Ear is terminal, not "no match"
-  cands_v = [l for l in learners(kind=learner) if l.recognition.voice]
-  cands_f = [l for l in learners(kind=learner) if l.recognition.face and l.recognition.face_measured]   # decision 7
+  u = ask("Hello! Who's reading today?")                   # the utterance recognition uses; typed → no voice match
+  cands_v = [l for l in learners(kind=learner, forgetting=false) if l.recognition.voice]
+  cands_f = [l for l in learners(kind=learner, forgetting=false) if l.recognition.face and l.recognition.face_measured]
   v = speaker_match(u, cands_v); f = face_match(eye_frame, cands_f) if face_in_frame(eye_frame) else absent
   per modality: accept(L) if best ≥ RECOG_ACCEPT[ear] and best − second ≥ RECOG_MARGIN[ear]; else ambiguous / none
   guess = L if one modality accepts L and the other does not accept a different learner, else None
@@ -39,97 +39,135 @@ identify(s) -> Learner:
     if name is None: name = parse_name(ask("What's your name?"))
     if name matches an enrolled learner (fuzzy ≥ 0.85 or a console pick) and confirm("<name>?"): return that learner
     if name is new and confirm("Shall I remember you as <name>?"): return enrol(name)    # asks age or school year
-    if name == "don't remember me": s.guest_reason = "declined"; return s.learner
+    if name == "don't remember me": set_guest(s, reason = "declined"); return s.learner
     name = None
-  say("Today will be saved for a grown-up to check.")       # the child is told
-  s.guest_reason = "unconfirmed"; return s.learner
+  say("Today will be kept for a week, then forgotten, unless you tell me your name next time.")
+  set_guest(s, reason = "unconfirmed", expires = now + 7 days); return s.learner
 ```
 
-**Guests.** A guest (`kind = guest`) has `cloud.text` off, `cloud.media = never`, recognition off, no export and no parent notification. A guest session that ended `unconfirmed` is **kept for one week** (`guest_expires_at`, owner decision) with its learning record: the parent assigns it to a learner in the Learners tab (its rows are re-keyed and the guest row deleted) or discards it. A `declined` guest, or an unassigned one past `guest_expires_at`, is deleted as by `forget --learner`; its session rows keep only the counts, re-keyed to `anonymous`. The sweep's predicate is `kind = 'guest' AND (guest_reason = 'declined' OR guest_expires_at < now) AND EXISTS(session) AND NOT EXISTS(session with ended_at IS NULL)`; it runs at session start after the lease is acquired and before `new_guest()`, and daily under the supervisor.
+**Guest end states** (the one owner; ADR-0017's `finalize` applies it). `set_guest` writes `guest_reason` and `guest_expires_at` on the guest row when `identify` returns, not at wrap.
 
-**Recognition** is on by default for every enrolled learner (owner decision 2), turned off per modality by the learner or parent (which deletes that learner's embedding for it). Voice is primary: a sherpa-onnx speaker-embedding model. **Face counts only after its hit rate is measured on the real study camera position** and recorded in the plan (`recognition.face_measured`); the study camera frames the book, so a frame with no face of sufficient size makes the modality `absent`, not `none` (owner decision 7). Thresholds are per Ear (`RECOG_ACCEPT[ear]`, `RECOG_MARGIN[ear]`), each from a probe that brackets the same child across sessions against sibling pairs; enrolment records the Ear it used. Embeddings live in `data/learners/<id>/` and never leave the machine. Red line 01 of the habit track is unchanged.
+| How the session ended | Outcome |
+|---|---|
+| identified as a learner | session re-keyed to the learner; guest row deleted |
+| `declined` ("don't remember me") | at `finalize`: the guest's rows are deleted; the session row (counts only) is re-keyed to `anonymous` |
+| `unconfirmed` (no name confirmed twice) | the record is kept until `guest_expires_at` (7 days); then deleted as for `declined` |
+| a terminal (`stop`, deadline, lease lost) before `identify` returned, or a crash | startup recovery treats a guest with neither reason nor expiry as `unconfirmed`, expiring 7 days after its session started |
 
-**Who may consent and approve.** Media consent (§4) is given by a confirmed learner or the parent, never by a guest. Actions that declassify text or widen egress — approving a correction as book text, switching `cloud.text` on, editing `household_terms`, re-enabling magpie for media — need the **parent PIN** in the Learners tab (owner decision 4).
+The guest sweep deletes guests with `kind = 'guest' AND (guest_reason = 'declined' OR guest_expires_at < now) AND EXISTS(session) AND NOT EXISTS(session with ended_at IS NULL)`; it runs at session start after the lease and recovery (ADR-0017 §2) and daily under the supervisor; each deletion starts with a conditional mark so two sweepers never act on one guest. A guest has `cloud.text` off, no media consent, recognition off and no export.
 
-**Days.** A household time-zone setting (`HOUSEHOLD_TZ`) defines a "day" for `retrieval_events.day`, "different days" (ADR-0017 §6.2) and daily goals; the harness computes the local date at write time (owner decision 3).
+**Recognition** is on by default for every enrolled learner (owner decision 2); enrolment is the child's own "yes" (parent consent is deferred, §5 — the guidance sources that ask for it are recorded in prior-art §3.3). Turning a modality off deletes that learner's embedding for it. **Voice is primary**: a sherpa-onnx speaker-embedding model (its speaker-identification example, *adapted*). **Face counts only after its hit rate is measured on the real study camera position** and recorded (`recognition.face_measured`); the study camera frames the book, so a frame without a face of sufficient size makes the modality `absent`. Face models: **YuNet** (detection, MIT) and **SFace** (recognition, Apache-2.0), run locally through OpenCV; InsightFace pretrained weights (non-commercial) and `face_recognition` (weak on children, by its own README) are ruled out (prior-art §3, *adopted*). Thresholds are per Ear (`RECOG_ACCEPT[ear]`, `RECOG_MARGIN[ear]`), each from a probe that brackets the same child across sessions against sibling pairs; enrolment records its Ear. Embeddings live in `data/learners/<id>/` and never leave the machine.
+
+**Days.** `HOUSEHOLD_TZ` (an IANA name, default the machine's zone stored at setup; `tzdata` is a named requirement because `zoneinfo` on Windows needs it) defines a day for retrieval events, mastery and per-day goals. **Household settings** (`HOUSEHOLD_TZ`, `LOCAL_MODELS`, `household_terms`, routing tables) carry a `household_settings_version` that ADR-0017's `checkpoint` reads.
 
 ## 2. Egress: mediated per request, backstopped at the socket
 
-**Request mediation is the rule.** `leafi.privacy.egress` owns every client that talks to a non-loopback destination or to magpie — the `anthropic` client, the `httpx` clients (magpie, Ollama on another host, notifiers, Open Library, Healthchecks, Gatus, Telegram alerts), the `edge_tts` calls and `doctor --download`. Adapters never hold a client: they call `egress.send(destination, purpose, payload, learner=None, consent_id=None)`. Connection pools live inside `egress`. **Retries have one owner:** transport retry is `egress`'s (at most one for text, none for media, inside the call's `PER_CALL_S`); client and adapter retries are off (the Claude adapter's own loop and `BRAIN_DEADLINE_S` are removed); semantic escalation is `brain_call`'s (ADR-0017 §5); the ledger is charged per transmitted attempt.
+**Request mediation is the rule.** `leafi.privacy.egress` owns every client that talks to a non-loopback destination or to magpie: the model SDK clients (built with `max_retries=0`), the HTTP clients for magpie, notifiers, Open Library, Healthchecks, Gatus and Telegram alerts, the `edge_tts` calls and `doctor --download`. Adapters call `egress.send(destination, purpose, payload, learner=None, consent_id=None)` and get `(response, transmitted_attempts)`. Transport retry is `egress`'s (at most one for text with `tenacity` waits inside the call's deadline, none for media). Implementation choices (libraries §6): a mediating transport on the HTTP client plus the socket guard below; both written for `httpx2` after TD-1 (ADR-0017 §10).
 
-Purposes: study purposes (`decide`, `generate`, `answer`, `judge`, `word`, `tts`, `media`, `catalog`, `notify_study`) carry learner context and run the full pipeline; **`ops`** (heartbeat, Gatus push, operational alerts, supervisor probes of non-loopback hosts, model downloads) carries no learner data — its payload schema is fixed per destination and checked — and skips the provenance and media stages but is logged.
+Purposes: study purposes (`decide`, `generate`, `answer`, `judge`, `word`, `tts`, `media`, `catalog`) carry learner context and run the full pipeline; **`ops`** (heartbeat, Gatus push, operational alerts, model downloads) carries no learner data — a fixed payload schema per destination, checked — and skips the provenance and media stages but is logged with `learner_id` NULL and its own retention (§4.3).
 
-**The socket guard is the backstop.** `leafi.core.netguard` is always installed in `leafi` processes. A connect to a non-loopback address — or to the `MAGPIE_URL` port — raises unless the current context holds a **grant** that matches it. `egress.send` resolves the destination host itself (`asyncio.to_thread`, which copies the context), then creates a grant for `(host, resolved addresses, port)` with an expiry equal to the send's deadline; the guard matches the connect's IP and port against it (a hostname-keyed grant could never match a connect, which sees an address). Name resolution is allowed only inside a grant's own resolve step. A copied grant past its expiry is refused, so an orphaned thread cannot connect. **LAN devices** configured in `devices.yml` (camera, Frigate, AnkiConnect, an Ollama host) are a `lan` destination class: allowed by address without a study payload check, listed in the table. The guard sees only this process's sockets; another process (Ollama, magpie, Anki) is governed by what Leafi sends it, not by the guard.
+**The socket guard is the backstop.** `leafi.core.netguard` is always installed in `leafi` processes. A connect to a non-loopback address — or to the `MAGPIE_URL` port — raises unless the current context holds a matching **grant**. `egress.send` resolves the destination itself (through `asyncio.to_thread`, which copies the context) and creates a grant for `(host, resolved addresses, port)` with an expiry equal to the send's deadline; inside that grant the guard's `getaddrinfo` **answers the granted host from the grant's recorded addresses** without a second lookup, so the clients' own resolution (which runs in `run_in_executor` without the context) needs no context, and the connect to a recorded address and port is allowed. A copied grant past its expiry is refused. **LAN devices** that never receive learner text (camera, Frigate, AnkiConnect, MQTT) are a `lan` class allowed by configured address. **A host that receives study payloads is never `lan`**: an Ollama server on another machine is reached only through `egress` under a grant; the supervisor's probe of it uses an `ops` grant. The guard sees only this process's sockets; other processes (Ollama, magpie, Anki) are governed by what Leafi sends them. `LEAFI_NO_NETWORK=1` (tests) refuses every non-loopback connect, grants included.
 
-Pipeline for study purposes, in order: destination allow-list by purpose → provenance filter (§3) → pseudonymisation (§3) → media check (§4) → **write the attempt** (`egress_log`: destination, purpose, learner, session, payload size and sha256 — never the body — consent id, `status = sending`) → send under the grant → update the attempt (`sent` / `failed` / `unknown`). Text payloads sent to the Brain are kept in `brain_calls` (learning history, deleted with the session or learner); media bodies are never persisted by egress.
+Pipeline for study purposes, in order: destination allow-list by purpose → provenance filter (§3) → pseudonymisation (§3) → media check (§4) → **write the attempt** (`egress_log`: destination, purpose, learner, session, payload size and an **HMAC-SHA256** of the body keyed by a per-install secret in `data/` — an unsalted hash of a short answer could be confirmed by guessing (prior-art §3) —, consent id, `status = sending`) → send under the grant → update the attempt (`sent` / `failed` / `unknown`). Text payloads sent to the Brain are kept in `brain_calls`; media bodies are never persisted by egress.
 
-Per learner: `cloud.text` (default **on**) and `cloud.media` (`ask`; `never` for guests). The table `security.md` will own:
+Per learner: `cloud.text` (default **on**) and media consent per item (§4; never for a guest). The table `security.md` will own:
 
-| Data class | `cloud.text` on | `cloud.text` off | Guest / tentative |
+| Data class | `cloud.text` on | `cloud.text` off | Guest / unconfirmed |
 |---|---|---|---|
-| page text (incl. parent-approved corrections), items, counts, policy text | sent | sent | sent |
-| `learner` / `derived_from_learner` text (§3) | sent, pseudonymised, if **every** source learner allows it | removed; observations carry expected words + category | removed |
+| page text (incl. corrections, which are book text), items, counts, policy text | sent | sent | sent |
+| `learner` / `derived_from_learner` text (§3) | sent, pseudonymised, if every source learner allows it | removed; observations carry expected words + category | removed |
 | real names of household members, exact ages, school, `household_terms` | never (replaced, §3) | never | never |
 | audio, images | only with a consent consumed for that item, destination and purpose (§4) | same | never |
 | `ops` payloads | fixed schema, no learner data | same | same |
 
-**Eligible backends.** A backend is **local** only when its configured `backend:model` is on the `LOCAL_MODELS` allow-list (an Ollama model served on this machine by name; Ollama's cloud-hosted model names are refused), not because its endpoint is loopback (owner decision 8); magpie is never local. `decide`, `generate` and `word` may use any backend (with `cloud.text` off their payloads carry no learner text); `answer` and `judge` carry learner text, so with `cloud.text` off only local backends are eligible, with no cloud fallback. Lifting ADR-0011's deferral, Ollama is enabled when configured **and** its memory and latency next to Parakeet, Kokoro and the recognition models are measured on this machine (research D10); until then the `fast` tier uses the cheapest configured cloud model.
+**Eligible backends.** A backend is **local** only when its configured `backend:model` is on `LOCAL_MODELS` (an Ollama model served on this machine; Ollama's cloud-hosted model names are refused), not because its endpoint is loopback (owner decision 8); magpie is never local. `decide`, `generate` and `word` may use any backend; `answer` and `judge` carry learner text, so with `cloud.text` off only local backends are eligible. Ollama is enabled when configured **and** its memory and latency next to Parakeet, Kokoro and the recognition models are measured on this machine (research D10): the existing gate mechanism records it — `envprotect.GATE_FLOOR`'s `BRAIN_BACKEND=ollama` entry is lifted when the measurement is recorded in the plan. Until then the `fast` tier uses the cheapest cloud model.
 
-**magpie** (owner decision 5): any provider; telemetry off (Settings → Privacy, or `DO_NOT_TRACK=1` when the supervisor starts magpie); magpie may keep its own local logs. Requests that carry learner text or media name an explicit single-provider `provider/model` (never `auto/` or `group/`). That magpie honours the named route is a **trust assumption**; a response reporting a different provider logs an incident, marks the consent `failed` and disables magpie for media until the parent re-enables it (PIN).
+**magpie** (owner decision 5): any provider; telemetry off (`DO_NOT_TRACK=1` when the supervisor starts magpie, or Settings → Privacy); magpie may keep its own local logs. Requests that carry learner text or media name an explicit single-provider `provider/model`. That magpie honours the named route is a trust assumption; a response reporting a different provider logs an incident, marks the consent `failed` and disables magpie for media until it is re-enabled in the settings.
 
-**Text-to-speech.** edge-tts is a cloud destination with purpose `tts`; a spoken line carries its provenance from composition to `egress`, which applies the same filter as for Brain payloads (a Brain answer to a learner's own question is `derived_from_learner`), and a line containing a household member's real name is synthesised only locally (Kokoro). The caller-side `local_only` flag is removed.
+**Text-to-speech.** edge-tts is a cloud destination with purpose `tts`; a spoken line carries its provenance from composition to `egress`, which applies the same filter as for Brain payloads, and a line containing a household member's real name is synthesised only locally (Kokoro). The caller-side `local_only` flag is removed.
 
 ## 3. Provenance and pseudonymisation
 
-**Columns.** Every stored text that can reach a payload has `provenance_class` ∈ `page` | `system` | `learner` | `derived_from_learner` | `parent` and `source_learners` (json ids). The columns: `utterances.text`; `activities.outcome`, `activities.assessment`; `brain_calls.payload`, `brain_calls.response` (union of their parts); `learner_notes.text`; `book_notes.text`; `encounters.context_sentence`, `encounters.explanation_*`; `anki_outbox` card fields; `cache/tts` keys. Corrections: `corrections.source_learner_id` (NULL = the parent), written at insert, and `corrections.forgotten` (boolean) — the span a correction changes carries its source in the revision's span map, mapped forward through edit maps like `spans_verified`. Combining texts unions the sources and takes the most restrictive class.
+**Columns.** Every stored text that can reach a payload has `provenance_class` ∈ `page` | `system` | `learner` | `derived_from_learner` | `parent` and `source_learners` (json ids), both NOT NULL with no default: `utterances.text`; `activities.outcome`, `activities.assessment`; `brain_calls.payload`, `brain_calls.response`; `learner_notes.text`; `book_notes.text`; `encounters.context_sentence`, `encounters.explanation_*`; `anki_outbox.front` / `back` / `sentence`. The TTS cache keeps a sidecar per clip (`cache/tts/<key>.sources.json`) that unions the sources on every hit, because one content-addressed clip can serve several learners. Combining texts unions the sources and takes the most restrictive class. **Migration:** existing rows become `learner` text of the first learner, except page-derived fields (`encounters.context_sentence` from a page) which become `page`. An unknown or deleted source counts as `cloud.text` off (fail closed).
 
-**The filter** decides at send time from the **current** settings of every source learner, so switching `cloud.text` off also covers old notes and a sibling's text inside shared material; a source learner that no longer exists, or a `forgotten` correction, counts as off (fail closed). `parent` text follows the household setting `cloud.parent_text` (default on). A learner's spoken or typed correction is `learner` text; the span it changes keeps that learner as source until the parent approves it as book text (`corrections.parent_approved_at`, PIN; distinct from ADR-0010's `spans_verified`, which protects a span from re-OCR and says nothing about privacy). Until then the page window masks that span for cloud payloads whenever its source learner's `cloud.text` is off.
+**Corrections are book text at once.** A learner's correction ("the book says dog") is a claim about the page, so the revision it creates is `page` text immediately (parent approval is deferred, §5). `corrections.source_learner_id` records who made it (NOT NULL for `voice` / `text` sources; the existing `source = 'parent'` marks the parent) so `forget` can unlink it: `forget --learner A` clears the correction's `utterance_id` and `source_learner_id` and sets the boolean `corrections.forgotten` (a column, not a new `source` value); the revision text stays (the household's record of the book, ADR-0010). The two existing writers, `corrections.apply_correction` and `record_unlocated`, gain the learner argument (§6.1).
 
-**Deletion across sources.** `forget --learner A` also deletes every `learner_note`, `book_note` and assessment whose `source_learners` include A, every `brain_calls` row whose provenance includes A, and A-sourced `cache/tts` clips. A's corrections are **unlinked, not unwound**: page revisions stay (the household's record of the book, ADR-0010; later revisions build on them); each correction by A loses its `utterance_id` and gets `forgotten = true`; spans of A's corrections the parent had not approved become **local-only for good** until the parent approves them. Corrections are short claims about the book's words, so what stays local is a word or phrase of supposed book text; this residual is accepted and named here instead of rebuilding revision chains.
+**The filter** decides at send time from the current settings of every source learner, so switching `cloud.text` off also covers old notes and a sibling's text in shared material. `parent` text follows the household setting `cloud.parent_text` (default on).
 
-**Pseudonymisation** (`privacy/pseudonym.py`, inside the pipeline): replaces the real names of **all** household learners and the parent's `household_terms` (names, school, street; Learners tab, PIN; replaces `REDACT_TERMS`, whose value migrates into it) by stable per-person aliases and neutral tokens; exact age by `alias_age_band` (e.g. "7–8") — including in the Brain's system prompt, which today says "a 10-year-old"; dates of birth by nothing. Replies are mapped back locally before they are shown or spoken. Identities in free text that are on no list ("my friend Tom") are not caught; with `cloud.text` on this is an accepted residual risk the parent reduces by adding terms.
+**Deletion across sources.** `forget --learner A` also deletes every `learner_note`, `book_note` and assessment whose `source_learners` include A, every `brain_calls` row whose provenance includes A, and removes A from TTS-cache sidecars.
 
-## 4. Local first for audio and images; the remote teacher
+**Pseudonymisation** (`privacy/pseudonym.py`, inside the pipeline). First, list-based replacement: the real names of all household learners and the household's `household_terms` (names, school, street; on the settings page; replaces `REDACT_TERMS`, whose value migrates into it) become stable per-person **surrogate names** (realistic names, not tokens — prior-art §3, one study) and exact age becomes `alias_age_band` (e.g. "7–8"), including in the Brain's system prompt, which today says "a 10-year-old". Second, on `learner` and `derived_from_learner` text, a **name detector**: Microsoft Presidio with spaCy `en` PERSON (prior-art §3, *adopted*); a detected person name not on the lists is replaced by a surrogate too. Its recall on this household's transcripts is measured before any completeness is claimed — detectors degrade on informal and children's text, and Presidio promises none. Replies are mapped back locally before they are shown or spoken.
+
+## 4. Local first for audio and images; consent; retention
+
+### 4.1 The remote teacher
 
 ```
 on local_failure(kind, item):   # ASR empty/low confidence on a needed answer; OCR below threshold; page unknown
-  if s.learner.kind != learner: return                     # guests and tentative sessions never consent to media
+  if s.learner.kind != learner: return                     # guests and unconfirmed sessions never consent to media
   ask the learner first ("Is this word 'through'?", "Can you read me the first line?", "Hold the page flatter")
   if unresolved:
     prepared, check = prepare(item)   # check ∈ clean | masked | unknown | unmaskable, against PROTECTED =
                                       # every household learner's names + household_terms (the same list as §3)
-    # image: crop to the page region; a local face/person detector on the crop → any hit: unmaskable;
+    # image: crop to the page region; YuNet face detector on the crop → any face: unmaskable;
     #        local OCR on the crop; found PROTECTED terms are masked → masked; too little text to check → unknown
-    # audio: only a reading or practice attempt, never free speech (answers, questions, chat); the clip is the
-    #        attempt's own VAD segment. In order, first match wins:
+    # audio: only a reading or practice attempt, never free speech; the clip is the attempt's own VAD segment.
+    #        In order, first match wins:
     #          a PROTECTED term among the expected page words, or any recognised word near one (sim ≥ 0.80)
     #            anywhere in the clip                                   → unmaskable (audio is never masked)
-    #          any gap, empty stretch, or word with conf < CLEAN_CONF   → unknown (the usual case: the trigger
-    #            (0.6)                                                    was a local failure)
-    #          otherwise (whole segment covered by confident words)     → clean
-    if check == unmaskable: say "I'll manage without help on this one"; return      # never asked, never sent
+    #          any gap, empty stretch, or word with conf < CLEAN_CONF   → unknown
+    #          otherwise                                                → clean
+    if check == unmaskable: say "I'll manage without help on this one"; return
     dest = route(...) → backend and explicit provider/model
     warn = " I couldn't check it for names." if check == unknown else ""
     if confirm("May I ask a remote teacher (<dest>) for help with this <recording|picture>?" + warn):
-      c = consents.insert(learner, kind, sha256(prepared), dest, purpose, status=granted, expires=now+5 min)
-      egress.send(dest, "media", prepared, learner, consent_id=c)
+      c = consents.insert(learner, purpose = "remote_teacher", recipient = dest, item = hmac(prepared),
+                          status = granted, valid_until = now + 5 min, indicated_by = "learner_voice")
+      egress.send(dest, "media", prepared, learner, consent_id = c)
 ```
 
-In the pipeline the media check **consumes** the consent before any byte leaves: one conditional update `granted → used` where learner, hash, destination and purpose match and it has not expired; zero rows changed → refuse. The attempt row is written in the same transaction. A delivery that fails or is uncertain leaves the consent `used`; trying again or another destination needs a new question. A consent covers one prepared item, one destination, one purpose, one attempt.
+In the pipeline the media check **consumes** the consent before any byte leaves: one conditional update `granted → used` where learner, item HMAC, recipient and purpose match and it has not expired; zero rows changed → refuse. The attempt row is written in the same transaction. A delivery that fails or is uncertain leaves the consent `used`.
 
-## 5. AGENTS.md boundary (replaces the first MUST NOT when this ADR is accepted)
+### 4.2 One consent table
 
-"MUST NOT send audio or images from `leafi/` to any cloud service without a consent consumed for that item, destination and purpose (never for a guest); never media whose identity check is `unmaskable`, and `unknown` only when the consent question said so; MUST NOT send any household member's real name, exact age or school in text; learner text leaves only when every source learner's `cloud.text` is on, pseudonymised; every non-loopback request goes through `leafi.privacy.egress` (which owns every client) and is logged; the socket guard refuses any other connection. The table is in `security.md` (ADR-0018). Enforced by: `tests/test_privacy.py`, `tests/test_netguard.py`."
+`consents` uses the column names of ISO/IEC TS 27560 / DPV (prior-art §3, *adapted*): id, learner_id, purpose (`remote_teacher` | `cloud_text` | `biometric_voice` | `biometric_face`), recipient, item (HMAC, for per-item consent), status (`granted` | `used` | `withdrawn` | `expired` | `failed`), valid_from, valid_until, indicated_by (`learner_voice` | `learner_console` | `owner_setting`), created_at. Switching `cloud.text` on or off and enrolling or removing a biometric template each write a row, so one table answers "what was allowed, by whom, when".
 
-## 6. What changes where (inventory for the implementation)
+### 4.3 Retention
 
-### 6.1 Writers and lookups that must become learner-scoped
+| Data class | Kept |
+|---|---|
+| utterances, observations, miscues, practices, activities, brain_calls | the learning history: until `forget` |
+| guest records | per the guest end-state table (§1) |
+| embeddings | until recognition is turned off or `forget` |
+| `egress_log` study rows | with the learner's history |
+| `egress_log` `ops` rows | 30 days |
+| consents | until `forget` (the audit of what was allowed) |
+| page images, learner audio, TTS cache, eval transcripts, logs | as `security.md` already says (7 days; not stored; 90 days; opt-in 30 days; no raw text at INFO) |
 
-One learner-scoped store API (`study/learner_store.py`) is the only writer of the direct-owner tables; each site below calls it. `session.py` `reading_sessions` insert; `knowledge.upsert_item` (no longer queues Anki, ADR-0017 §7.2) and `_queue_update_if_pushed`; `knowledge.recompute_difficulties` (per learner, never a global `DELETE`); `knowledge.add_encounter` (`session_id` required; the parent trigger writes against the parent's session of record, a per-learner synthetic `reading_sessions` row with mode `parent`); `anki.answer` (`review_answers`), `anki.due_cards` (the learner's deck); `word_weights` / `practice_order`; `records.export_session`, `forget_session`, `forget_book`; `tests/seed.py`, `tests/test_storage.py`. A test inserts through every writer under two learners and asserts no row crosses. The first learner is created by the migration from `learner_profile` if present, else from the owner's answer to `python -m leafi setup --learner "<name>"`.
+## 5. Deferred: parent features (owner decision 2026-10-22)
 
-### 6.2 Constraints and the migration
+For in-home use, simplicity comes first. Deferred, each with what happens instead now:
 
-New values meet existing CHECKs: `encounters.trigger` gains `teach`; `knowledge_items.kind` gains `pattern`; `knowledge_items.status` gains `ignored`; `forgotten` is a boolean column, not a `corrections.source` value. Changed UNIQUE (`knowledge_items`) and new `NOT NULL … REFERENCES learners` columns need table rebuilds, which SQLite cannot do inside `Store.migrate()`'s `BEGIN IMMEDIATE` with foreign keys on. Migration 5 is a **rebuild step type**: outside `transaction()`, `PRAGMA foreign_keys = OFF`, rebuild each table (copy, drop, rename, recreate indexes) in its own transaction, then `PRAGMA foreign_key_check` (any row → abort and restore the backup taken first) and `foreign_keys = ON`. Per table, the migration notes list each constraint and whether migrated and new rows satisfy it.
+| Deferred | Now |
+|---|---|
+| a parent PIN on settings that widen egress | none; the settings page keeps today's typed confirmation for `PRIVACY_FLOOR` keys, extended with `LOCAL_MODELS`, `cloud.parent_text`, `BRAIN_TIERS`, `BRAIN_ROUTES`, `MAGPIE_URL`, `household_terms` |
+| parent consent to biometric enrolment | the child's own "yes"; a `consents` row with `indicated_by = learner_voice` |
+| parent approval of corrections as book text | corrections are book text at once (§3) |
+| parent preview of Anki cards | `ANKI_PREVIEW=auto` (ADR-0017 §7.2) |
+| a Learners tab to assign or discard a guest session | the guest end-state table (§1) |
+| parent notifications and export extras for study sessions | the existing summary export only |
+
+No columns are reserved for them; they arrive with their own migration when built.
+
+## 6. What changes where
+
+### 6.1 Writers and lookups that become learner-scoped
+
+Through `leafi/core/learner_store.py`: `session.py`'s `reading_sessions` insert; `knowledge.upsert_item` (no Anki queueing) and `_queue_update_if_pushed`; `knowledge.recompute_difficulties` (per learner, never a global `DELETE`); `knowledge.add_encounter` (`learner_id` required, `session_id` nullable); `anki.answer`, `anki.due_cards` (the learner's deck); `word_weights` / `practice_order`; `corrections.apply_correction` and `record_unlocated` (learner argument); `records.export_session`, `forget_session`, `forget_book`; `egress` (`egress_log`, `consents`). Tests: the list is built from a grep of every insert and every call of a changed writer under `tests/` (today at least `seed.py`, `test_storage.py`, `test_anki.py`, `test_knowledge.py`, `test_corrections.py`, `test_lexicon.py`, `test_page_tracker.py`), and a test inserts through every writer under two learners.
+
+### 6.2 Migration 5
+
+Migrations stay Leafi's own `user_version` runner with a generic `rebuild()` helper for SQLite table rebuilds (libraries §1, Combination 1; Alembic's `batch_alter_table` is the alternative the prototype measures). **Migration 5 runs only from an explicit command**, `python -m leafi migrate --learner "<name>"`, which refuses while another process holds the database (it checks by taking an exclusive lock and by the lease) and takes a backup first; every other process that opens the database refuses to start below version 5 and names that command. The command rebuilds outside `transaction()` with `PRAGMA foreign_keys = OFF`, one transaction per table, then `PRAGMA foreign_key_check` (any row → stop, keep the backup, report), sets `user_version` in the last transaction, then `foreign_keys = ON`. Restoring the backup is done by the command only, with no other connection open. New CHECK values: `encounters.trigger` + `teach_ok`, `teach_incorrect`; `knowledge_items.kind` + `pattern`; `knowledge_items.status` + `ignored`; `corrections.forgotten` is a boolean column. The first learner is the one named on the command line.
 
 ### 6.3 Network callers in `leafi` processes
 
@@ -137,10 +175,10 @@ New values meet existing CHECKs: `encounters.trigger` gains `teach`; `knowledge_
 |---|---|
 | Brain backends (Claude, magpie, Ollama on another host) | `egress`, study purposes |
 | `tts/edge.py` | `egress`, `tts` |
-| `devices/notifiers.py` (study) | `egress`, `notify_study` |
-| `ops/alerts.deliver` via `NotifierDevice`, `ops/checks.heartbeat` (Healthchecks), `checks.push` (Gatus) | `egress`, `ops` |
-| supervisor `http_probe` / `tcp_probe`, Ollama probe | loopback, or `lan` by configured address |
-| `doctor --download` (`urllib`, `huggingface_hub`, rapidocr) | `egress`, `ops`, grant per download host |
+| `devices/notifiers.py` (study) | `egress`, study purpose |
+| `ops/alerts.deliver`, `ops/checks.heartbeat`, `checks.push` | `egress`, `ops` |
+| supervisor `http_probe` / `tcp_probe` | loopback, `lan`, or an `ops` grant |
+| `doctor --download` | `egress`, `ops`, a grant per download host (note: `hf-xet`'s Rust sockets are invisible to the Python guard — libraries §8; downloads run with `HF_HUB_DISABLE_XET=1`) |
 | `go2rtc_camera`, AnkiConnect, Frigate, MQTT | loopback or `lan` |
 | `study/books.py` Open Library | `egress`, `catalog` |
 
@@ -150,30 +188,38 @@ New values meet existing CHECKs: `encounters.trigger` gains `teach`; `knowledge_
 |---|---|
 | `BrainRequest` constructor (rejects free text) | kept for `cloud.text` off; the provenance filter decides |
 | `coach.py`, `controls.py` (target = page text) | kept; free text allowed by provenance |
-| `session.say(local_only=…)`, `tts.LocalOnlyUnavailable` | replaced by line provenance in `egress` (§2) |
-| `records.export_session` ("never learner free text") | parent export may include learner text locally; never sent |
-| `REDACT_TERMS`, `setup --redact`, `redact-terms` alert, `.env` manifest | `household_terms` (migrated value), Learners tab, alert renamed |
-| `services/brain/__init__.py` system prompt "a 10-year-old" | age band from `alias_age_band` |
+| `session.say(local_only=…)`, `tts.LocalOnlyUnavailable` | line provenance in `egress` |
+| `records.export_session` ("never learner free text") | local export may include learner text; never sent |
+| `REDACT_TERMS`, `setup --redact`, the `redact-terms` alert, the `.env` manifest | `household_terms` (migrated), the settings page, alert renamed |
+| `envprotect.GATE_FLOOR` (`BRAIN_BACKEND=ollama`, `BRAIN_LOCAL_MODEL`) | lifted when D10 is recorded (§2) |
+| `envprotect.PRIVACY_FLOOR` | extended with the new egress keys (§5) |
+| `LEAFI_NO_NETWORK` | test switch: refuses every non-loopback connect, grants included (§2) |
+| the Brain system prompt "a 10-year-old" | age band |
 | `tests/test_privacy.py` | rewritten (Confirmation) |
 
-### 6.5 Documents that state the old rule (changed in the same change that accepts this ADR)
+### 6.5 Documents that state the old rule (changed in the change that accepts this ADR)
 
-`AGENTS.md` (first MUST NOT → §5's text); `security.md` (red lines 1–3, the destination table → §2's table, the prompt-safety action allow-list → ADR-0017's activity kinds); `product.md` (principles 1–2, Users "the child, age 10" → learners, the Non-Goal "no cloud vision, no cloud ASR … ever" → the remote-teacher rule); `GLOSSARY.md` (Brain "text only", Eye "images never leave the LAN", Learner; new terms: learner kind, guest, provenance, remote teacher, grant); `data-model.md` (new tables and columns, the invariant "nothing identifies a person from pixels" → "only local recognition models, §1", retention: `forget --learner`); `flows/reading-session.md` ("the learner's answer stays local"); ADR-0011 front matter (`superseded-in-part-by: 0018`).
+`AGENTS.md` (first MUST NOT → §7's text); `security.md` (red lines 1–3, the destination table → §2's table, retention → §4.3); `product.md` (principles 1–2, Users, the Non-Goal "no cloud vision, no cloud ASR … ever" → the remote-teacher rule); `GLOSSARY.md` (Brain, Eye, Learner; new terms: learner kind, guest, provenance, remote teacher, grant, surrogate name); `data-model.md`; `flows/reading-session.md`; `architecture/overview.md` (items 3–4), `c4-context.md`, `c4-container.md` (magpie added), `deployment.md` (trust boundary); `architecture/config.md` (`setup --redact`); `engineering/code-locator.md` (privacy entry), `engineering/testing.md` and `engineering/repo-map.md` (the guard); ADR-0003 (red line → `superseded-in-part-by: 0018`), ADR-0011 (`superseded-in-part-by: 0018`), ADR-0016 (the `redact-terms` alert, its egress rows → `ops`, magpie as a supervised child).
 
 ### 6.6 The owner's console
 
-Buttons in the Obsidian console (`scil/Leafi/`, calling `scripts/win/*`) for: enrol a learner, the recognition probe (voice per Ear, face on the study camera), `forget --learner`, the Learners tab (approvals, `household_terms`, cloud settings, guest assignment), re-enable magpie for media, start magpie with `DO_NOT_TRACK=1` under the supervisor; help lines updated for `forget`, the export and the `.env` page; the console's own check run.
+Buttons: `leafi migrate --learner` (once, then removed), enrol a learner and run the recognition probe (voice per Ear; face on the study camera), `forget --learner`, start magpie with `DO_NOT_TRACK=1` under the supervisor; help lines for `forget`, the export and the settings page; the console's own check.
+
+## 7. AGENTS.md boundary (replaces the first MUST NOT when this ADR is accepted)
+
+"MUST NOT send audio or images from `leafi/` to any cloud service without a consent consumed for that item, recipient and purpose (never for a guest); never media whose identity check is `unmaskable`, and `unknown` only when the consent question said so; MUST NOT send any household member's real name, exact age or school in text; learner text leaves only when every source learner's `cloud.text` is on, pseudonymised; every non-loopback request goes through `leafi.privacy.egress` and is logged; the socket guard refuses any other connection. The table is in `security.md` (ADR-0018). Enforced by: `tests/test_privacy.py`, `tests/test_netguard.py`."
 
 ## Consequences
 
-- The Brain can see what the children said and asked; the parent switches it off per learner, and the switch also covers stored notes, spoken lines and shared material.
-- Siblings share one Leafi with separate records; voice recognition adds a model, a probe per Ear and enrolment; face waits for a measurement; a wrong guess cannot change egress before confirmation.
-- Enforcement moves from "which module builds a client" to "which request goes through egress", with grants matched by address at the socket; operational traffic is mediated too.
+- The Brain can see what the children said and asked; each learner's `cloud.text` switches it off, also for stored notes, spoken lines and shared material.
+- Siblings share one Leafi with separate records; voice recognition adds a model, a probe per Ear and enrolment; face waits for a measurement.
+- Parent controls are absent by choice; the deferral list (§5) says what each would add.
+- Enforcement is per request through `egress`, with grants matched by address at the socket; operational traffic is mediated too.
 
 ## Confirmation
 
-`tests/test_netguard.py`: refusals — a non-loopback connect outside a grant raises through `httpx`, `asyncio` streams, a thread executor and `edge_tts`; inside a grant for host A a connect to host B raises; a direct connect to the `MAGPIE_URL` port raises; an orphaned thread past its grant's expiry cannot connect. **Positive controls beside each:** inside a grant, real `httpx`, `anthropic` and `edge_tts` clients resolve and reach a fake server on a non-loopback test address; a pooled second request through `egress` succeeds; `ops` calls (heartbeat, alert) succeed; a `lan` device address connects. `tests/test_architecture.py`: no module outside `leafi.privacy.egress` imports `anthropic`, `edge_tts` or constructs an `httpx` client for a non-loopback base URL. `tests/test_privacy.py` rewritten: two canary learners (real names, exact ages, school) with `cloud.text` on and off through recording transports; no real name, exact age or school in any body (Brain incl. the system prompt, edge-tts, notifier); with `cloud.text` off no provenance-tagged learner canary appears, including a sibling's text in a shared note and a spoken answer line; media bytes only after a consumed consent; never for a guest; the no-network subprocess run still completes. `tests/test_pseudonym.py`. `tests/test_learners.py` (siblings within the margin → ask; modality conflict → ask; face without `face_measured` is absent; a dead Ear during identification is terminal; "no" twice → guest kept a week and assignable; "don't remember me" → deleted at finalize; the sweep spares `anonymous` and guests without sessions; recognition off deletes the embedding). `tests/test_learner_store.py` (every writer under two learners; Difficulties never merge). `tests/test_migration_5.py` (rebuild with foreign keys off, `foreign_key_check` clean, CHECKs accept the new values). `tests/test_forget.py` (`forget --learner` refuses during the learner's running session; removes `brain_calls`, `activities`, `cycles`, `egress_log`, evals, A-sourced TTS clips and A-sourced notes held by B; A's unapproved correction spans stay unlinked and never in a cloud payload; B's later revision intact). `tests/test_consent.py`, `tests/test_media_prepare.py` (a clip with a household name recognised plus an unclear stretch is `unmaskable`; recorded clips of each household name through the real ASR are `unmaskable` — positive control; a crop with a face is `unmaskable`). `egress_log` rows contain no payload bodies.
+`tests/test_netguard.py`: refusals (outside a grant through `httpx`/`httpx2`, `asyncio` streams, a thread executor and `edge_tts`; a grant for A refuses B; the `MAGPIE_URL` port without a grant; an expired copied grant; `LEAFI_NO_NETWORK` refuses inside a grant) **beside positive controls** (inside a grant, the real SDK clients and `edge_tts` resolve through the guard's recorded addresses and reach a fake server on a non-loopback test address; a pooled second request through `egress` succeeds; `ops` calls succeed; a `lan` device connects; an Ollama host on the LAN is refused without a grant). `tests/test_architecture.py`: no module outside `leafi.privacy.egress` imports a model SDK or `edge_tts` or builds an HTTP client for a non-loopback base URL; `leafi/core/learner_store.py` imports nothing from `study`. `tests/test_privacy.py` rewritten: two canary learners with `cloud.text` on and off; no real name, exact age or school in any body (Brain incl. the system prompt, edge-tts, notifier); a person name only Presidio knows is replaced; with `cloud.text` off no `learner` / `derived_from_learner` canary appears, including a sibling's text in a shared note and a spoken answer line; media only after a consumed consent; never for a guest; the no-network subprocess run still completes. `tests/test_learners.py` (the identify paths; text-mode identification after a lost Ear with a console; each guest end state of §1 including a crash before `identify` returned; the sweep spares `anonymous`, guests without sessions and guests in an open session; ids never reused). `tests/test_learner_store.py` (every writer under two learners). `tests/test_migration_5.py` (refused while another connection is open; other openers refuse below 5; rebuild clean; new CHECK values accepted; existing corrections and provenance migrate to the first learner). `tests/test_forget.py` (refused during a running session; `forgetting` hides the learner from `identify`; removes every listed store; a correction by A stays as page text, unlinked). `tests/test_consent.py`, `tests/test_media_prepare.py` (a recognised household name plus an unclear stretch → `unmaskable`; a crop with a face → `unmaskable`; real-ASR positive control per household name), `tests/test_pseudonym.py` (surrogates stable; age band; round trip). `egress_log` rows hold an HMAC, never a body or a bare hash.
 
 ## Reviews
 
-Codex design reviews 1–6 (`../plans/active/reviews/2026-10-21-codex-ai-led-design-review-*.md`) and the code-plan-review (`../plans/active/reviews/2026-10-21-code-plan-review-ai-led.md`) with the owner's answers of 2026-10-22.
+Codex design reviews 1–6 and code-plan-review passes 1–2 under `../plans/active/reviews/` (2026-10-21, 2026-10-22).
