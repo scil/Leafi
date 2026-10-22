@@ -24,7 +24,8 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 
 - A change under `leafi/` or `agent/` MUST pass the full pytest suite before being reported done.
 - A change to alignment, corrections or storage MUST add a regression test (`docs/engineering/testing.md` → never mocked).
-- A design change MUST be reviewed by codex before code (`codex-review` skill; `gpt-6-astra` works).
+- A design that adds a mechanism, a dependency or a data shape, or touches privacy, egress, concurrency or migrations, MUST be derived from research before it is written: `tiered-research` → `gather-code-references` (libraries and alternatives) → `derive-project-plan` (one provenance line per mechanism) → the ADR or plan. Wording or value changes skip this.
+- A design change MUST be reviewed before code (`codex-review` skill): codex (`gpt-6-astra`), `code-plan-review` and a fresh Claude session on the same prompt file, run in parallel and independently, then compared, for the risky designs above; codex plus `code-plan-review` otherwise; one reviewer for an increment round.
 - A new Ear/Mouth device or pairing MUST be measured before a design relies on it, and again after firmware or go2rtc upgrades (`docs/hardware/README.md`).
 
 ## Architecture rules
