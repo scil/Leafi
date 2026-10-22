@@ -1,106 +1,83 @@
-# Flow: a reading session
+# Flow: a study session
 
-State machine in `leafi/study/session.py`. Every transition is logged; a crash leaves `reading_sessions.ended_at` null and the next start closes it (open candidates → `unsure (interrupted)`; a new session may offer to continue from the committed cursor). **The reading rules (alignment, commitment, sentence completion, practice, reposition, difficulties, CHECK outcomes) are owned by ADR-0013; this file draws them and adds nothing.** Page identity and revisions: ADR-0010.
+The session is a sequence of activities chosen at boundaries (ADR-0017); this file draws it and adds nothing. **The session loop, menu, negotiation, construction, deadlines, controls and records are owned by ADR-0017; the reading rules (alignment, completion, cycles and candidates, practice, `/back`, Difficulties, CHECK outcomes) by ADR-0013; who is studying, guests and egress by ADR-0018.** Page identity and revisions: ADR-0010.
 
-## States
+Status: ADR-0017 and ADR-0018 are accepted, ADR-0013 v2 is proposed, and the code still runs the v1 state machine in `leafi/study/session.py` (READ → PRACTICE at a sentence end → CHECK) until plan [`../../plans/active/2026-10-22-ai-led-study.md`](../../plans/active/2026-10-22-ai-led-study.md) replaces it.
+
+## The session loop
 
 ```mermaid
 stateDiagram-v2
-    [*] --> IDENTIFY_BOOK
-    IDENTIFY_BOOK --> FIND_PAGE: book confirmed (camera or learner)
-    FIND_PAGE --> PAGE_UNCERTAIN: match below threshold or two candidates
-    PAGE_UNCERTAIN --> FIND_PAGE: learner confirms / names the page
-    FIND_PAGE --> REVIEW_DUE: first page and due cards exist
-    REVIEW_DUE --> READ
-    FIND_PAGE --> READ: page text ready (revision known)
-    READ --> READ: utterance aligned
-    READ --> PRACTICE: sentence completed (ADR-0013) with candidates
-    READ --> CORRECT: control "the book says …"
-    READ --> EXPLAIN: control "what does … mean" or "I don't understand"
-    READ --> REPOSITION: two unanchored utterances, no page-wide anchor
-    REPOSITION --> READ: anchored
-    PRACTICE --> READ: practice ended, sentences remain
-    PRACTICE --> CHECK: practice ended, every sentence completed
-    CORRECT --> READ
-    EXPLAIN --> READ
-    READ --> CHECK: last sentence completed without candidates
-    CHECK --> FIND_PAGE: page turned
-    CHECK --> WRAP: learner stops
-    WRAP --> [*]
+    [*] --> START: lease acquired
+    START --> IDENTIFY: stale sessions closed, guests swept (ADR-0017 §2)
+    IDENTIFY --> BOOK: learner adopted, or guest (ADR-0018 §1)
+    BOOK --> BOUNDARY: book identified; arm assigned (ADR-0017 §9)
+    BOUNDARY --> NEGOTIATE: menu, observation, sequencer's proposal
+    NEGOTIATE --> BOUNDARY: Reobserve (epoch changed)
+    NEGOTIATE --> ACTIVITY: accepted, announced or named (autonomy bands)
+    NEGOTIATE --> FINALIZE: end
+    ACTIVITY --> ACTIVITY: page_turned and still reading → continuation (same cycle)
+    ACTIVITY --> BOUNDARY: completed / skipped / page_turned / aborted_stale / store_busy
+    ACTIVITY --> FINALIZE: terminal (stop, lease lost, deadline, idle, listener lost, internal error)
+    BOUNDARY --> FINALIZE: soft deadline reached
+    FINALIZE --> DELIVER: one local transaction (cycle closed, summary, guest end state)
+    DELIVER --> NOTES: closing line, Anki outbox (10 s)
+    NOTES --> [*]: post-session learner notes (20 s, not for guests); lease released
 ```
 
-Additional state: `LISTENER_LOST` (selected Ear gone; continue in text mode when the console exists). Input routing by state, controls, `/back N`, reposition and completion events: ADR-0013.
+Activities (ADR-0017 §3.1): `review_anki`, `read_listen`, `read_aloud`, `practise_errors`, `teach_items`, `recall_items`, `quiz`, `learner_questions`, `add_cards`, `break`, `end`. With no Brain, or in the `default` arm, the configurable default policy picks the next step (review → recall → practise → teach → cards → read → end).
 
-**Global transitions (every state except WRAP)** — precedence and the records each one writes are defined in ADR-0013 → Control precedence:
-- `stop` (spoken while listening; typed `/stop` or a Face key at any time, including during playback, which cancels the current `say()` first) → completes the current sentence as read, open candidates → `unsure(skipped)` → WRAP.
-- `skip` → PRACTICE: current candidate `unsure(skipped)`; READ: completes the sentence as read and moves to the next; CHECK/EXPLAIN/REVIEW_DUE: leaves with no record. Bumps `turn_id`.
-- `/back N` → reopens the current sentence and N−1 before it (ADR-0013 → `/back N`).
-- `page turned` (Eye frame-diff settles on a new page, `/page N`, spoken "next page") → completes the current sentence as read, page settlement (every open candidate on the page → `unsure(skipped)`, also when a PRACTICE was in progress), no practice → FIND_PAGE.
-- `idle timeout` (`STUDY_IDLE_S`, default 180; counts only in READ/CHECK/REVIEW_DUE while awaiting input — PRACTICE has its own per-retry timer, ADR-0013) → WRAP with `summary.idle=true`.
-- `page uncertain` (camera lost, OCR failed, or a frame-diff without a confident match) → PAGE_UNCERTAIN; assessment is suspended; utterances are still stored with `kind=reading` but produce no observations until the page is confirmed.
+**Global controls** (ADR-0017 §1): `stop` sets the session's terminal latch and cancels whatever runs; `skip` is consumed once by the running activity or the current negotiation; `/back N`, page turns and `next page` act inside `read_listen` (ADR-0013 → Control precedence). The soft deadline stops new activities; the hard deadline cuts the running one.
 
-## Sequence for one sentence
+## Reading and practising one cycle
 
 ```mermaid
 sequenceDiagram
     participant L as Learner
     participant Lis as Listener (Ear+VAD+ASR or typed)
-    participant S as study.session
-    participant A as alignment
-    participant C as coach (local rules + static phrases)
-    participant B as Brain (text only, off the fast path)
+    participant S as session loop
+    participant A as alignment (ADR-0013)
     participant H as Hub (say → Faces, TTS → Mouths)
-    L->>Lis: reads
-    Lis-->>S: Utterance(words, times, conf|None, audio_ref|None)
-    S->>A: align(reading_state, utterance)
-    A-->>S: (state', observations, events: sentence_reached | unanchored)
-    S->>S: store utterance, observations, state', new candidates, withdrawn candidates (self_corrected / reread)
-    Note over S: sentence completion = sentence_reached, or pause 1.2 s / typed line end near the sentence end (ADR-0013)
-    alt sentence completed and no candidates
-        S->>H: say(local encouragement or nothing)
-    else sentence completed with candidates
-        S->>C: practice_plan(candidates, difficulties)   — local, ≤ 50 ms
-        C-->>S: words_to_practice (max 2), line from static phrases
-        S->>H: say(line)
-        loop each word (≤ 2 retries, skip always offered)
-            S->>H: say(word, slow)
-            L->>Lis: repeats
-            Lis-->>S: Utterance
-            S->>A: align([word], utterance)
-            opt PRON_AUTO_JUDGE and audio_ref
-                S->>S: pronunciation.score → evidence=acoustic
-            end
-            S->>S: practices row. A matching retry → withdrawn(practice). Two disagreements / skip / idle → unsure. Confirmed only with acoustic evidence (voice and text alike, ADR-0013 → Practice)
-        end
+    S->>S: boundary picks read_listen → cycle opens
+    loop each utterance
+        L->>Lis: reads
+        Lis-->>S: Utterance(words, times, conf|None)
+        S->>A: align(reading_state, utterance, word_info)
+        A-->>S: state', observations, events (sentence_reached | off_task | line_skipped)
+        S->>S: store utterance, observations, state', candidates (owned by the cycle), withdrawals
+        Note over S,H: no practice, no line at a sentence end, only ADR-0017 §6.1's silence cues and recovery lines
     end
-    opt Brain enrichment (async, turn-guarded)
-        S->>B: explanation / question request (redacted page window, target, intent enum)
-        B-->>S: result or unavailable
-        S->>S: apply only if (session, page_revision, turn_id) unchanged
+    alt page turned and the learner keeps reading
+        S->>S: continuation read_listen on the new page, same cycle
+    else range complete
+        S->>S: read_listen ends completed → next boundary
     end
+    S->>S: boundary picks practise_errors(candidate_ids)
+    loop each candidate, on its own page read
+        S->>H: show the sentence, model the word
+        L->>Lis: retries (≤ 2, skip always offered)
+        S->>S: pass → withdrawn(practice), else unsure(disagreed, unclear, idle or skipped), plus a practices row
+    end
+    S->>S: the next boundary-chosen reading closes the cycle → anything still open becomes unsure(not_practised)
 ```
 
-The Brain is never on the path between the end of an utterance and the first spoken feedback (performance.md). Static phrases in the Coach voice cover every coach action; the Brain adds explanations, questions and better lines when it answers in time.
+The Brain is never between the end of an utterance and Leafi's first reaction (ADR-0017 §5.2): fillers, recovery lines and closing lines are static phrases; a late Brain result is dropped when the epoch has moved on.
 
 ## Handling a correction (B5)
 
 1. Utterance classified as `correction` (grammar: "the book says X not Y" / "it's X not Y" / typed `/fix Y X`); ambiguous cases ask once ("Do you mean the word is X?").
-2. Locate `old_text` in the current revision near the cursor (nearest occurrence within the reread window); if not found, ask the learner to point at the line (read it) and retry once; else give up politely and record a `corrections` row with `char_start=null` for the parent.
-3. One transaction (ADR-0010 §3, §6): correction row; new revision with the span verified and the edit map; `spans_verified` and the reading state transformed (ADR-0013 → Correction interaction); miscues of any revision whose mapped char span overlaps → `invalidated (page_text_corrected)`; Difficulties recomputed; lexicon update.
+2. Locate `old_text` in the current revision near the cursor (nearest occurrence within the reread window); if not found, ask the learner to point at the line (read it) and retry once; else give up politely and record a `corrections` row with `char_start = null`.
+3. One transaction (ADR-0010 §3, §6): correction row (with the learner who made it, ADR-0018 §3); new revision with the span verified and the edit map; `spans_verified` and the reading state transformed (ADR-0013 → Correction interaction); miscues of any revision whose mapped char span overlaps → `invalidated (page_text_corrected)`, leaving the cycle's open set; Difficulties recomputed; lexicon update.
 4. The reading state now points at the new revision; the learner continues from the committed cursor; Leafi thanks them in the Coach voice.
 
-## Handling "I don't understand" (B6)
+## Questions and explanations (B6)
 
-1. Intent `explain(target)`; target = the word named, or the current sentence.
-2. Immediate local response: Leafi shows/says the sentence and says it will explain. Brain request (redacted window ≤ 3 sentences, target, language order from the profile) → `{meaning_en, meaning_zh?, example, follow_up?}` validated against a strict schema and an allow-list of actions; `unavailable` → Leafi says it cannot explain this one now and moves on, recording the encounter with `explanation_en=null`.
-3. `knowledge_items` upsert + `encounters` row.
+A learner's "what does … mean" or "I don't understand" during reading is answered by the `learner_questions` activity at the next boundary, or by `teach_items` when the item is a new-item candidate of the cycle (ADR-0017 §3.1). Both record a knowledge item and an encounter.
 
-## Comprehension check (B7)
+## Comprehension (B7)
 
-At `CHECK`: the Brain generates ≤ 2 questions, each with acceptable answers as keyword sets, from the completed sentences; Brain `unavailable` → skip CHECK silently. **The learner's answer stays local** (ADR-0011). Outcomes `correct` / `incorrect` / `unavailable` exactly as defined in ADR-0013 → CHECK outcomes; Leafi gives the answer in the Coach voice regardless; only `incorrect` writes an `encounters` row (`trigger=check`), never a miscue. Page text is data: a page containing instructions ("ignore the previous…") is quoted inside a delimited block and the response is validated against the schema; `tests/test_prompt_injection.py` holds fixed scenarios.
+The `quiz` activity asks ≤ `quiz.max_questions` per cycle over the cycle's read sentences; construction rejects a question its cited sentences do not support; a spoken answer counts only when confidently recognised (ADR-0017 §3.4); counted answers are scored by ADR-0013 → CHECK outcomes; only `incorrect` writes an encounter. Page text and learner text are data inside delimited blocks, and every Brain output is validated against its schema (`security.md` → Prompt safety).
 
-## Wrap (B8, B9)
+## Wrap
 
-1. `summary` = counts (pages, tokens committed, candidates/confirmed/withdrawn, items learned, practices); parent notification text-only.
-2. `anki_outbox` processed: dedupe by `leafi-id::<key>` tag, add/update, ack; failures stay `pending`.
-3. Difficulties and lexicon rebuilt; session `ended_at` set; speech lease released.
+`finalize` (one local transaction): close the running activity and the open cycle, write the summary counts, set `ended_at`, apply the guest end state. `deliver`: closing line while the speech lease is held; Anki outbox processed (dedupe by `leafi-id::<key>`, add/update, ack; failures stay `pending`). `extract_notes`: learner notes with citations, skipped for guests. The lease is released whatever happened.

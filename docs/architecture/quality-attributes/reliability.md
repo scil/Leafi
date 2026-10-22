@@ -4,7 +4,10 @@ Objective: a study session never ends because a model or device failed; it degra
 
 | Failure | Behaviour | Check |
 |---|---|---|
-| Claude API down / no key / deadline (12 s, 1 retry) | Brain returns `unavailable`; immediate lines come from static Coach-voice phrases (`study/phrases.py`); explanations and checks are skipped without recording a difficulty | `tests/test_coach.py::test_brain_unavailable` |
+| Claude API down / no key / deadline (12 s, 1 retry) | Brain returns `unavailable`; immediate lines come from static Coach-voice phrases (`study/phrases.py`); explanations and checks are skipped without recording a difficulty | `tests/test_coach.py::test_brain_unavailable` (v1; replaced by the row below with ADR-0017's loop) |
+| Brain unavailable, slow or out of budget (ADR-0017) | `brain_call` returns `None` within the moment's deadline (ADR-0017 §5.2); negotiation falls through the default policy, whose code-owned steps need no generation; Brain-only activities are absent from the menu, not broken; the boundary records `override = brain_unavailable` | `tests/test_brain_call.py`, `tests/test_default_policy.py` |
+| a `stop`, deadline, lost lease or unexpected error inside any activity | the terminal latch is set first, the session's cancel scope stops everything, the running activity ends with the mapped status (never `running`), `finalize`, `deliver` and `extract_notes` still run, the lease is released (ADR-0017 §1–§2) | `tests/test_cancellation.py`, `tests/test_spawn.py` |
+| the store is busy during a session | writes retry inside the step's time; a step still busy ends `store_busy` without blocking the loop > 300 ms (ADR-0017 §7.3) | `tests/test_busy.py` |
 | TTS backend fails with a Mouth present | `say()` shows text on Faces, logs, returns; the gate reopens; next line tries again | `tests/test_hub.py::test_say_tts_failure` |
 | Camera unreachable or frame-diff without confident match | state `PAGE_UNCERTAIN`: assessment suspended, utterances stored without observations, Leafi asks for the page number | `tests/test_page_tracker.py` |
 | OCR low confidence | recapture once; then ask the learner to read the first line; then offer typed page text (second-opinion VLM deferred, ADR-0011) | `tests/test_ocr_pipeline.py` |
@@ -20,6 +23,6 @@ Objective: a study session never ends because a model or device failed; it degra
 | microphone lost / speech lease lost in a session | besides LISTENER_LOST / WRAP, one coded alert (`study-mic`, `study-lease`) to toast + Telegram | `tests/test_voice_mode.py`, `tests/test_privacy.py` |
 | Telegram unreachable | alerts stay in `alert_outbox`, oldest first, retried at 30 s, 2 min, 10 min, then hourly | `tests/test_alerts.py` |
 
-Timeouts: `say()` 20 s; Brain 12 s overall with 1 retry (`BRAIN_DEADLINE_S`); OCR 15 s; ASR per utterance 10 s after VAD stop; Anki 10 s.
+Timeouts: `say()` 20 s; OCR 15 s; ASR per utterance 10 s after VAD stop; Anki 10 s. Brain: today 12 s overall with 1 retry (`BRAIN_DEADLINE_S`); with ADR-0017 that setting and the backend's own retry loop are removed, and every Brain call is bounded by its purpose's `PER_CALL_S` and `TOTAL_S`, the perceived-moment budget minus the Mouth's output reserve, and the session's hard deadline (ADR-0017 §5, §5.2 own the values).
 
 Backups: `python -m leafi backup [--to <file>]` writes a consistent copy of `data/leafi.db` with `VACUUM INTO` (default `data/backups/leafi-<UTC time>.db`); a backup keeps rows a later `leafi forget` deletes, and `forget` lists such backups. Never copy `leafi.db` by hand while Leafi runs: in WAL mode committed rows can still be in `leafi.db-wal` (ADR-0019). `data/sessions.db` (habit track) is in rollback mode and can be copied when no habit run is active. `python -m leafi export --session <id>` writes a JSON summary for the parent (no audio).

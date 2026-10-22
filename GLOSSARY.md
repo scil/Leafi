@@ -85,7 +85,11 @@ _Avoid_: transcript (the Utterance holds a transcript; it is not one)
 One immutable version of a Page's text; OCR makes the first, each Correction makes the next. Page text means the latest revision.
 
 **Alignment**:
-The mapping of an Utterance onto a window of the current Page revision that yields Observations and a Committed cursor.
+The mapping of an Utterance onto the current Page revision (a window around the cursors first, the whole page when that fails) that yields Observations and a Committed cursor (ADR-0013).
+
+**Off-task speech**:
+An Utterance, or a run of three or more heard words inside one, that Alignment cannot anchor to the page; it changes nothing and is never a miscue.
+_Avoid_: noise, garbage
 
 **Observation**:
 What Alignment saw, with no judgement attached: a matched, substituted or deleted span of expected words, or an insertion between two expected words.
@@ -108,7 +112,7 @@ _Avoid_: error, mistake, wrong (in copy shown to the child)
 A Candidate miscue and its later status (confirmed, unsure, withdrawn, invalidated). Confirmed Miscues count fully toward Difficulties; unsure ones only as low-weight "watch" evidence across several sessions (ADR-0013).
 
 **Practice**:
-A Leafi-led repeat of a word after a Candidate miscue: model it, let the learner retry at most twice, offer skip, record the outcome.
+A Leafi-led repeat of a word that was a Candidate miscue, run by the `practise_errors` Activity after reading, never during it: show the sentence, model the word, let the learner retry at most twice, offer skip, record the outcome.
 
 **Speech lease**:
 The lock a study session holds so that no other Leafi process speaks through the shared Mouths while it runs.
@@ -133,6 +137,58 @@ _Avoid_: dictionary, vocabulary list
 **Learner**:
 The child using Leafi. Leafi never identifies a Learner from images; identity, when needed, comes from Frigate's local face labels or from configuration.
 _Avoid_: user (the parent is also a user), student
+
+## Study session (ADR-0017)
+
+**Study harness**:
+The code around the Brain in a study session: observation, Menu, construction, execution and timing, the Ledger, records, routing, egress and fallback. The Brain proposes; the harness decides what is allowed and runs it.
+_Avoid_: framework, agent loop
+
+**Activity**:
+One unit of a study session with a kind (`review_anki`, `read_listen`, `read_aloud`, `practise_errors`, `teach_items`, `recall_items`, `quiz`, `learner_questions`, `add_cards`, `break`, `end`), parameters, a status and a time cap.
+_Avoid_: step, task (reserved for habits), exercise
+
+**Boundary**:
+The moment between two Activities, where the next one is chosen.
+
+**Menu**:
+The set of Activity kinds the harness allows at a Boundary, computed from the session's state and budgets; it always contains `end`.
+
+**Sequencer**:
+Who picks the next Activity in a session: the Brain, or the Default policy. Fixed for the whole session by its Arm.
+
+**Default policy**:
+The configurable ordered list of steps `{kind, when}` that picks Activities when the Brain does not (built-in: review, recall, practise, teach, cards, read, end).
+
+**Content owner**:
+Per Activity kind, who writes its text and chooses its material: code (from stored data) or the Brain. Selection fields may come from any Sequencer; content fields only from the owner.
+
+**Autonomy**:
+A per-learner setting, 0–10, for how much Leafi decides by itself at a Boundary: below its first band it offers a short list, in the middle it proposes and asks or argues, at the top it announces.
+
+**Cycle**:
+The record opened by a reading Activity chosen at a Boundary; it owns every Candidate miscue its reading creates, on any page, until the next boundary-chosen reading, the wrap or `stop` closes it and settles what is still open.
+
+**Continuation**:
+A `read_listen` the harness starts by itself after a page turn while the learner keeps reading; it stays in the same Cycle and is not chosen at a Boundary.
+
+**Epoch**:
+The tuple that identifies the session's current situation (session, learner, cycle, page read, revision, turn, settings versions); anything built under an older epoch is dropped instead of spoken, run or written.
+
+**Ledger**:
+The session's and the open Cycle's running counters and budgets (minutes, errors practised, new items, quiz questions, cards, Brain calls), updated in the same transaction as each step's effects.
+
+**Soft deadline**, **hard deadline**:
+From the soft deadline no new Activity starts; at the hard deadline (soft + grace) the running one is cut.
+
+**Arm**:
+Which Sequencer a session was randomly assigned (`brain` or `default`), recorded with its probability on every Activity so the two can be compared.
+
+**Tier**:
+A class of Brain backend by strength and cost (`fast`, `standard`, `deep`), chosen per call by purpose and difficulty.
+
+**Mastery mode**:
+The per-learner rule for when a Knowledge item counts as known: enough spaced retrievals in Leafi (`retrievals`), or Anki's schedule (`anki`).
 
 **Coach voice**:
 The persona of everything Leafi says to the Learner: coach and teammate, equal, funny, never scolding, never babyish.

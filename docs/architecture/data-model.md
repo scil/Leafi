@@ -25,6 +25,32 @@ Store: SQLite `data/leafi.db`, created on first use, migrated by `PRAGMA user_ve
 | `lexicon` | word, language, source (`book`/`correction`/`manual`), book_id?, weight, updated_at | Advisory in v1 (ADR-0011): candidates for OCR snap and future ASR bias. Rebuilt from revisions + corrections; manual rows survive. |
 | `learner_profile` | key, value (json), updated_at | Small facts the coach may use (the name the child gave Leafi, explanation language order). No identity, no images, no embeddings. `REDACT_TERMS` live in config, not here. |
 
+## Migration 5 (accepted; not yet in `storage.py`)
+
+ADR-0017, ADR-0018 and ADR-0013 v2 change the shape above in one migration (ADR-0018 §7.2: an empty file is created at the latest schema; a version-4 file with data is migrated by `python -m leafi migrate --learner "<name>"` in one transaction). The entity table above describes schema 4 until the migration lands; then the table is rewritten from `storage.py`.
+
+| Entity | Change | Owner of the meaning |
+|---|---|---|
+| `learners` | new: id (never reused), kind (`learner`/`guest`/`anonymous`), display_name, birth_year?, school_year?, alias, alias_age_band, settings (json), settings_version, recognition (json), guest_reason?, guest_expires_at?, forgetting, created_at | ADR-0018 §1 |
+| direct learner ownership | `learner_id NOT NULL` on `reading_sessions`, `knowledge_items`, `difficulties`, `retrieval_events`, `learner_notes`, `book_notes`, `review_answers`, `anki_outbox`, `consents`, `encounters` (`session_id` nullable); keys become learner-scoped | ADR-0018 §1 |
+| `cycles` | new: id, session_id, status (`open`/`closed`), opened_by_activity, closed_reason (`next_reading`/`wrap`/`stop`/`interrupted`/terminal status), opened_at, closed_at | ADR-0017 §7.2, ADR-0013 → Cycles |
+| `activities` | new: id, session_id, cycle_id?, kind, continuation, params (json), arm, propensity, policy_version, decided_by, override, autonomy, epoch, status (`ActivityStatus`), started_at, ended_at, outcome (json), assessment? | ADR-0017 §7.2 |
+| `brain_calls` | new: purpose, difficulty, tier, backend, endpoint host, model, effective provider/model, prompt_version, payload as sent, response, latency_ms, transmitted attempts, tokens, estimated cost, outcome | ADR-0017 §7.2 |
+| `retrieval_events` | new: learner_id, item_id, activity_id, at, day (household date), outcome (`success`/`fail`), evidence (`typed`/`heard_confident`/`acoustic`) | ADR-0017 §3.4, §6.2 |
+| `learner_notes`, `learner_note_citations`, `book_notes` | new; notes cite the activities they rest on | ADR-0017 §7.1 |
+| `consents`, `egress_log` | new (ISO/IEC TS 27560 column names; HMAC, never a body) | ADR-0018 §2, §4.2 |
+| provenance | `provenance_class` and `source_learners` (NOT NULL, no default) on every stored text that can reach a payload | ADR-0018 §3 |
+| `page_reads` | + `cycle_id`; at most one per `(cycle, page, revision)`; + counts `self_corrections`, `repetitions`, `off_task_words`; `reading_state` json + `off_task_run` | ADR-0013 → Definitions, Running-record conventions |
+| `observations` | kind + `off_task`; + `category` (`exact`/`phones`/`fuzzy`/`inflection`/`substitute`/`function_word`), `repeat`, `self_correction` | ADR-0013 → align rule 5 |
+| `miscues` | + `cycle_id` (the owning cycle); `unsure_reason` + `unclear` | ADR-0013 → Cycles, Practice |
+| `practices` | `outcome` + `unclear` | ADR-0013 → Practice |
+| `page_revisions` | `tokenizer_version` 2 for new revisions (token boundaries unchanged) | ADR-0013 → `norm()` v2 |
+| `knowledge_items` | kind + `pattern`; status + `ignored`; status changed only by `item_status.apply` | ADR-0017 §6.2 |
+| `encounters` | trigger + `teach_ok`, `teach_incorrect` | ADR-0013 → Difficulties |
+| `anki_outbox` | + `front`, `back`, `sentence` with provenance; written only by `add_cards` | ADR-0017 §7.2 |
+| `review_answers` | `ease IN (1,2,3,4)` | ADR-0017 §3.1 |
+| `corrections` | + `source_learner_id`, `forgotten` | ADR-0018 §3 |
+
 ## Invariants
 
 - Page text is read only through `pages.current_text()`; verified spans survive re-OCR. Test: `tests/test_corrections.py`.

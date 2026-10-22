@@ -29,7 +29,7 @@ Enforcement: `tests/test_privacy.py` — (a) an `httpx` transport recorder wrapp
 
 ## Prompt safety
 
-Page text and learner text are data: quoted in a delimited block, the Brain's reply validated against a strict schema and an allow-list of actions (`practice`, `explain`, `ask`, `encourage`, `none`); anything else is dropped. Fixed injection scenarios live in `tests/test_prompt_injection.py`. Coach lines shown to the child pass a short deny-list (shaming words) before being spoken; failures fall back to the static phrase.
+Page text and learner text are data: quoted in a delimited block, the Brain's reply validated against a strict schema and an allow-list of actions; anything else is dropped. With ADR-0017 the allow-list is the activity kinds of ADR-0017 §3.1 (`review_anki`, `read_listen`, `read_aloud`, `practise_errors`, `teach_items`, `recall_items`, `quiz`, `learner_questions`, `add_cards`, `break`, `end`) plus the record types of §7.1 (`assessment`, `item_status`, `book_note`), and every proposal is constructed against the harness's current menu and budgets, so a valid-looking reply still cannot start an activity the menu does not allow; the v1 list (`practice`, `explain`, `ask`, `encourage`, `none`) holds until that code lands. Fixed injection scenarios live in `tests/test_prompt_injection.py`. Coach lines shown to the child pass a short deny-list (shaming words) before being spoken; failures fall back to the static phrase.
 
 ## Secrets
 
