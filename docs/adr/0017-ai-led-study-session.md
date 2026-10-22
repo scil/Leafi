@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: accepted
+accepted: 2026-10-22 (owner)
 date: 2026-10-21
 revised: 2026-10-22 (v4: the independent codex and code-plan-review rounds on v3 and the owner's answers — session length and end timing configurable for every case, evaluation randomised per session, mastery producers, quiz answers under decision 6, routing tables per household; v3: configurable default policy with per-step code/Brain content, exploration, configurable mastery, parent features deferred; earlier rounds, see Reviews)
 supersedes: 0013 (session rules only, see §8)

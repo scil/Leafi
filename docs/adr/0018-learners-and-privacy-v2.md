@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: accepted
+accepted: 2026-10-22 (owner; the §7.5 documents that state the egress rule change with the egress code, plan M5, so no document claims an enforcement that does not run yet)
 date: 2026-10-21
 revised: 2026-10-22 (v4: the independent codex and code-plan-review rounds on v3 and the owner's answers — Anki sync is a notice, privacy behaviour is configurable, guests and unknown ages get their own session settings; earlier v3, v2 and their reviews, see Reviews)
 supersedes: 0011 (egress policy section only; its v1 scope list stays except the Ollama deferral, lifted under §2's condition)
