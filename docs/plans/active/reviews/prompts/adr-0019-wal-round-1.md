@@ -1,0 +1,7 @@
+Review docs/adr/0019-sqlite-wal-mode.md as a design, not as prose. What will be hard to get right, and what will keep going wrong? It switches data/leafi.db from SQLite's rollback journal to WAL. Check its claims against the code it names: leafi/core/storage.py (Store, transaction(), migrate()), the openers (leafi/runner.py, leafi/ops/supervisor.py, leafi/cli.py), tests/test_storage.py, and SQLite's documented WAL behaviour. Context, read only if a claim depends on it: docs/research/2026-10-22-database-choice.md, docs/adr/0004-sqlite-system-of-record-anki-as-scheduler.md, docs/adr/0017-ai-led-study-session.md §7.3, docs/adr/0018-learners-and-privacy-v2.md §7.2. Do not explore the rest of the repository.
+
+Settled, do not argue: WAL itself (owner decision), keeping SQLite (not Postgres/ClickHouse).
+
+Hand-execute: the first open of the existing rollback-mode file while the supervisor already holds a connection; two processes opening a brand-new file at the same moment; a reader with an open read transaction while the study process commits; the last connection closing; a crash with a non-empty -wal file; tests that open many Store objects on tmp files (Windows file deletion with -wal/-shm present); a mode=ro reader.
+
+Rank findings High / Medium / Low with the section and a concrete failing scenario. Say explicitly if there are no High findings. Do not edit files.
