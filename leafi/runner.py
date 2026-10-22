@@ -38,7 +38,9 @@ async def run_study(settings: Settings, args: argparse.Namespace) -> int:
         pron = pronunciation.REGISTRY.create("mock" if args.mock else settings.pron_backend, settings)
     ocr = tracker = catalog = None
     eye = built.hub.eye()
-    if eye is not None and not args.text:
+    # `--page-text` gives the page by hand: the camera is not watched for page turns ("next page" turns it),
+    # since a camera coming back online read as turns and moved the reading to an OCR'd page (2026-10-21).
+    if eye is not None and not args.text and not args.page_text:
         from leafi.services import catalog as catalog_service
         from leafi.services import ocr as ocr_service
         from leafi.study.page_tracker import PageTracker
