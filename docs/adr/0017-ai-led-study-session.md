@@ -19,8 +19,8 @@ A study session is a sequence of **activities**. At every activity boundary a **
 - *Content owner*: per activity kind, who fills its **content fields** (the text and the choice of material): `policy.content.<kind> = code | brain`. Selection fields (kind, page, range, ids) may come from any sequencer; content fields come only from the owner (§3.3). Kinds whose content only a model can write (`teach_items`, `quiz`, `learner_questions`) have no `code` option.
 - *Cycle*: an `open` record started by a reading activity chosen at a boundary; it owns every candidate its `read_listen` activities create, on any page; it closes when another boundary-chosen reading activity starts, at wrap, or on `stop`; closing settles what it still owns (§8.1). Continuations (§2) stay in it.
 - *Epoch*: `(session_id, learner_id, cycle_id, page_read_id, revision_id, turn_id, learner_settings_version, household_settings_version)`. `turn_id` (ADR-0013 → Async guard) also increments on activity start and end, page turn, correction, learner adoption, a settings change. An item built under one epoch is dropped if the epoch has changed when it would be spoken, executed or written.
-- *Deadlines*: `s.soft_deadline = start + session_max_min` — from then on the menu is `{end}` and no new activity starts; `s.hard_deadline = soft_deadline + session_grace_min` — the running activity is cut there (§6.3). Every wait — a Brain call, a listen, an activity step — is bounded by `min(its own timeout, s.hard_deadline − now)`.
-- *Controls and cancellation (one owner).* The console reader, the Listener's control parser and the lease watcher post control events. `s.terminal ∈ {None, stop, lease_lost, time_up_session, listener_lost_no_console, idle_session, internal_error}` is monotonic (the first terminal wins). **Setting `s.terminal` is the only way to stop the session**: the setter (`terminate(s, reason)`) also cancels the session's `anyio` `CancelScope`. The scope itself has **no deadline**; a deadline watcher task in the session's `TaskGroup` sleeps until `s.hard_deadline` and then calls `terminate(s, time_up_session)`, so the latch is always set before anything is cancelled. An activity that ends idle calls `terminate(s, idle_session)`. Every layer that can be cancelled — `run_activity`, `brain_call`, `negotiate`, `identify` — catches the scope's cancellation and maps it to `s.terminal`'s status (one mapping function), so a cancelled activity row always ends with that status, never `running`. `checkpoint(s)` after every await reads both settings versions (a change reloads settings and ledger limits and bumps the epoch) and raises `Terminal` when `s.terminal` is set — the cooperative path for code between awaits. `skip` events go into a queue consumed exactly once by `take_skip(s)`; a skip posted while no activity runs belongs to the current negotiation and does not change the epoch. Child tasks are spawned only through an `anyio` `TaskGroup` (never a raw `task.cancel()` beside a shield); blocking work in threads (ASR, TTS) gets a cooperative stop flag, because threads cannot be cancelled. A connection being opened when a cancel lands can leak from the HTTP pool, so the mediated client is rebuilt after such a cancel (libraries §2).
+- *Deadlines*: `s.soft_deadline = start + session_max_min` — from then on the menu is `{end}` and no new boundary activity starts (the one exception: with `session.end_mode = finish_activity`, a continuation of the reading under way may start during grace, §2); `s.hard_deadline = soft_deadline + session_grace_min` — the running activity is cut there (§6.3). Every wait — a Brain call, a listen, an activity step — is bounded by `min(its own timeout, s.hard_deadline − now)`.
+- *Controls and cancellation (one owner).* The console reader, the Listener's control parser and the lease watcher post control events. `s.terminal ∈ {None, stop, lease_lost, time_up_session, listener_lost_no_console, idle_session, internal_error}` is monotonic (the first terminal wins). **Setting `s.terminal` is the only way to interrupt the session** (a session also ends normally, without the latch, when negotiation returns `end` or the soft deadline is reached at a boundary): the setter (`terminate(s, reason)`) also cancels the session's `anyio` `CancelScope`. The scope itself has **no deadline**; a deadline watcher task in the session's `TaskGroup` sleeps until `s.hard_deadline` and then calls `terminate(s, time_up_session)`, so the latch is always set before anything is cancelled. An activity that ends idle calls `terminate(s, idle_session)`. Every layer that can be cancelled — `run_activity`, `brain_call`, `negotiate`, `identify` — catches the scope's cancellation and maps it to `s.terminal`'s status (one mapping function), so a cancelled activity row always ends with that status, never `running`. `checkpoint(s)` after every await reads both settings versions (a change reloads settings and ledger limits and bumps the epoch) and raises `Terminal` when `s.terminal` is set — the cooperative path for code between awaits. `skip` events go into a queue consumed exactly once by `take_skip(s)`; a skip posted while no activity runs belongs to the current negotiation and does not change the epoch. Child tasks are spawned only through an `anyio` `TaskGroup` (never a raw `task.cancel()` beside a shield); blocking work in threads (ASR, TTS) gets a cooperative stop flag, because threads cannot be cancelled. A connection being opened when a cancel lands can leak from the HTTP pool, so the mediated client is rebuilt after such a cancel (libraries §2).
 - *Listener lost.* A `ListenerLost` during `identify` is handled there (ADR-0018 §1). After `identify` returned it sets `listener_lost_no_console` when there is no console; with a console the session switches to text mode, keeps learner, cycle and page read, ends the running activity `aborted_stale`, and bumps the epoch.
 
 ## 2. The session loop (pseudocode is the rule)
@@ -31,7 +31,8 @@ run_session():
   try:
     close_stale_sessions(); sweep_guests()                 # §8.5 recovery (incl. guest end states), then ADR-0018 §1 sweep
     s = Session(learner = new_guest())
-    with CancelScope() as s.scope, TaskGroup() as tg:      # the scope has no deadline; tg runs the deadline watcher (§1)
+    try:                                                   # handles what leaves the task group, including its ExceptionGroup
+     with CancelScope() as s.scope, TaskGroup() as tg:     # the scope has no deadline; tg runs the deadline watcher (§1)
       tg.start_soon(deadline_watcher, s)
       try:
         s.learner = identify(s)                            # ADR-0018 §1
@@ -53,12 +54,12 @@ run_session():
           while last.status == "page_turned" and s.learner_kept_reading() and continuation_allowed(s):
             last = run_activity(s, continuation(s))        # §8.2; same cycle; repeats for every turn
           if last.status in TERMINAL: break
-      except Terminal: pass
-      except Exception as e:                               # an unexpected error still finalizes the session
-        log_exception(e); terminate(s, internal_error)
       finally:
-        tg.cancel_scope.cancel()                           # stops the watcher
-    finalize(s)                                            # outside the scope: local, no awaits, never raises
+        tg.cancel_scope.cancel()                           # stops the watcher and every child
+    except* Terminal: pass                                 # outside the task group: child errors arrive here as a group
+    except* Exception as eg:                               # an unexpected error, in the body or in any child
+      log_exception(eg); terminate(s, internal_error)
+    finalize(s)                                            # always reached once the session exists; local, never raises
     for step, limit in ((deliver, DELIVER_S), (extract_notes, EXTRACT_S)):   # 10 s, 20 s
       try:
         with move_on_after(limit, shield = True): step(s, post_session_context(s))
@@ -75,60 +76,56 @@ run_session():
 
 ```
 negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
-  END = {"kind": "end"}
   props = [p for p in ([prop.activity, prop.alternative] if prop else []) if p]
-  def settle(specs, excluded = frozenset(), refusing = False):   # the ONLY way a branch returns an activity
-    m = menu - excluded                                  # the exclusion reaches the default chain and construction
-    a = first_constructible(s, [p for p in specs if p.kind not in excluded] + default_chain(s, m) + [END], m)
-    checkpoint(s)
-    if take_skip(s):
-      if refusing or a.kind == "end": drain_skips(s); a = end_activity(s)
-      else: return refused_of(a, excluded)
-    return Reobserve if s.epoch() != epoch else Run(a)
-  def refused_of(x, excluded = frozenset()):
-    return settle(props, excluded | {x.kind}, refusing = True)
-  def wait_or_end():                                     # a guaranteed outcome: never a candidate that can fall through
+  excluded = set()                        # negotiation state: every refused kind, across every branch (never "end")
+  wanted = None                           # a kind the learner named
+  offers = 0; silence_reasked = False
+  while True:
+    if offers >= 3: return wait_or_end()
+    specs = ([learner_spec(s, wanted)] if wanted else []) + props
+    m = menu - excluded
+    a = first_constructible(s, [p for p in specs if p.kind in m] + default_chain(s, m), m) or end_activity(s)
     checkpoint(s)
     if s.epoch() != epoch: return Reobserve
-    return Run(end_activity(s) if s.previous_boundary_was_wait else wait_activity(s))
-  first = settle(props)
-  if first is Reobserve: return Reobserve
-  act = first.activity
-  if s.autonomy <= 1:                                      # a short list: Leafi offers 2–3 choices
-    ask("Would you like to " + describe_choices(s, act, menu, n = 3) + "?")
-  elif s.autonomy <= 7:
-    say(rationale_line(prop, act))                         # a reason at every band up to 7 (prior-art §2 #9)
-    if s.autonomy <= 3: ask("Shall we " + describe(act) + "? Or something else?")
-  else:
-    say(describe(act))
-  agreed = s.autonomy >= 4                               # at 0–3 the learner must say yes or name an activity
-  for turn in (1, 2):
-    if s.autonomy >= 8: break
-    c = parse_choice(listen(ASK_S))      # ASK_S = 8 s; c ∈ yes | no | skip | named k | none | unparsed
+    if take_skip(s): excluded.add(a.kind) if a.kind != "end" else None; drain_skips(s); offers += 1; continue
+    if a.kind == "end": return Run(a)                      # ending needs no consent and can never be excluded
+    if wanted and a.kind == wanted: return Run(a)          # the learner's own choice, constructed as named: accepted
+    wanted = None
+    offers += 1
+    if s.autonomy >= 8:
+      say(describe(a)); checkpoint(s)
+      if take_skip(s): excluded.add(a.kind); continue
+      return Reobserve if s.epoch() != epoch else Run(a)
+    if s.autonomy >= 4:                                     # Leafi argues once; silence lets it start
+      say(rationale_line(prop, a))
+    elif s.autonomy >= 2:
+      say(rationale_line(prop, a)); ask("Shall we " + describe(a) + "? Or something else?")
+    else:                                                   # 0–1: a short list
+      ask("Would you like to " + describe_choices(s, a, m, n = 3) + "?")
+    c = parse_choice(listen(ASK_S))                         # c ∈ yes | no | skip | named k | none | unparsed
     checkpoint(s)
-    if take_skip(s) or c in ("skip", "no"): return refused_of(act)
     if s.epoch() != epoch: return Reobserve
-    if c == "yes": agreed = True; break
-    if c in ("none", "unparsed"):
-      if s.autonomy <= 3 and turn == 1: ask("Shall we " + describe(act) + "?"); continue
-      break
-    if c.named in menu: return settle([learner_spec(s, c.named), act.spec])
-    say(why_not(c.named))
-  if not agreed: return wait_or_end()                    # 0–3 without a yes or a valid choice: never start it (decision 4)
-  checkpoint(s)
-  if take_skip(s): return refused_of(act)
-  return Reobserve if s.epoch() != epoch else Run(act)
+    if take_skip(s) or c in ("skip", "no"): excluded.add(a.kind); continue
+    if c == "yes": return Run(a)
+    if c.named:
+      if c.named in m: wanted = c.named
+      else: say(why_not(c.named))
+      continue
+    if s.autonomy >= 4: return Run(a)                       # none / unparsed at 4–7: no objection
+    if silence_reasked: return wait_or_end()                # 0–3: two silences never start an activity (decision 4)
+    silence_reasked = True; continue
+  wait_or_end() = Run(end_activity(s) if s.previous_boundary_was_wait else wait_activity(s))
 wait_activity(s) = a harness-internal 30 s break; end_activity(s) = an end with a static closing line (both always
-  constructible, exempt from the menu and the cycle cap, §3.3)
+  constructible, exempt from the menu, exclusion and the cycle cap, §3.3)
 ```
 
-Every return passes through `settle` or the final check, so it is either an activity constructed and checked under the current epoch or `Reobserve`. A refusal never re-selects the refused kind. `stop` ends the session at every level, including 10.
+At autonomy 0–3 an activity starts only on the learner's "yes" to **that** activity or because the learner named it and it was constructed as named; anything else — a refusal's next candidate, a named choice that could not be built — is offered again, at most three offers, then Leafi waits (and ends after a second wait). At 4–7 Leafi argues once and silence lets it start; at 8–10 it announces. Every return is constructed and checked under the current epoch, or `Reobserve`. Refused kinds stay excluded for the whole negotiation; `end` is never excluded and is always constructible. `stop` ends the session at every level.
 
 ## 3. Activities, construction and the menu
 
 ### 3.1 Activities
 
-**Statuses every kind can end in:** `completed`, `stopped`, `lease_lost`, `listener_lost_no_console`, `time_up_session`, `aborted_stale`, `store_busy` (§7.3). **`skip`**: in `review_anki`, `read_aloud`, `teach_items`, `recall_items`, `quiz` it skips the current card, sentence, item or question (the last one → `completed`); in `read_listen` it completes the current sentence; in `practise_errors` it settles the current candidate `unsure(skipped)`; in `learner_questions`, `break` and `add_cards` it ends the activity with `skipped`. Each activity is also capped at `limits.activity_max_min` (8; attention plateau, research P31) and ends with `completed` at its next natural step after that.
+**Statuses every kind can end in:** `completed`, `stopped`, `lease_lost`, `listener_lost_no_console`, `time_up_session`, `internal_error`, `aborted_stale`, `store_busy` (§7.3). **`skip`**: in `review_anki`, `read_aloud`, `teach_items`, `recall_items`, `quiz` it skips the current card, sentence, item or question (the last one → `completed`); in `read_listen` it completes the current sentence; in `practise_errors` it settles the current candidate `unsure(skipped)`; in `learner_questions`, `break` and `add_cards` it ends the activity with `skipped`. Each activity is also capped at `limits.activity_max_min` (8; attention plateau, research P31) and ends with `completed` at its next natural step after that.
 
 | Activity | Params (selection / content) | Inside (harness) | Kind-specific statuses |
 |---|---|---|---|

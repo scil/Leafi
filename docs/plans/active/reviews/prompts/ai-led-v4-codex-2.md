@@ -1,0 +1,7 @@
+Round 2 of 2. Review docs/adr/0017-ai-led-study-session.md and docs/adr/0018-learners-and-privacy-v2.md (v4 after round 1) as a design. Round 1 and its findings: docs/plans/active/reviews/2026-10-22-codex-ai-led-v4-1.md. Same reading scope as round 1 (the ADRs, the two 2026-10-22 research files, ADR-0013, ADR-0010, data-model.md, AGENTS.md, leafi/core/netguard.py, leafi/core/storage.py, and code the ADRs name). Settled, do not argue: the owner decisions in the ADR headers, ADR-0017 §5.1 routing, the magpie route trust assumption.
+
+Answer:
+1. For each round-1 finding (the High, the 13 Medium, and the 5 contradiction rows): resolved / partly (what is left) / not resolved — one line each.
+2. New defects introduced by the round-1 fixes. Hand-execute: the deadline watcher and terminate(); run_session's except/finally and the post-session context; negotiate with settle(excluded), refused_of and wait_or_end at autonomy 0–3 and 8; the soft-deadline break and continuation_allowed; the attempt token's HMAC binding and single use incl. the mediator's text retry; egress.aiohttp_connector for edge-tts; locality skipping the filter; guest.keep_days=0; the forget fence and final rescan; the recall schedule.
+3. Anything still contradictory inside or between the two ADRs.
+Rank High / Medium / Low with section and a concrete failing scenario. Say explicitly if there are no High findings. Do not edit files.
