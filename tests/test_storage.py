@@ -72,6 +72,27 @@ def test_leafi_transaction_rolls_back_every_row(tmp_path):
     assert store.one("SELECT COUNT(*) AS n FROM books")["n"] == 0
 
 
+def test_leafi_failed_commit_rolls_back_and_frees_the_connection(tmp_path):
+    """A COMMIT that fails (another process holds a read lock: SQLITE_BUSY) must not leave the transaction open;
+    the next BEGIN IMMEDIATE on the same Store would otherwise fail (codex review of ADR-0017 v3, #14)."""
+    path = tmp_path / "leafi.db"
+    store = Store(path)
+    store.conn.execute("PRAGMA busy_timeout = 0")
+    reader = sqlite3.connect(str(path), isolation_level=None)
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM books").fetchall()  # holds a SHARED lock until it ends
+    with pytest.raises(sqlite3.OperationalError):
+        with store.transaction():
+            store.insert("books", title="A", language="en", created_at=now_iso())
+    reader.execute("COMMIT")
+    reader.close()
+    assert not store.conn.in_transaction
+    assert store.one("SELECT COUNT(*) AS n FROM books")["n"] == 0
+    with store.transaction():
+        store.insert("books", title="B", language="en", created_at=now_iso())
+    assert store.one("SELECT COUNT(*) AS n FROM books")["n"] == 1
+
+
 def test_leafi_miscue_status_and_reason_enums_are_enforced(tmp_path):
     import sqlite3
 

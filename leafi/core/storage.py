@@ -185,11 +185,11 @@ class Store:
         self._depth = 1
         try:
             yield self.conn
+            self.conn.execute("COMMIT")  # inside the try: a failed COMMIT (SQLITE_BUSY) must roll back too
         except BaseException:
-            self.conn.execute("ROLLBACK")
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
             raise
-        else:
-            self.conn.execute("COMMIT")
         finally:
             self._depth = 0
 
