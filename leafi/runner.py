@@ -14,10 +14,6 @@ log = logging.getLogger("leafi.runner")
 
 async def run_study(settings: Settings, args: argparse.Namespace) -> int:
     from leafi import app as composition
-    from leafi.services import brain as brain_service
-    from leafi.services import pronunciation
-    from leafi.study.anki import AnkiClient
-    from leafi.study.session import StudySession
 
     built = composition.build(settings, text_mode=bool(args.text), voice_policy=args.voice_policy,
                               tts_backend="mock" if args.mock else None,
@@ -31,6 +27,22 @@ async def run_study(settings: Settings, args: argparse.Namespace) -> int:
             log.warning("--mouth: no such Mouth %s (have %s)", sorted(unknown), sorted(built.hub.mouths))
         built.hub.mouths = {n: m for n, m in built.hub.mouths.items() if n in keep}
     store = Store(settings.db_path)
+    try:
+        return await _run(settings, args, built, store)
+    finally:
+        try:
+            store.checkpoint()  # session end: fold the -wal into the file (ADR-0019 §6)
+        except Exception:  # noqa: BLE001 - never mask the session's own outcome
+            log.warning("checkpoint at session end failed", exc_info=True)
+        store.close()
+
+
+async def _run(settings: Settings, args: argparse.Namespace, built, store: Store) -> int:
+    from leafi.services import brain as brain_service
+    from leafi.services import pronunciation
+    from leafi.study.anki import AnkiClient
+    from leafi.study.session import StudySession
+
     brain_name = "mock" if args.mock else settings.brain_backend
     brain = brain_service.REGISTRY.create(brain_name, settings)
     pron = None

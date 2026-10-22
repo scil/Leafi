@@ -124,6 +124,8 @@ def forget_session(store: Store, session_id: int) -> None:
         store.execute(f"DELETE FROM observations WHERE utterance_id IN ({umarks})", tuple(utt))
         store.execute(f"DELETE FROM utterances WHERE id IN ({umarks})", tuple(utt))
         knowledge.recompute_difficulties(store)
+    if not store.checkpoint():  # the -wal still holds the deleted rows' old pages until it is emptied (ADR-0019 §7)
+        log.warning("forget: another connection is reading; the supervisor's periodic checkpoint retries")
 
 
 def forget_book(store: Store, book_id: int) -> None:
@@ -153,3 +155,5 @@ def forget_book(store: Store, book_id: int) -> None:
         store.execute("DELETE FROM lexicon WHERE book_id=?", (book_id,))
         store.execute("UPDATE books SET archived_at=? WHERE id=?", (now_iso(), book_id))
         knowledge.recompute_difficulties(store)
+    if not store.checkpoint():
+        log.warning("forget: another connection is reading; the supervisor's periodic checkpoint retries")

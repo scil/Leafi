@@ -28,7 +28,7 @@ from pathlib import Path
 import httpx
 
 from leafi.core import alerts
-from leafi.core.storage import Store, now_iso
+from leafi.core.storage import Store, checkpoint_file, now_iso
 from leafi.ops.timing import DEFAULTS, Timing
 
 log = logging.getLogger("leafi.supervisor")
@@ -555,6 +555,11 @@ async def run(settings) -> int:
                                               "" if ok else "failed")
                 except Exception:  # noqa: BLE001 - checks must never stop the supervisor
                     log.exception("configuration checks failed")
+                try:  # retries a checkpoint a reader blocked, e.g. after `forget` (ADR-0019 §6)
+                    if not await asyncio.to_thread(checkpoint_file, settings.db_path):
+                        log.warning("leafi.db checkpoint blocked by a reader; the -wal is kept until the next try")
+                except Exception:  # noqa: BLE001 - never stop the supervisor
+                    log.exception("leafi.db checkpoint failed")
                 await asyncio.sleep(t.checks_every_s)
 
         async def report(seen: dict[str, str]) -> None:
@@ -595,4 +600,5 @@ async def run(settings) -> int:
             server.close()
             for c in children:
                 c.stop()
+            store.close()
             lock.close()

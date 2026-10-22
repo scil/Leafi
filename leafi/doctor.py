@@ -64,10 +64,35 @@ def rows(settings: Settings) -> Iterator[tuple[str, str, str, str]]:
         yield label, backend, state, detail
 
 
+def sqlite_line(settings: Settings) -> str:
+    """The SQLite library and the journal mode of data/leafi.db (ADR-0019): WAL only under a fixed library."""
+    import sqlite3
+
+    from leafi.core import storage
+
+    version = storage._library_version()
+    mode = "not created"
+    if settings.db_path.exists():
+        try:
+            c = sqlite3.connect(f"file:{settings.db_path.resolve().as_posix()}?mode=ro", uri=True)
+            try:
+                mode = c.execute("PRAGMA journal_mode").fetchone()[0]
+            finally:
+                c.close()
+        except sqlite3.Error as e:
+            mode = f"unreadable ({e})"
+    v = ".".join(map(str, version))
+    if storage.wal_safe(version):
+        return f"{'sqlite':<22}{v:<16}{'ok':<16}leafi.db journal_mode={mode}"
+    return (f"{'sqlite':<22}{v:<16}{'WAL off':<16}has the WAL-reset bug; leafi.db journal_mode={mode}; "
+            "replace the Python install's DLLs\\sqlite3.dll with 3.51.3+ (ADR-0019 §2)")
+
+
 def report(settings: Settings) -> str:
     lines = [f"{'service':<22}{'backend':<16}{'state':<16}detail"]
     for label, backend, state, detail in rows(settings):
         lines.append(f"{label:<22}{backend:<16}{state:<16}{detail}")
+    lines.append(sqlite_line(settings))
     if not settings.redact_list():
         lines.append("WARNING: REDACT_TERMS is empty; set it with: python -m leafi setup --redact \"<name>,<school>\"")
     if settings.pron_auto_judge:

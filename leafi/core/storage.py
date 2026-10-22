@@ -1,18 +1,24 @@
 """SQLite system of record `data/leafi.db` (ADR-0004). This schema is the fact; data-model.md explains it.
 
 Migrations are ordered steps keyed by `PRAGMA user_version`. Writes that must be atomic use
-`Store.transaction()` (BEGIN IMMEDIATE … COMMIT, ROLLBACK on any exception).
+`Store.transaction()` (BEGIN IMMEDIATE … COMMIT, ROLLBACK on any exception). The file runs in WAL only under a
+SQLite library free of the WAL-reset bug (ADR-0019).
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("leafi.storage")
+
+JOURNAL_SIZE_LIMIT = 32 * 1024 * 1024  # a -wal file past this is truncated after a checkpoint (ADR-0019 §4)
 
 MIGRATIONS: list[str] = [
     # 1 — initial schema (data-model.md, 2026-10-19)
@@ -144,28 +150,87 @@ def now_iso() -> str:
     return dt.datetime.now(dt.UTC).isoformat(timespec="milliseconds")
 
 
-class Store:
-    """One connection per process; `with store.transaction():` for atomic multi-row writes."""
+class UnsafeSQLite(RuntimeError):
+    """A SQLite library with the WAL-reset bug met a WAL file it could not return to rollback mode."""
 
-    def __init__(self, path: Path | str) -> None:
+
+def _library_version() -> tuple[int, int, int]:
+    return sqlite3.sqlite_version_info
+
+
+def wal_safe(version: tuple[int, int, int]) -> bool:
+    """Free of the WAL-reset bug: 3.51.3 and later, or the 3.50.7 / 3.44.6 backports (sqlite.org/wal.html §11)."""
+    return version >= (3, 51, 3) or (3, 50, 7) <= version < (3, 51, 0) or (3, 44, 6) <= version < (3, 45, 0)
+
+
+class Store:
+    """One connection per process; `with store.transaction():` for atomic multi-row writes.
+
+    `journal_mode` forces a mode in tests; production leaves it None and the library version decides (ADR-0019).
+    """
+
+    def __init__(self, path: Path | str, journal_mode: str | None = None) -> None:
         self.path = Path(path)
-        if str(path) != ":memory:":
+        memory = str(path) == ":memory:"
+        if not memory:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        if not memory:
+            self._set_journal_mode(journal_mode)
         self.conn.execute("PRAGMA busy_timeout = 5000")  # the supervisor and a session write the same file (ADR-0016)
+        self.conn.execute(f"PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT}")
+        self.conn.execute("PRAGMA secure_delete = ON")  # forgotten rows are overwritten, not left in free pages
         self._depth = 0
         self.migrate()
 
+    def _set_journal_mode(self, forced: str | None) -> None:
+        """Runs before busy_timeout is set: a switch that would wait for another connection fails at once, warns,
+        and is retried at the next open. An unfixed library that cannot leave WAL refuses the file (ADR-0019 §1)."""
+        version = _library_version()
+        want = forced or ("wal" if wal_safe(version) else "delete")
+        if forced is None and want == "delete" and self.journal_mode != "wal":
+            return  # an unfixed library on a rollback file: nothing to change, nothing to warn about
+        try:
+            got = self.conn.execute(f"PRAGMA journal_mode = {want}").fetchone()[0]
+        except sqlite3.OperationalError as e:
+            if e.sqlite_errorname not in ("SQLITE_BUSY", "SQLITE_LOCKED"):
+                raise
+            got = f"unchanged ({e})"
+        v = ".".join(map(str, version))
+        if want == "delete" and forced is None:
+            if got != "delete":
+                self.conn.close()
+                raise UnsafeSQLite(f"SQLite {v} has the WAL-reset bug and {self.path.name} is in WAL with another "
+                                   "connection open; replace the Python install's DLLs\\sqlite3.dll (ADR-0019 §2)")
+            log.warning("SQLite %s has the WAL-reset bug; %s returned to rollback mode; replace sqlite3.dll "
+                        "(ADR-0019 §2)", v, self.path.name)
+        elif got != want:
+            log.warning("journal_mode = %s not applied to %s (%s); retried at the next open", want, self.path.name, got)
+
+    def __enter__(self) -> Store:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    @property
+    def journal_mode(self) -> str:
+        return self.conn.execute("PRAGMA journal_mode").fetchone()[0]
+
     # ---- schema
     def migrate(self) -> None:
-        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        for i, step in enumerate(MIGRATIONS[version:], start=version + 1):
+        """One step per transaction; the version is read under the write lock, so a racing opener of the same old
+        file never reruns a step (ADR-0019 §5)."""
+        while self.version < len(MIGRATIONS):  # an up-to-date open takes no write lock
             with self.transaction():
-                for stmt in _split(step):
+                version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+                if version >= len(MIGRATIONS):
+                    return
+                for stmt in _split(MIGRATIONS[version]):
                     self.conn.execute(stmt)
-                self.conn.execute(f"PRAGMA user_version = {i}")
+                self.conn.execute(f"PRAGMA user_version = {version + 1}")
 
     @property
     def version(self) -> int:
@@ -209,8 +274,38 @@ class Store:
     def all(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         return list(self.conn.execute(sql, params).fetchall())
 
+    def checkpoint(self) -> bool:
+        """Copy the -wal into the database and empty it; False when another connection's read kept it, in which
+        case the supervisor's periodic checkpoint retries (ADR-0019 §6)."""
+        return _truncate(self.conn)
+
+    def backup(self, dest: Path | str) -> Path:
+        """A consistent copy with `VACUUM INTO`: includes rows still in the -wal, and no remnants of deleted rows
+        (ADR-0019 §8). The destination must not exist."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        self.conn.execute("VACUUM INTO ?", (str(dest),))
+        return dest
+
     def close(self) -> None:
         self.conn.close()
+
+
+def _truncate(conn: sqlite3.Connection) -> bool:
+    if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+        return True
+    busy, _, _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    return not busy
+
+
+def checkpoint_file(path: Path | str) -> bool:
+    """`Store.checkpoint()` on a short-lived connection of its own, for a thread off the supervisor's event loop."""
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        conn.execute("PRAGMA busy_timeout = 5000")
+        return _truncate(conn)
+    finally:
+        conn.close()
 
 
 def _split(script: str) -> list[str]:

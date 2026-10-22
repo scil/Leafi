@@ -46,6 +46,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 - `.env` is reread only when the Frigate container is recreated (`scripts\win\apply-env.bat`). Instance: 2026-08.
 - Xiaomi camera needs internet to fetch P2P keys per connection; do not firewall it. Instance: 2026-08-07.
 - `anthropic` here is 0.120 (pre-1.x): no `fallbacks` (TD-1).
+- The Python install's `DLLs\sqlite3.dll` is hand-replaced (SQLite 3.54.1; stock 3.49.1 has the WAL-reset bug). `scoop update python312` reverts it and `leafi.db` silently leaves WAL; `leafi doctor` shows it; redo ADR-0019 §2. Instance: 2026-10-22.
 
 ## Pointers
 

@@ -1,4 +1,4 @@
-"""`python -m leafi <command>`: devices, doctor, study, export, forget, setup."""
+"""`python -m leafi <command>`: devices, doctor, study, export, forget, backup, setup."""
 
 from __future__ import annotations
 
@@ -73,8 +73,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     from leafi.core.storage import Store
     from leafi.study.records import export_session
 
-    store = Store(_settings().db_path)
-    print(json.dumps(export_session(store, args.session), ensure_ascii=False, indent=2))
+    with Store(_settings().db_path) as store:
+        print(json.dumps(export_session(store, args.session), ensure_ascii=False, indent=2))
     return 0
 
 
@@ -82,13 +82,35 @@ def cmd_forget(args: argparse.Namespace) -> int:
     from leafi.core.storage import Store
     from leafi.study.records import forget_book, forget_session
 
-    store = Store(_settings().db_path)
-    if args.session is not None:
-        forget_session(store, args.session)
-        print(f"forgot session {args.session}")
-    if args.book is not None:
-        forget_book(store, args.book)
-        print(f"forgot book {args.book} (archived)")
+    settings = _settings()
+    with Store(settings.db_path) as store:
+        if args.session is not None:
+            forget_session(store, args.session)
+            print(f"forgot session {args.session}")
+        if args.book is not None:
+            forget_book(store, args.book)
+            print(f"forgot book {args.book} (archived)")
+        if not store.checkpoint():
+            print("another Leafi process is reading: the deleted rows stay in leafi.db-wal until the supervisor's "
+                  "next checkpoint (CHECKS_EVERY_S, 15 min by default)")
+    backups = sorted((settings.data_dir / "backups").glob("leafi-*.db"))
+    if backups:  # ADR-0019 §8: forgetting never edits a backup
+        print(f"{len(backups)} backup(s) in {settings.data_dir / 'backups'} were made before this and still hold "
+              "the forgotten data; delete them to forget it there too")
+    return 0
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    """A consistent copy of data/leafi.db through SQLite's backup API; never copy the file by hand (ADR-0019 §8)."""
+    import datetime as dt
+
+    from leafi.core.storage import Store
+
+    settings = _settings()
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    dest = args.to or settings.data_dir / "backups" / f"leafi-{stamp}.db"
+    with Store(settings.db_path) as store:
+        print(f"backed up to {store.backup(dest)}")
     return 0
 
 
@@ -103,13 +125,18 @@ def cmd_supervisor(args: argparse.Namespace) -> int:
 
 def cmd_alert(args: argparse.Namespace) -> int:
     """keep.ps1's path (ADR-0016): queue a coded alert and/or deliver what is due, once."""
-    from leafi.core import alerts
     from leafi.core.storage import Store
+
+    settings = _settings()
+    with Store(settings.db_path) as store:
+        return _alert(args, settings, store)
+
+
+def _alert(args: argparse.Namespace, settings: Settings, store) -> int:
+    from leafi.core import alerts
     from leafi.devices.notifiers import NotifierDevice
     from leafi.ops.alerts import deliver, windows_toast
 
-    settings = _settings()
-    store = Store(settings.db_path)
     if args.status:
         states = store.all("SELECT service, kills, gave_up, latch, updated_at FROM service_state ORDER BY service")
         if not states:
@@ -275,6 +302,9 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--session", type=int)
     g.add_argument("--book", type=int)
     f.set_defaults(fn=cmd_forget)
+    b = sub.add_parser("backup", help="consistent copy of data/leafi.db (SQLite backup API, ADR-0019)")
+    b.add_argument("--to", type=Path, help="destination file (default data/backups/leafi-<UTC time>.db)")
+    b.set_defaults(fn=cmd_backup)
     sub.add_parser("supervisor", help="keep every Leafi service running, recover the ones that stop answering, "
                    "send alerts (ADR-0016)").set_defaults(fn=cmd_supervisor)
     tm = sub.add_parser("timing", help="supervision timings after validation, derived times, conflicts (ADR-0016)")

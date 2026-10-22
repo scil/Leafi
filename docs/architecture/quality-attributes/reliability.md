@@ -22,4 +22,4 @@ Objective: a study session never ends because a model or device failed; it degra
 
 Timeouts: `say()` 20 s; Brain 12 s overall with 1 retry (`BRAIN_DEADLINE_S`); OCR 15 s; ASR per utterance 10 s after VAD stop; Anki 10 s.
 
-Backups: `data/*.db` are copied by the user's normal backup; `python -m leafi export --session <id>` writes a JSON summary for the parent (no audio).
+Backups: `python -m leafi backup [--to <file>]` writes a consistent copy of `data/leafi.db` with `VACUUM INTO` (default `data/backups/leafi-<UTC time>.db`); a backup keeps rows a later `leafi forget` deletes, and `forget` lists such backups. Never copy `leafi.db` by hand while Leafi runs: in WAL mode committed rows can still be in `leafi.db-wal` (ADR-0019). `data/sessions.db` (habit track) is in rollback mode and can be copied when no habit run is active. `python -m leafi export --session <id>` writes a JSON summary for the parent (no audio).
