@@ -1,0 +1,9 @@
+Review docs/adr/0017-ai-led-study-session.md and docs/adr/0018-learners-and-privacy-v2.md (both v3, commit 26fe561) as a design, not as prose. They were rewritten from: docs/research/2026-10-22-harness-libraries.md, docs/research/2026-10-22-domain-prior-art.md, the code-plan-review pass 2 (docs/plans/active/reviews/2026-10-22-code-plan-review-ai-led-pass-2.md) and the owner's decisions recorded in the ADR headers. Rules kept or changed: docs/adr/0013-reading-algorithm-v1.md, docs/adr/0010-page-text-revisions-and-auditable-corrections.md, docs/adr/0011-egress-policy-and-v1-scope.md, docs/architecture/data-model.md, AGENTS.md, leafi/core/netguard.py, leafi/core/storage.py. Read only these files and the code the ADRs name; do not explore the rest of the repository.
+
+Settled, do not argue: the owner's decisions (research 2026-10-21 §1; the ADR headers: configurable default policy with per-step code/Brain ownership, exploration share, configurable mastery, every parent feature deferred, guest kept a week); ADR-0017 §5.1 routing; magpie honouring an explicit provider/model (trust assumption).
+
+Answer:
+1. What will be hard to get right, and what will keep going wrong? Hand-execute: ADR-0017 §2 run_session (lease, recovery, sweep order), §3.3 sequence() with the exploration share and a reordered default policy, a step owned by the Brain without a Brain, §3.4 teaching scores, §5 brain_call with a moment deadline and transmitted attempts; ADR-0018 §1 identify and every guest end state, §2 grants answering getaddrinfo from recorded addresses, §4.1 consent consumption, §6.2 migration 5 as an explicit command.
+2. Contradictions inside or between the two ADRs, and with the rules they keep.
+3. Privacy holes and data-integrity holes.
+Rank findings High / Medium / Low with the section cited and a concrete failing scenario. Say explicitly if there are no High findings. Do not edit files.
