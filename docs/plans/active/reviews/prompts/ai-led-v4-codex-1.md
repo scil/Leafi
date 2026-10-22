@@ -1,0 +1,9 @@
+Round 1 of 2. Review docs/adr/0017-ai-led-study-session.md and docs/adr/0018-learners-and-privacy-v2.md (v4) as a design, not as prose. v4 answers the v3 reviews: docs/plans/active/reviews/2026-10-22-codex-ai-led-v3.md (yours) and docs/plans/active/reviews/2026-10-22-code-plan-review-ai-led-v3.md. Inputs: docs/research/2026-10-22-harness-libraries.md, docs/research/2026-10-22-domain-prior-art.md. Rules kept or changed: docs/adr/0013-reading-algorithm-v1.md, docs/adr/0010-page-text-revisions-and-auditable-corrections.md, docs/architecture/data-model.md, AGENTS.md, leafi/core/netguard.py, leafi/core/storage.py. Read only these and the code the ADRs name.
+
+Settled, do not argue: the owner decisions in the ADR headers (incl. AnkiWeb sync is a notice only; every privacy behaviour is a setting; session length and end timing configurable; parent features deferred; per-session exploration share); ADR-0017 §5.1 routing; magpie route trust assumption.
+
+Answer:
+1. For each of your 15 v3 findings: resolved / partly (what is left) / not resolved — one line each.
+2. New defects. Hand-execute: ADR-0017 §1 cancellation mapping and §2 run_session (lease try/finally, CancelScope, finalize/deliver/extract after the scope), §2.1 negotiate (two silences, short list), §3.3 default_chain fall-through and content-owner discard, §3.4 answer counting, §5 per-transmission budget and output reserve, §6.3 soft/hard deadline with finish_activity; ADR-0018 §1 adopt() and guest end states, §2 call/transport seams and async getaddrinfo answer, gateway ports, redirects, §3 pseudonymisation on every class, §4.1 consent matching, §7.2 open states and migration under the process lock.
+3. Contradictions inside or between the ADRs.
+Rank High / Medium / Low with section and a concrete failing scenario. Say explicitly if there are no High findings. Do not edit files.

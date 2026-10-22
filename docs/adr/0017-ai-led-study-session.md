@@ -20,7 +20,7 @@ A study session is a sequence of **activities**. At every activity boundary a **
 - *Cycle*: an `open` record started by a reading activity chosen at a boundary; it owns every candidate its `read_listen` activities create, on any page; it closes when another boundary-chosen reading activity starts, at wrap, or on `stop`; closing settles what it still owns (§8.1). Continuations (§2) stay in it.
 - *Epoch*: `(session_id, learner_id, cycle_id, page_read_id, revision_id, turn_id, learner_settings_version, household_settings_version)`. `turn_id` (ADR-0013 → Async guard) also increments on activity start and end, page turn, correction, learner adoption, a settings change. An item built under one epoch is dropped if the epoch has changed when it would be spoken, executed or written.
 - *Deadlines*: `s.soft_deadline = start + session_max_min` — from then on the menu is `{end}` and no new activity starts; `s.hard_deadline = soft_deadline + session_grace_min` — the running activity is cut there (§6.3). Every wait — a Brain call, a listen, an activity step — is bounded by `min(its own timeout, s.hard_deadline − now)`.
-- *Controls and cancellation (one owner).* The console reader, the Listener's control parser and the lease watcher post control events. `s.terminal ∈ {None, stop, lease_lost, time_up_session, listener_lost_no_console}` is monotonic (the first terminal wins). **Setting `s.terminal` is the only way to stop the session**: the setter also cancels the session's `anyio` `CancelScope`; the scope's own deadline is `s.hard_deadline`, and when it fires it sets `s.terminal = time_up_session` first. Every layer that can be cancelled — `run_activity`, `brain_call`, `negotiate`, `identify` — catches the scope's cancellation and maps it to `s.terminal`'s status (one mapping function), so a cancelled activity row always ends with that status, never `running`. `checkpoint(s)` after every await reads both settings versions (a change reloads settings and ledger limits and bumps the epoch) and raises `Terminal` when `s.terminal` is set — the cooperative path for code between awaits. `skip` events go into a queue consumed exactly once by `take_skip(s)`; a skip posted while no activity runs belongs to the current negotiation and does not change the epoch. Child tasks are spawned only through an `anyio` `TaskGroup` (never a raw `task.cancel()` beside a shield); blocking work in threads (ASR, TTS) gets a cooperative stop flag, because threads cannot be cancelled. A connection being opened when a cancel lands can leak from the HTTP pool, so the mediated client is rebuilt after such a cancel (libraries §2).
+- *Controls and cancellation (one owner).* The console reader, the Listener's control parser and the lease watcher post control events. `s.terminal ∈ {None, stop, lease_lost, time_up_session, listener_lost_no_console, idle_session, internal_error}` is monotonic (the first terminal wins). **Setting `s.terminal` is the only way to stop the session**: the setter (`terminate(s, reason)`) also cancels the session's `anyio` `CancelScope`. The scope itself has **no deadline**; a deadline watcher task in the session's `TaskGroup` sleeps until `s.hard_deadline` and then calls `terminate(s, time_up_session)`, so the latch is always set before anything is cancelled. An activity that ends idle calls `terminate(s, idle_session)`. Every layer that can be cancelled — `run_activity`, `brain_call`, `negotiate`, `identify` — catches the scope's cancellation and maps it to `s.terminal`'s status (one mapping function), so a cancelled activity row always ends with that status, never `running`. `checkpoint(s)` after every await reads both settings versions (a change reloads settings and ledger limits and bumps the epoch) and raises `Terminal` when `s.terminal` is set — the cooperative path for code between awaits. `skip` events go into a queue consumed exactly once by `take_skip(s)`; a skip posted while no activity runs belongs to the current negotiation and does not change the epoch. Child tasks are spawned only through an `anyio` `TaskGroup` (never a raw `task.cancel()` beside a shield); blocking work in threads (ASR, TTS) gets a cooperative stop flag, because threads cannot be cancelled. A connection being opened when a cancel lands can leak from the HTTP pool, so the mediated client is rebuilt after such a cancel (libraries §2).
 - *Listener lost.* A `ListenerLost` during `identify` is handled there (ADR-0018 §1). After `identify` returned it sets `listener_lost_no_console` when there is no console; with a console the session switches to text mode, keeps learner, cycle and page read, ends the running activity `aborted_stale`, and bumps the epoch.
 
 ## 2. The session loop (pseudocode is the rule)
@@ -30,10 +30,12 @@ run_session():
   acquire_lease()                                          # refused → "another session is running"
   try:
     close_stale_sessions(); sweep_guests()                 # §8.5 recovery (incl. guest end states), then ADR-0018 §1 sweep
-    s = Session(learner = new_guest(), arm = assign_arm()) # §9: the session's sequencer, drawn once, with its propensity
-    with CancelScope(deadline = s.hard_deadline) as s.scope:
+    s = Session(learner = new_guest())
+    with CancelScope() as s.scope, TaskGroup() as tg:      # the scope has no deadline; tg runs the deadline watcher (§1)
+      tg.start_soon(deadline_watcher, s)
       try:
         s.learner = identify(s)                            # ADR-0018 §1
+        s.arm = assign_arm(s.learner)                      # §9: after identification, from the adopted learner's settings
         s.book = identify_book(s)
         last = None
         while True:
@@ -46,21 +48,28 @@ run_session():
           if out is Reobserve: continue
           act = out.activity
           if act.kind == "end": record_boundary(s, obs, prop, act); break
+          if now >= s.soft_deadline: break                 # no new activity after the soft deadline (§6.3)
           last = run_activity(s, act)                      # §3.1; start/finish rows inside
-          while last.status == "page_turned" and s.learner_kept_reading():
+          while last.status == "page_turned" and s.learner_kept_reading() and continuation_allowed(s):
             last = run_activity(s, continuation(s))        # §8.2; same cycle; repeats for every turn
           if last.status in TERMINAL: break
       except Terminal: pass
+      except Exception as e:                               # an unexpected error still finalizes the session
+        log_exception(e); terminate(s, internal_error)
+      finally:
+        tg.cancel_scope.cancel()                           # stops the watcher
     finalize(s)                                            # outside the scope: local, no awaits, never raises
-    with move_on_after(DELIVER_S, shield = True): deliver(s)          # 10 s
-    with move_on_after(EXTRACT_S, shield = True): extract_notes(s)    # §7.1; 20 s; own allowance, not the session's
+    for step, limit in ((deliver, DELIVER_S), (extract_notes, EXTRACT_S)):   # 10 s, 20 s
+      try:
+        with move_on_after(limit, shield = True): step(s, post_session_context(s))
+      except Exception as e: log_exception(e)              # one step's failure never skips the next
   finally:
     release_lease()                                        # whatever happened, including startup failures
 ```
 
-`finalize(s)` does only local work in one transaction: close the running activity with its mapped status and the open cycle (§8.1), write the summary counts, set `ended_at`, and apply ADR-0018 §1's guest end-state rule. `deliver(s)` speaks the closing line only while the speech lease is still held (never after `lease_lost`), processes the Anki outbox, and writes each step's outcome (`closing_line`, `anki_synced`: done / skipped / failed) into the summary. `extract_notes(s)` is the post-session learner-note call (§7.1) with its own deadline and its own Brain allowance (`limits.extract_calls` 2), so a session that ended at its deadline or with its budget spent still gets notes; if it cannot run, no notes are written for that session and the summary says so. Nothing after `finalize` can undo it. A failure in `finalize` (e.g. busy) leaves the work to startup recovery, which applies the same rules.
+`finalize(s)` does only local work in one transaction: close the running activity with its mapped status and the open cycle (§8.1), write the summary counts, set `ended_at`, and apply ADR-0018 §1's guest end-state rule. `deliver(s)` speaks the closing line only while the speech lease is still held (never after `lease_lost`), processes the Anki outbox, and writes each step's outcome (`closing_line`, `anki_synced`: done / skipped / failed) into the summary. `extract_notes(s)` is the post-session learner-note call (§7.1), skipped for guests. It runs with a **post-session call context** (`post_session_context(s)`: deadline `now + EXTRACT_S`, its own allowance `limits.extract_calls` 2, no latch check), which `brain_call` uses instead of the session's deadline, ledger and latch (§5), so a session that ended at its deadline, by `stop` or with its budget spent still gets notes; if it cannot run, no notes are written and the summary says so. `continuation_allowed(s)` is true before the soft deadline, and during grace only with `session.end_mode = finish_activity` (a continuation is the same reading the learner is doing); the hard deadline cuts it. Nothing after `finalize` can undo it. A failure in `finalize` (e.g. busy) leaves the work to startup recovery, which applies the same rules.
 
-`ActivityStatus` is one enum; §3.1's table says which kind can end in which status, and a test fails when a kind can end in a status the table omits. `TERMINAL = {stopped, lease_lost, idle_session, time_up_session, listener_lost_no_console}`; the others (`completed`, `skipped`, `page_turned`, `aborted_stale`, `store_busy`) return to the menu; `interrupted` is written only by startup recovery.
+`ActivityStatus` is one enum; §3.1's table says which kind can end in which status, and a test fails when a kind can end in a status the table omits. `TERMINAL = {stopped, lease_lost, idle_session, time_up_session, listener_lost_no_console, internal_error}`; the others (`completed`, `skipped`, `page_turned`, `aborted_stale`, `store_busy`) return to the menu; `interrupted` is written only by startup recovery.
 
 ### 2.1 Autonomy and negotiation (Leafi's autonomy 0–10, owner decision 1)
 
@@ -68,16 +77,20 @@ run_session():
 negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
   END = {"kind": "end"}
   props = [p for p in ([prop.activity, prop.alternative] if prop else []) if p]
-  def settle(specs, refusing = False):                   # the ONLY way a branch returns an activity
-    a = first_constructible(s, specs + default_chain(s, menu) + [END])   # §3.3: the whole default policy, then END
+  def settle(specs, excluded = frozenset(), refusing = False):   # the ONLY way a branch returns an activity
+    m = menu - excluded                                  # the exclusion reaches the default chain and construction
+    a = first_constructible(s, [p for p in specs if p.kind not in excluded] + default_chain(s, m) + [END], m)
     checkpoint(s)
     if take_skip(s):
-      if refusing or a.kind == "end": drain_skips(s); a = construct(s, END)
-      else: return refused_of(a)
+      if refusing or a.kind == "end": drain_skips(s); a = end_activity(s)
+      else: return refused_of(a, excluded)
     return Reobserve if s.epoch() != epoch else Run(a)
-  def refused_of(x):
-    rest = menu - {x.kind}
-    return settle([p for p in props if p.kind != x.kind] + default_chain(s, rest), refusing = True)
+  def refused_of(x, excluded = frozenset()):
+    return settle(props, excluded | {x.kind}, refusing = True)
+  def wait_or_end():                                     # a guaranteed outcome: never a candidate that can fall through
+    checkpoint(s)
+    if s.epoch() != epoch: return Reobserve
+    return Run(end_activity(s) if s.previous_boundary_was_wait else wait_activity(s))
   first = settle(props)
   if first is Reobserve: return Reobserve
   act = first.activity
@@ -88,26 +101,25 @@ negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
     if s.autonomy <= 3: ask("Shall we " + describe(act) + "? Or something else?")
   else:
     say(describe(act))
-  silences = 0
+  agreed = s.autonomy >= 4                               # at 0–3 the learner must say yes or name an activity
   for turn in (1, 2):
     if s.autonomy >= 8: break
     c = parse_choice(listen(ASK_S))      # ASK_S = 8 s; c ∈ yes | no | skip | named k | none | unparsed
     checkpoint(s)
     if take_skip(s) or c in ("skip", "no"): return refused_of(act)
     if s.epoch() != epoch: return Reobserve
-    if c == "yes": break
+    if c == "yes": agreed = True; break
     if c in ("none", "unparsed"):
-      silences += 1
-      if s.autonomy <= 3:
-        if silences == 1: ask("Shall we " + describe(act) + "?"); continue
-        return settle([wait_spec(s)])                      # two silences at 0–3: never start it; wait (decision 4)
+      if s.autonomy <= 3 and turn == 1: ask("Shall we " + describe(act) + "?"); continue
       break
     if c.named in menu: return settle([learner_spec(s, c.named), act.spec])
     say(why_not(c.named))
+  if not agreed: return wait_or_end()                    # 0–3 without a yes or a valid choice: never start it (decision 4)
   checkpoint(s)
   if take_skip(s): return refused_of(act)
   return Reobserve if s.epoch() != epoch else Run(act)
-wait_spec(s) = {"kind": "break", "seconds": 30} unless the previous boundary was already such a wait, then END
+wait_activity(s) = a harness-internal 30 s break; end_activity(s) = an end with a static closing line (both always
+  constructible, exempt from the menu and the cycle cap, §3.3)
 ```
 
 Every return passes through `settle` or the final check, so it is either an activity constructed and checked under the current epoch or `Reobserve`. A refusal never re-selects the refused kind. `stop` ends the session at every level, including 10.
@@ -130,7 +142,7 @@ Every return passes through `settle` or the final check, so it is either an acti
 | `learner_questions` | sel: `max_turns` ≤ 5 | the learner asks; each answer is one Brain call, purpose `answer`, grounded in the page and `book_notes`, on an eligible backend (ADR-0018 §2) | skipped, idle_session |
 | `add_cards` | sel: `item_ids`; content: per card `front`, `back`, `sentence` | card checks (§7.2) → `anki_outbox` | skipped |
 | `break` | sel: `seconds` ≤ 120 | silence, a Face timer | skipped |
-| `end` | content: `say` | — | — |
+| `end` | content: `say` (optional) | always constructible: its content owner is fixed to `code` (a static closing line); a generated line is used only if it is already available, never awaited | — |
 
 ### 3.2 Menu
 
@@ -177,7 +189,7 @@ sequence(s, obs, menu) -> Decision | None:
 | 6 | `read_listen` | `unread` (`page: current, range: rest`, else `page: next`) |
 | 7 | `end` | `always` |
 
-`default_chain(s, menu)` returns **every** step, in order, whose kind is in `menu` and whose `when` holds; `first_constructible` tries them in turn, so a step that cannot be constructed (e.g. generation timed out) falls through to the next step, not straight to `end`. The `when` vocabulary is fixed (`first_boundary`, `has_recall_due`, `has_candidates`, `has_new_items`, `has_cardable`, `unread`, `always`); a learner or household may reorder, remove or add steps from §3.1's kinds; an invalid order is rejected at save and the built-in default is used. The policy has a `policy_version` (a hash) recorded on every boundary.
+`default_chain(s, menu)` returns **every** step, in order, whose kind is in `menu` and whose `when` holds; `first_constructible(s, specs, menu)` tries them in turn against that same menu, so a step that cannot be constructed (e.g. generation timed out) falls through to the next step, not straight to `end`. The `when` vocabulary is fixed (`first_boundary`, `has_recall_due`, `has_candidates`, `has_new_items`, `has_cardable`, `unread`, `always`); a learner or household may reorder, remove or add steps from §3.1's kinds; an invalid order is rejected at save and the built-in default is used. The policy has a `policy_version` (a hash) recorded on every boundary.
 
 `construct(s, spec) -> Activity | Rejected(reason)` validates against the **current** state:
 
@@ -193,7 +205,7 @@ A spoken answer counts only when it is **confidently recognised**: every word of
 - `item_said`: ADR-0013's retry test on the whole answer; `cloze_word`: the answer is the cloze word (exact, a homophone, or the same phones — ADR-0013 v2's real-word rule, §8); `item_used`: one `judge` call (§5.1) with few-shot examples → `yes` / `no` / `cannot_tell`.
 - `quiz`: ADR-0013 → CHECK outcomes on a counted answer; an uncounted spoken answer is `unavailable` and writes no encounter.
 - Silence, `skip`, `cannot_tell`, no eligible `judge` backend → `unavailable`: no retrieval event, no encounter.
-- `success` / `fail` write a `retrieval_events` row (full timestamp, household day, evidence `typed` | `heard_confident` | `acoustic`) and, for teaching, an encounter (§8.6).
+- `success` / `fail` write a `retrieval_events` row (full timestamp, household day, evidence `typed` | `heard_confident` | `acoustic`) and, for `teach_items` and `recall_items`, an encounter (§8.6).
 
 ## 4. Observation
 
@@ -204,15 +216,16 @@ Built by `study/observe.py`; ADR-0018's egress filter removes local-only fields 
 A `decide` call returns one structured output, one schema for the whole session: `activity` (an `anyOf` of one object per kind, selection fields and optional content fields), `alternative`, `say_before` (≤ 300 chars), `rationale` with Bridge's slots `evidence`, `strategy`, `intention` (≤ 150 chars each), `records` (optional, §7.1), `epoch`. Each `generate` kind has its own fixed schema. Schemas, effort and thinking stay constant within a session per (purpose, tier). Typed outputs are Pydantic models validated by the harness.
 
 ```
-brain_call(s, purpose, payload, schema, moment_deadline = None) -> Result | None:   # never raises except Terminal
-  deadline = min(now + TOTAL_S[purpose], (moment_deadline or ∞) − OUTPUT_RESERVE[mouth], s.hard_deadline)
+brain_call(s, purpose, payload, schema, moment_deadline = None, ctx = None) -> Result | None:  # never raises except Terminal
+  ctx = ctx or session_context(s)          # ctx carries deadline, ledger and latch policy; post-session calls pass their own
+  deadline = min(now + TOTAL_S[purpose], (moment_deadline or ∞) − OUTPUT_RESERVE[mouth], ctx.deadline)
   for tier in route(purpose, difficulty(s, purpose, payload)):     # §5.1
-    if not s.ledger.can_afford(tier): continue
+    if not ctx.ledger.can_afford(tier): continue
     for b in eligible(tier, purpose, s.learner):                    # ADR-0018 §2
       if now >= deadline: return None
       r = b.call(payload, schema, timeout = min(PER_CALL_S[purpose], deadline − now),
-                 budget = s.ledger.transmission_budget(tier))       # the mediated transport reserves before each send
-      checkpoint(s)
+                 budget = ctx.ledger.transmission_budget(tier))     # the mediated transport reserves before each send
+      ctx.checkpoint()                                              # session: checkpoint(s); post-session: no latch
       if r is None: continue
       ok, reason = check_shape(r, payload)
       if ok: return r
@@ -270,7 +283,7 @@ Every default is a starting value; *untuned* ones have no measured or published 
 **Transitions** (`item_status.apply(event)` is the only code that changes status): `new → learning` on the item's first retrieval event of any outcome, or when its card is first acknowledged by Anki; `learning → known` and `known → lapsed` by `mastery.mode`; `* → ignored` by the Brain's request or the learner. **Retrieval-event writers**: `teach_items`, `recall_items`, `quiz` (per cited item), `review_anki` (per reviewed card's item).
 
 **Mastery is configurable** (owner decision), `mastery.mode`:
-- `retrievals` (default): `known` when the item has ≥ `mastery.min_retrievals` (6) counted successes over ≥ `mastery.min_days` (3) distinct household days. Items in `learning` without an acknowledged card are re-asked by `recall_items` at a spacing of 1, 2 and 4 days after the last success (*untuned*), which is what makes this mode reachable.
+- `retrievals` (default): `known` when the item has ≥ `mastery.min_retrievals` (6) counted successes over ≥ `mastery.min_days` (3) distinct household days. Items in `learning` without an acknowledged card are re-asked by `recall_items` (*untuned* spacing): the first recall is due 1 day after the item's first retrieval event of any outcome; each counted success moves the next due date one step along 1 → 2 → 4 days; a `fail` resets it to 1 day; an `unavailable` outcome changes nothing. This is what makes the mode reachable.
 - `anki`: cardable items become cards; `review_anki` grades them; FSRS schedules; `known` when the card's interval ≥ `REVIEW_KNOWN_INTERVAL_DAYS`, `lapsed` on a lapse.
 
 In both modes an item with an acknowledged Anki card follows Anki's state. Status is derived, not stored apart from its evidence: `forget --session` recomputes the statuses of the items whose events it deleted.
@@ -385,7 +398,7 @@ Research findings this ADR does not use, with their fate: C15/N4 (implicit promo
 
 ## Confirmation
 
-`tests/test_session_start.py` (lease, recovery, sweep, in order; the lease is released when recovery raises). `tests/test_cancellation.py` (a `stop` and a deadline inside `listen`, inside a Brain call and inside `negotiate` each end the running activity with the mapped status, never `running`; `deliver` and `extract_notes` run after `time_up_session`). `tests/test_session_menu.py`, `tests/test_construct.py` (a Brain spec's content fields are discarded when the owner is `code`; a `brain`-owned step without a Brain falls through to the next default step; an unanswerable quiz question is rejected). `tests/test_default_policy.py` (built-in order; a reordered policy is followed; a step that cannot be constructed falls through to the next one, not to `end`; an invalid order falls back). `tests/test_arms.py` (per-session assignment near 10 % over 1,000 sessions; arm, propensity, policy version and override recorded per activity; a Brain-arm fallback stays in the Brain arm). `tests/test_negotiate.py`, `tests/test_negotiate_freshness.py`, `tests/test_negotiate_silence.py` (two silences at autonomy 2 start a 30 s wait, then end; at autonomy 1 Leafi offers a short list). `tests/test_controls.py`. `tests/test_brain_call.py` (the transport refuses a retry the budget cannot cover; a cancelled call has charged what it sent; the output reserve leaves time for the camera Mouth). `tests/test_routing.py`. `tests/test_answer_scores.py` ("I don't know what through means" is not a success; a low-confidence spoken "through" is `unavailable`; a low-confidence spoken quiz answer writes no encounter). `tests/test_mastery.py` (`retrievals`: 6 over 3 days → known, 6 on one day → not; `recall_items` re-asks a `learning` item; `anki`: follows the card; `forget --session` recomputes status). `tests/test_session_length.py` (guest and unknown-age settings; `finish_activity` lets the running activity finish within grace; `hard` cuts it). `tests/test_cycle_candidates.py`, `tests/test_epoch.py`, `tests/test_reading_settings.py`, `tests/test_item_status.py`, `tests/test_activity_status.py`, `tests/test_settings_reload.py`, `tests/test_anki_single_path.py` (only `add_cards` writes the outbox; `push` sends stored fields), `tests/test_card_checks.py`, `tests/test_difficulties.py`, `tests/test_busy.py` (no step blocks the loop for more than 300 ms; each site of §7.3), and a replay of `cache/voice-diag.wav` through a mock-Brain session asserting no line inside reading with `interrupt=never`.
+`tests/test_session_start.py` (lease, recovery, sweep, in order; the lease is released when recovery raises; the arm is assigned from the adopted learner's settings). `tests/test_cancellation.py` (a `stop` and a deadline inside `listen`, inside a Brain call and inside `negotiate` each end the running activity with the mapped status, never `running`; the watcher sets `time_up_session` before the scope is cancelled; an unexpected exception in an activity finalizes the session as `internal_error`; `deliver` and `extract_notes` run after `time_up_session` and after `stop`, and a failing `deliver` does not skip extraction). `tests/test_soft_deadline.py` (an activity confirmed after the soft deadline does not start; a continuation during grace runs only with `finish_activity`). `tests/test_end.py` (`end` constructs with the generation budget spent and its owner set to `brain`). `tests/test_session_menu.py`, `tests/test_construct.py` (a Brain spec's content fields are discarded when the owner is `code`; a `brain`-owned step without a Brain falls through to the next default step; an unanswerable quiz question is rejected). `tests/test_default_policy.py` (built-in order; a reordered policy is followed; a step that cannot be constructed falls through to the next one, not to `end`; an invalid order falls back). `tests/test_arms.py` (per-session assignment near 10 % over 1,000 sessions; arm, propensity, policy version and override recorded per activity; a Brain-arm fallback stays in the Brain arm). `tests/test_negotiate.py` (with a policy containing only `read_listen`, refusing reading never reselects it), `tests/test_negotiate_freshness.py`, `tests/test_negotiate_silence.py` (two silences at autonomy 2 start a 30 s wait even at the cycle cap, then end; two unavailable named choices at autonomy 2 also wait; at autonomy 1 Leafi offers a short list). `tests/test_recall_schedule.py` (first due after a first `fail`; success steps 1 → 2 → 4; a fail resets). `tests/test_controls.py`. `tests/test_brain_call.py` (the transport refuses a retry the budget cannot cover; a cancelled call has charged what it sent; the output reserve leaves time for the camera Mouth). `tests/test_routing.py`. `tests/test_answer_scores.py` ("I don't know what through means" is not a success; a low-confidence spoken "through" is `unavailable`; a low-confidence spoken quiz answer writes no encounter). `tests/test_mastery.py` (`retrievals`: 6 over 3 days → known, 6 on one day → not; `recall_items` re-asks a `learning` item; `anki`: follows the card; `forget --session` recomputes status). `tests/test_session_length.py` (guest and unknown-age settings; `finish_activity` lets the running activity finish within grace; `hard` cuts it). `tests/test_cycle_candidates.py`, `tests/test_epoch.py`, `tests/test_reading_settings.py`, `tests/test_item_status.py`, `tests/test_activity_status.py`, `tests/test_settings_reload.py`, `tests/test_anki_single_path.py` (only `add_cards` writes the outbox; `push` sends stored fields), `tests/test_card_checks.py`, `tests/test_difficulties.py`, `tests/test_busy.py` (no step blocks the loop for more than 300 ms; each site of §7.3), and a replay of `cache/voice-diag.wav` through a mock-Brain session asserting no line inside reading with `interrupt=never`.
 
 ## Reviews
 
