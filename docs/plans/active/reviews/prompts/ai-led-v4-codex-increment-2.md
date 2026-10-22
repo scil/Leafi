@@ -1,0 +1,8 @@
+Single round. Review only the increment in .scratch/review/ai-led-v4-increment-2.diff: the changes to docs/adr/0017-ai-led-study-session.md and docs/adr/0018-learners-and-privacy-v2.md made after the fallback review docs/plans/active/reviews/2026-10-22-fallback-ai-led-v4-increment.md (its findings H1, M1-M5, L1-L7, and the leftovers of C1 and C3). Read the surrounding sections of the two ADRs only where a changed line depends on them; do not re-review unchanged text and do not explore the repository.
+
+Settled, do not argue: the owner decisions in the ADR headers, including tts.edge_mode defaulting to the unchanged edge-tts library and every negotiation number being a per-learner setting.
+
+Answer:
+1. For each fallback finding (H1, M1-M5, L1-L7, C1, C3): resolved / partly (what is left) / not resolved — one line each.
+2. Defects the increment introduces. Hand-execute the new negotiate loop (per-boundary state b, other_allowed, first_constructible returning None, a later named choice overriding a refusal, a named kind that cannot be built, silence_reasks as a count with b.offers -= 1) at autonomy 0, 2, 5 and 9, including band settings at their range limits (bands.ask = bands.argue, bands.announce = 11); and spawn() with a child task raising while the body awaits a listen.
+Rank High / Medium / Low with section and a concrete failing scenario. Say explicitly if there are no High findings. Do not edit files.
