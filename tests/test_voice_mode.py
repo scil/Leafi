@@ -70,6 +70,30 @@ class SlowEar:
         yield AudioChunk(QUIET)
 
 
+class SlowAsr(MockAsr):
+    """Transcription slower than the READ window (`SENTENCE_PAUSE_S`), like Parakeet's first, model-loading call."""
+
+    def __init__(self, texts: list[str], delay_s: float) -> None:
+        super().__init__(texts)
+        self.delay_s = delay_s
+
+    async def transcribe(self, pcm, sample_rate, hotwords=None):
+        await asyncio.sleep(self.delay_s)
+        return await super().transcribe(pcm, sample_rate, hotwords)
+
+
+async def test_a_read_cancelled_mid_transcription_keeps_its_speech():
+    """Owner's voice runs (2026-10-21) lost the page's first lines: the session cancels a timed read when its
+    window ends, and a segment still in the recognizer went with it. The next read must deliver it."""
+    asr_ = SlowAsr(["the cat sat on the hat"], delay_s=0.3)
+    lis = asr.VoiceListener(SlowEar([LOUD] * 3), asr_, vad=FakeVad(every=3))
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(lis.next_utterance(0.1), 0.1)
+    u = await asyncio.wait_for(lis.next_utterance(0.1), 1.0)
+    assert u is not None and u.text == "the cat sat on the hat"
+    assert asr_.calls == 1  # finished once, not transcribed again
+
+
 async def test_pause_resets_the_vad_and_discards_buffered_audio():
     vad = FakeVad(every=50)
     lis = asr.VoiceListener(SlowEar([LOUD] * 5), MockAsr(["x"]), vad=vad)

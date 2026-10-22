@@ -69,6 +69,7 @@ class VoiceListener:
         self._queue: asyncio.Queue[AudioChunk] | None = None
         self._pump_task: asyncio.Task | None = None
         self._segments: list[bytes] = []
+        self._recognising: asyncio.Future[Utterance] | None = None
         self.lost: BaseException | None = None
         self._lost_reported = False
 
@@ -125,11 +126,19 @@ class VoiceListener:
             raise self.lost
 
     async def next_utterance(self, timeout_s: float | None) -> Utterance | None:
-        q = self._ensure_pump()
-        pcm = await (self._segment_vad(q, timeout_s) if self.vad is not None else self._segment_energy(q, timeout_s))
-        if pcm is None:
-            return None
-        return await self._recognise(pcm)
+        # A segment in the recognizer outlives a cancelled read: the session cancels a timed read when its
+        # window (SENTENCE_PAUSE_S) ends, and Parakeet's first call alone takes longer than that (model load),
+        # so the speech is kept in `_recognising` and the next read delivers it.
+        if self._recognising is None:
+            q = self._ensure_pump()
+            pcm = await (self._segment_vad(q, timeout_s) if self.vad is not None
+                         else self._segment_energy(q, timeout_s))
+            if pcm is None:
+                return None
+            self._recognising = asyncio.ensure_future(self._recognise(pcm))
+        u = await asyncio.shield(self._recognising)
+        self._recognising = None
+        return u
 
     async def _recognise(self, pcm: bytes) -> Utterance:
         words = await self.recognizer.transcribe(pcm, 16000)
