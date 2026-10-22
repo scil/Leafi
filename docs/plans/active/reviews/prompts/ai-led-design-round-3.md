@@ -1,0 +1,9 @@
+Round 3. Review the revised docs/adr/0017-ai-led-study-session.md and docs/adr/0018-learners-and-privacy-v2.md as a design, not as prose. Earlier findings: docs/plans/active/reviews/2026-10-21-codex-ai-led-design-review-1.md and -2.md. Background: docs/research/2026-10-21-ai-led-study.md (§1, §8). Rules kept or changed: docs/adr/0013-reading-algorithm-v1.md, docs/adr/0011-egress-policy-and-v1-scope.md, docs/architecture/data-model.md, AGENTS.md, leafi/core/netguard.py. Read only these files and the code they name when you need to check a claim; do not explore the rest of the repository.
+
+The owner's decisions in research §1 and the routing-by-task-type-and-difficulty request (ADR-0017 §5.1) are settled; do not argue them.
+
+Answer:
+1. For each round-2 finding (the 8 numbered defects and the 5 bullets under "Problems likely to recur"): resolved, partly resolved (what is left), or not resolved — one line each.
+2. New defects the revision introduced. Hand-execute: ADR-0017 §2 run_session with the continuation loop and the control latch; §2.1 negotiate (every return path); §3.3 construct incl. generate; §5 brain_call with routing and escalation; ADR-0018 §1 identify incl. guest; §2 grant under a thread executor and an SDK; §4 consent with a crash between consume and send. Scenarios: no Brain at all; autonomy 2, learner says "quiz" (not in menu), then "stop"; autonomy 10 with /stop during the announcement; A→B→C page turns while reading with three candidates from A; cloud.text off for learner A, on for sibling B, with A's note in B's memory; a high-difficulty learner question with only a fast local tier configured.
+3. Anything that will keep going wrong in implementation.
+Rank findings High / Medium / Low with the section cited and a concrete failing scenario. Do not edit files.

@@ -1,0 +1,9 @@
+Round 4. Review the revised docs/adr/0017-ai-led-study-session.md and docs/adr/0018-learners-and-privacy-v2.md as a design, not as prose. Earlier findings: docs/plans/active/reviews/2026-10-21-codex-ai-led-design-review-1.md, -2.md, -3.md. Background: docs/research/2026-10-21-ai-led-study.md (§1, §8). Rules kept or changed: docs/adr/0013-reading-algorithm-v1.md, docs/adr/0011-egress-policy-and-v1-scope.md, docs/architecture/data-model.md, AGENTS.md, leafi/core/netguard.py. Read only these files and the code they name when you need to check a claim; do not explore the rest of the repository.
+
+The owner's decisions in research §1 and the routing-by-task-type-and-difficulty request (ADR-0017 §5.1) are settled; do not argue them. magpie honouring an explicit provider/model is a stated trust assumption.
+
+Answer:
+1. For each round-3 finding (the 7 numbered defects and the 4 bullets under "Problems that will keep recurring"): resolved, partly resolved (what is left), or not resolved — one line each.
+2. New defects the revision introduced. Hand-execute: ADR-0017 §2 run_session (identify inside the session; Reobserve), §2.1 negotiate (every return path, skip taken once, epoch change while asking), §1 controls and deadline, §5 brain_call with the full route chain and degraded results; ADR-0018 §2 egress.send with pooled clients and a grant copied into a thread that outlives its deadline; §3 an unverified correction by A read by B; §4 prepare outcomes for an unreadable photo and for a practice clip. Scenarios: no Brain at all; /stop then a spoken skip before the next checkpoint; a page turn while a learner-chosen quiz generates; minute 29:58 with a decide call and autonomy 2; forget A when B holds a note quoting A.
+3. Anything that will keep going wrong in implementation.
+Rank findings High / Medium / Low with the section cited and a concrete failing scenario. Say explicitly if you find no High findings. Do not edit files.

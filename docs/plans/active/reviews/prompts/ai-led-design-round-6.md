@@ -1,0 +1,8 @@
+Round 6, confirming round. Review the revised docs/adr/0017-ai-led-study-session.md and docs/adr/0018-learners-and-privacy-v2.md as a design. Earlier findings: docs/plans/active/reviews/2026-10-21-codex-ai-led-design-review-1.md to -5.md. Background: docs/research/2026-10-21-ai-led-study.md. Rules kept or changed: docs/adr/0013-reading-algorithm-v1.md, docs/adr/0010-page-text-revisions-and-auditable-corrections.md, docs/adr/0011-egress-policy-and-v1-scope.md, docs/architecture/data-model.md, AGENTS.md, leafi/core/netguard.py. Read only these files and the code they name; do not explore the rest of the repository.
+
+Settled, do not argue: the owner's decisions in research §1; ADR-0017 §5.1 routing; magpie honouring an explicit provider/model (trust assumption); after round 5 the owner-facing choice that `forget --learner` unlinks a learner's corrections and keeps their spans local-only instead of rebuilding revision chains (ADR-0018 §3, stated residual).
+
+Answer:
+1. For each round-5 finding (4 numbered defects and 3 recurring bullets): resolved, partly resolved (what is left), or not resolved — one line each.
+2. Any remaining High or Medium defect, with section and a concrete failing scenario. Hand-execute settle() with a skip during construction (both in the first construction and inside a refusal), finalize/deliver after lease_lost, the audio prepare order on a clip with a recognised name plus an unclear stretch, and forget A with rev1 book, rev2 A, rev3 A, rev4 B.
+Say explicitly if there are no High findings. Low findings in one list at the end. Do not edit files.
