@@ -45,7 +45,27 @@ What the Mi Home app's MISS library and its Java callers do, read by disassembly
 
 Conclusion: the app gives our camera no LAN session; the cloud round-trip per connection is how the official client works too. Whether the camera firmware would accept a LAN session anyway is unknown and not worth a probe without a reason. go2rtc has no LAN path; every connection calls `/v2/device/miss_get_vendor`.
 
+## Key expiry and cloud dependency (Q3)
+
+Motivation: the camera fetches session keys from the cloud on every connect (`AGENTS.md` Known traps), so an unstable internet link breaks reconnects. The question was whether a key can be cached and reused to survive outages.
+
+| Finding | Where |
+|---|---|
+| The cloud reply carries `vendor.vendor_params.expires`, read as a Java `long` and cached on disk with `p2p_id` and `init_string`. So a key is reusable across connections — the app does reuse it | `MIStream` `onSuccess` (`optLong("expires")`), `MissLanParams`, `MissLanUtils` |
+| `libmiss.so` treats the expiry as opaque: `miss_set_p2p_id_expires` stores up to 9 bytes in a global, `miss_get_p2p_id_expires` returns them, never compared to a clock. The value is passed to the camera during auth, so the **camera** enforces expiry, not the client | `miss_set_p2p_id_expires` 0x124160, `miss_get_p2p_id_expires` 0x12421c |
+| No clock comparison of the MISS `expires` exists in the decompiled `classes12.dex` / `classes2.dex`; any validity check lives in camera plugin 4433 (not in the APK) | jadx scan (only OAuth-token expiries compare to `currentTimeMillis`) |
+| go2rtc reads only the vendor id and TUTK uid from `vendor_params`; it never reads `expires` and never caches the response, so it re-fetches every connection | go2rtc `internal/xiaomi` vendor parse |
+
+Two internet dependencies per connection, not one: (1) the Xiaomi cloud key fetch; (2) the CS2 P2P rendezvous to locate the camera (CS2 supernodes over WAN; avoided by a direct-IP LAN connection, which `miss_client_session_lan_open` supports via `Remote_ip`). Caching the vendor response removes only (1); a LAN direct session removes both. The host and camera share a LAN, so the LAN path is the stronger answer to an unstable uplink — but it is untested on `chuangmi.camera.069a01`, go2rtc has no LAN path, and it still needs one cloud handshake to seed the key.
+
+Unknown until measured: the numeric `expires` window (a server-set value; never captured), whether it is an absolute epoch or a TTL, and how strictly the camera enforces a reused key past it.
+
 ## Next
+
+- Read the real `expires` value first (read-only, no camera change). Options, cheapest first: (a) intercept go2rtc's own `miss_get_vendor` HTTPS on the host with mitmproxy, trusting mitmproxy's CA on the host only — go2rtc is our process, no app and no eMudhra key involved; (b) add one debug log line to the go2rtc vendor parse in a throwaway build; (c) read `sp_miss_lan_params.xml` from the phone (`did;p2p_id;init_string;expires`) if root or an app-data backup is available; (d) Frida-hook `miss_json_get_p2pkey_expires` or the Java `optLong("expires")`. Record only the `expires` field — the response also holds the session key and sign, which are secrets.
+- Then measure camera-side enforcement: reuse a captured vendor response after the window and see whether the camera still authorizes. Needs the camera; a go2rtc caching or LAN change then goes through plan mode (it touches `tools/go2rtc/`) and codex review.
+- The meaning of the 0x107 status value and any wait-for-0x107 logic are in camera plugin 4433; reading it needs the plugin bundle from a phone (root or app-data backup) or a Frida trace of the running app.
+- Cheapest go2rtc experiment suggested by these notes: send `{"speakerStart":1}` with 0x106, wait for 0x107 instead of the fixed 1 s sleep, and send `{"speakerStop":1}` with 0x108 at the end. It plays on the camera speaker, so it runs only with the owner present, through plan mode (it touches `tools/go2rtc/`) and codex review, and is measured with `p5_camera_latency.py` and `p27_duplex.py`.
 
 - The meaning of the 0x107 status value and any wait-for-0x107 logic are in camera plugin 4433; reading it needs the plugin bundle from a phone (root or app-data backup) or a Frida trace of the running app.
 - Cheapest go2rtc experiment suggested by these notes: send `{"speakerStart":1}` with 0x106, wait for 0x107 instead of the fixed 1 s sleep, and send `{"speakerStop":1}` with 0x108 at the end. It plays on the camera speaker, so it runs only with the owner present, through plan mode (it touches `tools/go2rtc/`) and codex review, and is measured with `p5_camera_latency.py` and `p27_duplex.py`.
