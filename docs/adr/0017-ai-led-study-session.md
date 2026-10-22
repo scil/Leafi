@@ -78,23 +78,31 @@ run_session():
 negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
   props = [p for p in ([prop.activity, prop.alternative] if prop else []) if p]
   b = s.boundary                          # per-boundary state; survives Reobserve, cleared when an activity starts
-  # b.excluded: refused kinds (never "end"); b.wanted: a kind the learner named; b.offers; b.silences
+  # b.excluded: refused kinds (never "end"); b.wanted: a kind the learner named; b.current: the activity on offer;
+  # b.reask: re-ask b.current after a silence; b.offers; b.silences
   while True:
-    if b.offers >= negotiation.max_offers: return wait_or_end()
-    m = menu - b.excluded
-    specs = ([learner_spec(s, b.wanted)] if b.wanted else []) + props
-    a = first_constructible(s, [p for p in specs if p.kind in m] + default_chain(s, m) + other_allowed(s, m), m)
-    checkpoint(s)
-    if s.epoch() != epoch: return Reobserve
-    drain_skips(s)                                          # a skip before an offer is heard excludes nothing
-    if a is None: return wait_or_end()                      # nothing left to offer: wait, never a silent end
-    if b.wanted:
-      if a.kind == b.wanted: return Run(a)                  # the learner's own choice, built as named: accepted
+    if b.wanted:                                            # a named choice is tried before the offer cap
+      a = first_constructible(s, [learner_spec(s, b.wanted)], menu)
+      checkpoint(s)
+      if s.epoch() != epoch: return Reobserve
+      if a is not None: return Run(a)                       # the learner's own choice, built as named: accepted
       say("I can't do " + describe_kind(b.wanted) + " right now."); b.excluded.add(b.wanted); b.wanted = None
-    b.offers += 1
+    if b.reask:                                             # a silence re-ask repeats the same offer; not a new offer
+      a = b.current; b.reask = False
+    else:
+      if b.offers >= negotiation.max_offers: return wait_or_end()
+      m = menu - b.excluded
+      cands = [p for p in props if p.kind in m] + default_chain(s, m - {"end"}) + other_allowed(s, m)
+      a = first_constructible(s, cands, m)                  # other_allowed ends with "end", so a is None only if
+      checkpoint(s)                                         # end itself failed, which construction rules out
+      if s.epoch() != epoch: return Reobserve
+      drain_skips(s)                                        # a skip before an offer is heard excludes nothing
+      if a is None: return wait_or_end()
+      b.current = a; b.offers += 1
+    m = menu - b.excluded                                   # current, after any exclusion above (short list, §2.1 L3)
     if s.autonomy >= bands.announce:
       say(describe(a)); checkpoint(s)
-      if take_skip(s): b.excluded.add(a.kind); continue
+      if take_skip(s): exclude(b, a.kind); continue
       return Reobserve if s.epoch() != epoch else Run(a)
     if s.autonomy >= bands.argue: say(rationale_line(prop, a))
     elif s.autonomy >= bands.ask: say(rationale_line(prop, a)); ask("Shall we " + describe(a) + "? Or something else?")
@@ -102,7 +110,7 @@ negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
     c = parse_choice(listen(negotiation.ask_s))             # c ∈ yes | no | skip | named k | none | unparsed
     checkpoint(s)
     if s.epoch() != epoch: return Reobserve
-    if take_skip(s) or c in ("skip", "no"): b.excluded.add(a.kind); continue
+    if take_skip(s) or c in ("skip", "no"): exclude(b, a.kind); continue
     if c == "yes": return Run(a)
     if c.named:
       if c.named == "end": return Run(end_activity(s))
@@ -111,11 +119,14 @@ negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
       continue
     if s.autonomy >= bands.argue: return Run(a)             # none / unparsed: no objection
     b.silences += 1
-    if b.silences <= negotiation.silence_reasks: b.offers -= 1; continue   # re-ask the same offer
+    if b.silences <= negotiation.silence_reasks: b.reask = True; continue
     return wait_or_end()                                    # silence below bands.argue never starts an activity
+  exclude(b, kind) = b.excluded.add(kind) unless kind == "end"     # end is never excluded
   wait_or_end() = Run(end_activity(s) if s.previous_boundary_was_wait else wait_activity(s))
 first_constructible(s, specs, m) = the first spec that constructs against m, else None
-other_allowed(s, m) = specs with default_params for the kinds of m not already listed, in menu order, "end" last
+other_allowed(s, m) = specs with default_params for the kinds of m not already listed, in MENU_ORDER, "end" last
+MENU_ORDER = review_anki, recall_items, practise_errors, teach_items, add_cards, read_listen, read_aloud, quiz,
+  learner_questions, break, end            # a fixed order, since allowed(s) is a set
 wait_activity(s) = a harness-internal break of negotiation.wait_s; end_activity(s) = an end with a static closing line
   (both always constructible, exempt from the menu, exclusion and the cycle cap, §3.3)
 ```
@@ -129,7 +140,7 @@ wait_activity(s) = a harness-internal break of negotiation.wait_s; end_activity(
 | `bands.argue`–`bands.announce` − 1 (4–7) | proposes with a reason, listens once | no objection | starts | the next candidate is proposed |
 | `bands.announce` and up (8–10) | announces | always (stop still ends the session) | — | skip moves to the next candidate |
 
-Below `bands.argue` an activity starts only on the learner's "yes" to **that** activity, or because the learner named it and it was built as named; a named kind that cannot be built is said so and excluded; anything else is offered again, up to `negotiation.max_offers` offers, and when the offers or the candidates run out Leafi waits (and ends after a second wait), never ends silently. From `bands.argue` Leafi argues once and silence lets it start; from `bands.announce` it announces. Refused kinds stay excluded for the whole boundary, also across `Reobserve`; a kind the learner names later overrides an earlier refusal; a skip heard before an offer excludes nothing; `end` is never excluded and is always constructible. Every return is constructed and checked under the current epoch, or `Reobserve`. `stop` ends the session at every level.
+Below `bands.argue` an activity starts only on the learner's "yes" to **that** activity, or because the learner named it and it was built as named; a named kind is tried before the offer cap is checked, and one that cannot be built is said so and excluded; a silence re-ask repeats the same constructed offer and does not count as a new one; the default policy's own `end` step is tried only after every other allowed kind (`other_allowed`, in a fixed `MENU_ORDER`); anything else is offered again, up to `negotiation.max_offers` offers, and when the offers or the candidates run out Leafi waits (and ends after a second wait), never ends silently. From `bands.argue` Leafi argues once and silence lets it start; from `bands.announce` it announces. Refused kinds stay excluded for the whole boundary, also across `Reobserve`; a kind the learner names later overrides an earlier refusal; a skip heard before an offer excludes nothing; `end` is never excluded and is always constructible. Every return is constructed and checked under the current epoch, or `Reobserve`. `stop` ends the session at every level.
 
 ## 3. Activities, construction and the menu
 
@@ -405,7 +416,7 @@ Research findings this ADR does not use, with their fate: C15/N4 (implicit promo
 
 ## Confirmation
 
-`tests/test_session_start.py` (lease, recovery, sweep, in order; the lease is released when recovery raises; the arm is assigned from the adopted learner's settings). `tests/test_cancellation.py` (a `stop` and a deadline inside `listen`, inside a Brain call and inside `negotiate` each end the running activity with the mapped status, never `running`; the watcher sets `time_up_session` before the scope is cancelled; an unexpected exception in an activity finalizes the session as `internal_error`; `deliver` and `extract_notes` run after `time_up_session` and after `stop`, and a failing `deliver` does not skip extraction). `tests/test_soft_deadline.py` (an activity confirmed after the soft deadline does not start; a continuation during grace runs only with `finish_activity`). `tests/test_end.py` (`end` constructs with the generation budget spent and its owner set to `brain`). `tests/test_session_menu.py`, `tests/test_construct.py` (a Brain spec's content fields are discarded when the owner is `code`; a `brain`-owned step without a Brain falls through to the next default step; an unanswerable quiz question is rejected). `tests/test_default_policy.py` (built-in order; a reordered policy is followed; a step that cannot be constructed falls through to the next one, not to `end`; an invalid order falls back). `tests/test_arms.py` (per-session assignment near 10 % over 1,000 sessions; arm, propensity, policy version and override recorded per activity; a Brain-arm fallback stays in the Brain arm). `tests/test_negotiate.py` (with a policy containing only `read_listen`, refusing reading never reselects it; at autonomy 2 refusing the whole default chain offers other allowed kinds, then waits, never ends silently; a kind refused earlier and named later starts; a named kind that cannot be built is said so; exclusions survive `Reobserve`; `silence_reasks = 0` and `= 2` behave as set; out-of-range settings are refused at save), `tests/test_spawn.py` (a child task raising sets `internal_error` before the body is cancelled; the session finalizes and releases the lease), `tests/test_negotiate_freshness.py`, `tests/test_negotiate_silence.py` (two silences at autonomy 2 start a 30 s wait even at the cycle cap, then end; two unavailable named choices at autonomy 2 also wait; at autonomy 1 Leafi offers a short list). `tests/test_recall_schedule.py` (first due after a first `fail`; success steps 1 → 2 → 4; a fail resets). `tests/test_controls.py`. `tests/test_brain_call.py` (the transport refuses a retry the budget cannot cover; a cancelled call has charged what it sent; the output reserve leaves time for the camera Mouth). `tests/test_routing.py`. `tests/test_answer_scores.py` ("I don't know what through means" is not a success; a low-confidence spoken "through" is `unavailable`; a low-confidence spoken quiz answer writes no encounter). `tests/test_mastery.py` (`retrievals`: 6 over 3 days → known, 6 on one day → not; `recall_items` re-asks a `learning` item; `anki`: follows the card; `forget --session` recomputes status). `tests/test_session_length.py` (guest and unknown-age settings; `finish_activity` lets the running activity finish within grace; `hard` cuts it). `tests/test_cycle_candidates.py`, `tests/test_epoch.py`, `tests/test_reading_settings.py`, `tests/test_item_status.py`, `tests/test_activity_status.py`, `tests/test_settings_reload.py`, `tests/test_anki_single_path.py` (only `add_cards` writes the outbox; `push` sends stored fields), `tests/test_card_checks.py`, `tests/test_difficulties.py`, `tests/test_busy.py` (no step blocks the loop for more than 300 ms; each site of §7.3), and a replay of `cache/voice-diag.wav` through a mock-Brain session asserting no line inside reading with `interrupt=never`.
+`tests/test_session_start.py` (lease, recovery, sweep, in order; the lease is released when recovery raises; the arm is assigned from the adopted learner's settings). `tests/test_cancellation.py` (a `stop` and a deadline inside `listen`, inside a Brain call and inside `negotiate` each end the running activity with the mapped status, never `running`; the watcher sets `time_up_session` before the scope is cancelled; an unexpected exception in an activity finalizes the session as `internal_error`; `deliver` and `extract_notes` run after `time_up_session` and after `stop`, and a failing `deliver` does not skip extraction). `tests/test_soft_deadline.py` (an activity confirmed after the soft deadline does not start; a continuation during grace runs only with `finish_activity`). `tests/test_end.py` (`end` constructs with the generation budget spent and its owner set to `brain`). `tests/test_session_menu.py`, `tests/test_construct.py` (a Brain spec's content fields are discarded when the owner is `code`; a `brain`-owned step without a Brain falls through to the next default step; an unanswerable quiz question is rejected). `tests/test_default_policy.py` (built-in order; a reordered policy is followed; a step that cannot be constructed falls through to the next one, not to `end`; an invalid order falls back). `tests/test_arms.py` (per-session assignment near 10 % over 1,000 sessions; arm, propensity, policy version and override recorded per activity; a Brain-arm fallback stays in the Brain arm). `tests/test_negotiate.py` (with a policy containing only `read_listen`, refusing reading never reselects it; at autonomy 2 refusing the whole default chain offers other allowed kinds, then waits, never ends silently; a kind refused earlier and named later starts, also when the offer cap is already reached; a named kind that cannot be built is said so and is not in the same short list; refusing `end` never excludes it; a silence re-ask repeats the same activity even when generation is no longer affordable; with defaults, refusing `review_anki` and `read_listen` offers `read_aloud` and `break` before `end`; exclusions survive `Reobserve`; `silence_reasks = 0` and `= 2` behave as set; out-of-range settings are refused at save), `tests/test_spawn.py` (a child task raising sets `internal_error` before the body is cancelled; the session finalizes and releases the lease), `tests/test_negotiate_freshness.py`, `tests/test_negotiate_silence.py` (two silences at autonomy 2 start a 30 s wait even at the cycle cap, then end; two unavailable named choices at autonomy 2 also wait; at autonomy 1 Leafi offers a short list). `tests/test_recall_schedule.py` (first due after a first `fail`; success steps 1 → 2 → 4; a fail resets). `tests/test_controls.py`. `tests/test_brain_call.py` (the transport refuses a retry the budget cannot cover; a cancelled call has charged what it sent; the output reserve leaves time for the camera Mouth). `tests/test_routing.py`. `tests/test_answer_scores.py` ("I don't know what through means" is not a success; a low-confidence spoken "through" is `unavailable`; a low-confidence spoken quiz answer writes no encounter). `tests/test_mastery.py` (`retrievals`: 6 over 3 days → known, 6 on one day → not; `recall_items` re-asks a `learning` item; `anki`: follows the card; `forget --session` recomputes status). `tests/test_session_length.py` (guest and unknown-age settings; `finish_activity` lets the running activity finish within grace; `hard` cuts it). `tests/test_cycle_candidates.py`, `tests/test_epoch.py`, `tests/test_reading_settings.py`, `tests/test_item_status.py`, `tests/test_activity_status.py`, `tests/test_settings_reload.py`, `tests/test_anki_single_path.py` (only `add_cards` writes the outbox; `push` sends stored fields), `tests/test_card_checks.py`, `tests/test_difficulties.py`, `tests/test_busy.py` (no step blocks the loop for more than 300 ms; each site of §7.3), and a replay of `cache/voice-diag.wav` through a mock-Brain session asserting no line inside reading with `interrupt=never`.
 
 ## Reviews
 
