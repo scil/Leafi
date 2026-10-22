@@ -70,8 +70,10 @@ class Go2rtcCamera:
                 log.warning("snapshot failed: HTTP %s", r.status_code)
                 return None
             return Frame(r.content, r.headers.get("content-type", "image/jpeg"), width)
-        except httpx.HTTPError:
-            log.warning("snapshot failed: go2rtc unreachable", exc_info=True)
+        except httpx.HTTPError as e:
+            # The Eye is polled every second or so; a traceback per poll buries the session's console.
+            log.warning("snapshot failed: go2rtc unreachable (%s)", type(e).__name__)
+            log.debug("snapshot failure detail", exc_info=True)
             return None
 
     # ---- Mouth

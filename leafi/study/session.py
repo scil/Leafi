@@ -118,6 +118,7 @@ class StudySession:
         self.unanchored = 0
         self.reposition = False
         self.first_page = True
+        self._announce_page = False
         self.request = PageRequest()
         self.resume_row = None
         self.lease: speech_lease.Lease | None = None
@@ -517,15 +518,21 @@ class StudySession:
         self._save_state()
 
     async def _after_page_found(self) -> str:
+        # "Page N is ready" waits for READ: said before REVIEW_DUE, it invited reading while the session still
+        # waited on Anki and the first sentence went unheard (owner's first voice run, 2026-10-21).
+        self._announce_page = True
+        if self.first_page:
+            self.first_page = False
+            return REVIEW_DUE
+        return READ
+
+    async def _announce_page_ready(self) -> None:
+        self._announce_page = False
         printed = self.store.one("SELECT printed_number FROM pages WHERE id=?", (self.page_id,))["printed_number"]
         # Text mode has no microphone: say how to feed the reading, not "read it aloud" (owner's first run
         # waited 180 s for a typed line that never came).
         await self.line("page_ready" if self.voice else "page_ready_text",
                         page=printed if printed is not None else "")
-        if self.first_page:
-            self.first_page = False
-            return REVIEW_DUE
-        return READ
 
     # ------------------------------------------------------------ REVIEW_DUE
 
@@ -573,6 +580,8 @@ class StudySession:
         # Page turns are watched from READ on (PRACTICE and CHECK follow it); not in REVIEW_DUE, where a turn
         # could only be a no-op (review 2 D6). The first turn seen in READ is handled there.
         self._page_open = True
+        if self._announce_page:
+            await self._announce_page_ready()
         idle = 0.0
         while True:
             timeout = self.settings.sentence_pause_s if self.voice else self.settings.study_idle_s

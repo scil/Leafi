@@ -40,6 +40,27 @@ async def test_voice_mode_page_ready_still_says_read_aloud(settings):
     assert not any("Type each sentence" in t for t in face.texts)
 
 
+async def test_page_ready_is_said_after_the_review_cards_not_before(settings):
+    """Owner's first voice run (2026-10-21): "Read it aloud whenever you like" came before REVIEW_DUE, so the
+    learner began reading while the session still waited on Anki and the first sentence was never heard."""
+    from leafi.study import anki
+    from tests.fakes.anki import FakeAnki
+
+    store = Store(settings.db_path)
+    fake = FakeAnki()
+    fake.add_due_card("blew")
+    face = RecordingFace()
+    hub = Hub(faces={"console": face}, policy="none")
+    session = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(),
+                           listener=ScriptedListener(["good", "/stop"], voice=True),
+                           anki_client=anki.AnkiClient(transport=fake.transport()))
+    await session.run(book_title="Fixture", page_text=PAGE, page_number=1)
+    review = next(i for i, t in enumerate(face.texts) if t.startswith("Remember this one?"))
+    ready = next(i for i, t in enumerate(face.texts) if t.startswith(("Page 1 is ready", "Got page 1")))
+    assert ready > review
+    assert sum(t.startswith(("Page 1 is ready", "Got page 1")) for t in face.texts) == 1
+
+
 class _Tty(io.StringIO):
     def isatty(self) -> bool:
         return True
