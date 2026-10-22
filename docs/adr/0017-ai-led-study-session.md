@@ -81,7 +81,7 @@ negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
   wanted = None                           # a kind the learner named
   offers = 0; silence_reasked = False
   while True:
-    if offers >= 3: return wait_or_end()
+    if offers >= negotiation.max_offers: return wait_or_end()          # 3
     specs = ([learner_spec(s, wanted)] if wanted else []) + props
     m = menu - excluded
     a = first_constructible(s, [p for p in specs if p.kind in m] + default_chain(s, m), m) or end_activity(s)
@@ -92,17 +92,17 @@ negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
     if wanted and a.kind == wanted: return Run(a)          # the learner's own choice, constructed as named: accepted
     wanted = None
     offers += 1
-    if s.autonomy >= 8:
+    if s.autonomy >= bands.announce:                       # 8
       say(describe(a)); checkpoint(s)
       if take_skip(s): excluded.add(a.kind); continue
       return Reobserve if s.epoch() != epoch else Run(a)
-    if s.autonomy >= 4:                                     # Leafi argues once; silence lets it start
+    if s.autonomy >= bands.argue:                           # 4: Leafi argues once; silence lets it start
       say(rationale_line(prop, a))
-    elif s.autonomy >= 2:
+    elif s.autonomy >= bands.ask:                           # 2
       say(rationale_line(prop, a)); ask("Shall we " + describe(a) + "? Or something else?")
     else:                                                   # 0–1: a short list
-      ask("Would you like to " + describe_choices(s, a, m, n = 3) + "?")
-    c = parse_choice(listen(ASK_S))                         # c ∈ yes | no | skip | named k | none | unparsed
+      ask("Would you like to " + describe_choices(s, a, m, n = negotiation.choices) + "?")   # 3
+    c = parse_choice(listen(negotiation.ask_s))             # 8 s; c ∈ yes | no | skip | named k | none | unparsed
     checkpoint(s)
     if s.epoch() != epoch: return Reobserve
     if take_skip(s) or c in ("skip", "no"): excluded.add(a.kind); continue
@@ -111,13 +111,22 @@ negotiate(s, prop, menu, epoch) -> Run(activity) | Reobserve:
       if c.named in m: wanted = c.named
       else: say(why_not(c.named))
       continue
-    if s.autonomy >= 4: return Run(a)                       # none / unparsed at 4–7: no objection
+    if s.autonomy >= bands.argue: return Run(a)             # none / unparsed at 4–7: no objection
     if silence_reasked: return wait_or_end()                # 0–3: two silences never start an activity (decision 4)
     silence_reasked = True; continue
   wait_or_end() = Run(end_activity(s) if s.previous_boundary_was_wait else wait_activity(s))
-wait_activity(s) = a harness-internal 30 s break; end_activity(s) = an end with a static closing line (both always
+wait_activity(s) = a harness-internal break of negotiation.wait_s (30 s); end_activity(s) = an end with a static closing line (both always
   constructible, exempt from the menu, exclusion and the cycle cap, §3.3)
 ```
+
+**Negotiation settings** (per learner; owner decision 2026-10-22: every number is a setting): `autonomy` (5), the band thresholds `bands.ask` (2), `bands.argue` (4), `bands.announce` (8), `negotiation.max_offers` (3), `negotiation.choices` (3, the short list at the lowest band), `negotiation.ask_s` (8 s), `negotiation.wait_s` (30 s), `negotiation.silence_reasks` (1). The settings page shows, beside `autonomy`, what each band does with the current thresholds:
+
+| Band (default) | Leafi says | What starts an activity | Silence | "No" / skip |
+|---|---|---|---|---|
+| below `bands.ask` (0–1) | offers a short list of `negotiation.choices` | the learner picks one, or says yes | re-asks `negotiation.silence_reasks` time(s), then waits `negotiation.wait_s`, then ends | the next choice is offered (at most `negotiation.max_offers`) |
+| `bands.ask`–`bands.argue` − 1 (2–3) | proposes one activity with a reason, asks | yes, or naming an activity that can be built | as above | as above |
+| `bands.argue`–`bands.announce` − 1 (4–7) | proposes with a reason, listens once | no objection | starts | the next candidate is proposed |
+| `bands.announce` and up (8–10) | announces | always (stop still ends the session) | — | skip moves to the next candidate |
 
 At autonomy 0–3 an activity starts only on the learner's "yes" to **that** activity or because the learner named it and it was constructed as named; anything else — a refusal's next candidate, a named choice that could not be built — is offered again, at most three offers, then Leafi waits (and ends after a second wait). At 4–7 Leafi argues once and silence lets it start; at 8–10 it announces. Every return is constructed and checked under the current epoch, or `Reobserve`. Refused kinds stay excluded for the whole negotiation; `end` is never excluded and is always constructible. `stop` ends the session at every level.
 
