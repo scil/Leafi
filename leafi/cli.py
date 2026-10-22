@@ -202,7 +202,12 @@ def cmd_setup(args: argparse.Namespace) -> int:
     from leafi import envedit
 
     # the shared writer (lock, backup, canonical form); this explicit command is the owner's confirmation
-    result = envedit.save({"digest": envedit.current_digest(), "ops": {"REDACT_TERMS": {"op": "set", "value": args.redact}}},
+    try:
+        digest = envedit.current_digest()
+    except OSError as e:
+        print(f"REDACT_TERMS not saved: .env cannot be read ({e.__class__.__name__})")
+        return 1
+    result = envedit.save({"digest": digest, "ops": {"REDACT_TERMS": {"op": "set", "value": args.redact}}},
                           trusted_confirm=True)
     if result.body.get("ok"):
         print("REDACT_TERMS updated in .env")

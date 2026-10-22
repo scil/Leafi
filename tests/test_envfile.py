@@ -57,7 +57,8 @@ def test_env_example_is_canonical_and_reads_as_the_grammar_says(tmp_path):
     ("A=1\r\nB=2\n", "mixed newline"),
     (" A=1\n", "leading space"),
     ("export A=1\n", "export"),
-    ('A="x"\n', "double quotes"),
+    ('A="x$y"\n', "double quotes"),
+    ('A="x\\\\y"\n', "double quotes"),
     ("A='a\\\\b'\n", "backslash"),
     ("A='a\\'\n", "backslash"),
     ("A: v\n", "':' assignment"),
@@ -124,7 +125,8 @@ def test_a_conflict_survives_a_failing_cleanup(tmp_path, monkeypatch):
     assert isinstance(out, Conflict)
 
 
-@pytest.mark.parametrize("value", ["a%b", "a=b", "x@y:z", "p$q", "p #q", "#", "a+", "名字,学校", "", "two words"])
+@pytest.mark.parametrize("value", ["a%b", "a=b", "x@y:z", "p$q", "p #q", "#", "a+", "名字,学校", "", "two words",
+                                   "Ann O'Brien,Some School #1", "it's"])
 def test_written_values_read_back_identically(tmp_path, value):
     f = parse("# head\nA=old   # keep me\nB=1\n").apply({"A": Op("set", value), "C": Op("set", value)})
     assert f.problems() == []
@@ -133,7 +135,7 @@ def test_written_values_read_back_identically(tmp_path, value):
     assert f.values()["A"] == value
 
 
-@pytest.mark.parametrize("value", ["it's", "a\\b", "x${Y}", "a\nb", "a\x00b", "tab\there"])
+@pytest.mark.parametrize("value", ["it's \"q\"", "it's $5", "a\\b", "x${Y}", "a\nb", "a\x00b", "tab\there"])
 def test_unstorable_values_are_rejected(value):
     with pytest.raises(Unstorable):
         parse("A=1\n").apply({"A": Op("set", value)})
@@ -170,7 +172,8 @@ def test_crlf_files_stay_crlf():
 
 @pytest.mark.skipif(not shutil.which("docker"), reason="docker not installed")
 def test_compose_reads_canonical_values_like_python_dotenv(tmp_path):
-    values = {"A": "a%b", "B": "x@y:z", "C": "p$q", "D": "p #q", "E": "#", "F": "", "G": "a+", "H": "two words"}
+    values = {"A": "a%b", "B": "x@y:z", "C": "p$q", "D": "p #q", "E": "#", "F": "", "G": "a+", "H": "two words",
+              "I": "Ann O'Brien,Some School #1", "J": "it's"}
     f = parse("").apply({k: Op("set", v) for k, v in values.items()})
     env = tmp_path / "x.env"
     env.write_bytes(f.render())

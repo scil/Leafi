@@ -581,7 +581,7 @@ def _check_op(k: Key, op: Op, current: dict[str, str], confirm: dict[str, str], 
                 warnings.append(f"{k.name}: {msg}; the running service falls back to its default")
         if gated(k, text):
             return None, "gated by ADR-0011: not settable from this page"
-        if k.type == "enum" and text != "" and text not in (offered(k) or []):
+        if k.type in ("enum", "bool") and text != "" and text not in (offered(k) or []):
             return None, "not an allowed value: " + ", ".join(offered(k) or [])
     changes = (current.get(k.name) != text) if op.kind != "unset" else k.name in current
     if k.privacy and changes and not trusted and confirm.get(k.name) != confirmation(text):

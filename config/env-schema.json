@@ -724,7 +724,8 @@
       "example": {
         "value": "",
         "commented": false
-      }
+      },
+      "privacy": true
     },
     "VERIFY_MODE": {
       "group": "g9",
@@ -770,7 +771,8 @@
       "example": {
         "value": "http://127.0.0.1:11434",
         "commented": false
-      }
+      },
+      "privacy": true
     },
     "VLM_MODEL": {
       "group": "g9",

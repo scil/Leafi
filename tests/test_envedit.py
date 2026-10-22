@@ -40,7 +40,7 @@ def test_view_masks_secrets_and_unknown_keys(env):
 
 def test_view_of_a_non_canonical_file_shows_no_values(tmp_path):
     p = tmp_path / ".env"
-    p.write_bytes(b'ASR_THREADS=4\nCAM_PASSWORD="x y"\n')
+    p.write_bytes(b'ASR_THREADS=4\nCAM_PASSWORD="x $y"\n')
     body = envedit.view(p)
     assert body["problems"] and body["problems"][0]["line"] == 2
     assert all("value" not in k and not k["editable"] for g in body["groups"] for k in g["keys"])
@@ -69,6 +69,30 @@ def test_lists_are_written_in_option_order_and_reject_unknown_or_repeated_items(
     assert dotenv_values(env)["REQUIRED_CHANNELS"] == ""
 
 
+@pytest.mark.parametrize("value", ["off", "1", "yes", "T"])
+def test_bool_values_are_only_the_offered_spellings(env, tmp_path, value):
+    assert "OCR_AUTO_ROTATE" in save(tmp_path, {"OCR_AUTO_ROTATE": {"op": "set", "value": value}}).body["errors"]
+
+
+def test_setup_saves_a_name_with_an_apostrophe(tmp_path, monkeypatch):
+    from leafi import cli
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_bytes(b"REDACT_TERMS=old\n")
+    assert cli.cmd_setup(argparse.Namespace(redact="Ann O'Brien,Some School")) == 0
+    assert dotenv_values(tmp_path / ".env")["REDACT_TERMS"] == "Ann O'Brien,Some School"
+    assert EnvFile.parse((tmp_path / ".env").read_bytes()).problems() == []
+
+
+def test_setup_reports_an_unreadable_env(tmp_path, monkeypatch, capsys):
+    from leafi import cli
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").mkdir()
+    assert cli.cmd_setup(argparse.Namespace(redact="Ann")) == 1
+    assert "cannot be read" in capsys.readouterr().out
+
+
 def test_empty_is_refused_where_a_reader_would_reject_it(env, tmp_path):
     assert "ASR_THREADS" in save(tmp_path, {"ASR_THREADS": {"op": "empty"}}).body["errors"]
 
@@ -86,7 +110,8 @@ def test_validator_errors_block_and_warnings_save(env, tmp_path):
 def test_absurd_timing_values_are_reported_not_crashing(env, tmp_path, key, value):
     r = save(tmp_path, {key: {"op": "set", "value": value}})
     assert r.status == 200
-    assert r.body.get("ok") is False or any("range" in w for w in r.body.get("warnings", []))
+    # the timing fallback reports it as a warning; the catch-all ("could not validate") would not count
+    assert r.body.get("ok") is True and any("range" in w for w in r.body["warnings"]), r.body
 
 
 def test_absurd_timing_values_fall_back_for_the_supervisor():

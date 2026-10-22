@@ -10,7 +10,8 @@ from leafi.core.envfile import read_state
 
 CHANGED = {"NOTIFY_WITH_SNAPSHOT": "true", "BOOK_LOOKUP": "openlibrary", "AUDIO_KEEP_CLIPS": "true",
            "EVAL_TRANSCRIPTS": "true", "REDACT_TERMS": "Ann", "BRAIN_BACKEND": "mock", "STUDY_BRAIN_MODEL": "other",
-           "TTS_BACKEND_EN": "edge", "TTS_BACKEND_ZH": "kokoro", "LEAFI_NO_NETWORK": "true"}
+           "TTS_BACKEND_EN": "edge", "TTS_BACKEND_ZH": "kokoro", "LEAFI_NO_NETWORK": "true",
+           "OLLAMA_URL": "http://ollama.example.com", "TELEGRAM_CHAT_ID": "12345"}
 GATED = [*envprotect.GATE_FLOOR, ("PRON_AUTO_JUDGE", "yes"), ("PRON_AUTO_JUDGE", "1"), ("PRON_AUTO_JUDGE", "on")]
 
 
@@ -36,6 +37,16 @@ def test_privacy_changes_need_a_value_bound_confirmation(tmp_path, key):
     ops = {key: {"op": "set", "value": CHANGED[key]}}
     assert key in save(tmp_path, ops).body["errors"]
     assert save(tmp_path, ops, {key: envedit.confirmation(CHANGED[key])}).body["ok"] is True
+
+
+@pytest.mark.parametrize("key", sorted(envprotect.PRIVACY_FLOOR))
+def test_a_confirmation_for_another_value_is_refused(tmp_path, key):
+    (tmp_path / ".env").write_bytes(f"{key}={CHANGED[key]}\n".encode() if key != "REDACT_TERMS" else b"REDACT_TERMS=Ann\n")
+    other = {key: envedit.confirmation(CHANGED[key] + "-other")}
+    assert key in save(tmp_path, {key: {"op": "empty"}} if key in ("REDACT_TERMS", "TELEGRAM_CHAT_ID", "OLLAMA_URL",
+                                                                      "STUDY_BRAIN_MODEL") else
+                       {key: {"op": "unset"}}, other).body.get("errors", {})
+    assert key in save(tmp_path, {key: {"op": "unset"}}, {key: envedit.confirmation("x")}).body.get("errors", {})
 
 
 @pytest.mark.parametrize("key,value", GATED)

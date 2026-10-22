@@ -25,8 +25,11 @@ log = logging.getLogger("leafi.envfile")
 
 KEY = r"[A-Z][A-Z0-9_]*"
 BARE = re.compile(r"[A-Za-z0-9_./:@,+=%-]*")
-# KEY=, KEY=bare, KEY='quoted'; then optionally spaces + a comment without '$'
-ASSIGN = re.compile(rf"^({KEY})=(?:(?P<bare>[A-Za-z0-9_./:@,+=%-]+)|'(?P<quoted>[^'\\\r\n]*)'|)(?P<comment> +#[^$]*)?$")
+# KEY=, KEY=bare, KEY='quoted', KEY="dquoted"; then optionally spaces + a comment without '$'. Double quotes are the
+# one form for a value containing an apostrophe: without '"', '\' and '$' inside, python-dotenv and Compose both take
+# the text literally (they only escape-process '\' and interpolate '$' in double quotes).
+ASSIGN = re.compile(rf"^({KEY})=(?:(?P<bare>[A-Za-z0-9_./:@,+=%-]+)|'(?P<quoted>[^'\\\r\n]*)'"
+                    rf"|\"(?P<dquoted>[^\"\\$\r\n]*)\"|)(?P<comment> +#[^$]*)?$")
 COMMENTED = re.compile(rf"^#\s*({KEY})=")
 ABSENT = "absent"
 ADDED_HEADER = "# ===== Added by the settings page ====="
@@ -130,7 +133,8 @@ class EnvFile:
             if ln == "" or ln.startswith("#"):
                 continue
             m = ASSIGN.match(ln)
-            empty_then_comment = m and m.group("bare") is None and m.group("quoted") is None and m.group("comment")
+            empty_then_comment = (m and m.group("bare") is None and m.group("quoted") is None
+                                  and m.group("dquoted") is None and m.group("comment"))
             if m and not empty_then_comment and not (m.group("quoted") is not None and "${" in m.group("quoted")):
                 k = m.group(1)
                 if k in seen:
@@ -171,7 +175,7 @@ class EnvFile:
         for ln in self.lines:
             m = ASSIGN.match(ln)
             if m:
-                out[m.group(1)] = m.group("bare") or m.group("quoted") or ""
+                out[m.group(1)] = m.group("bare") or m.group("quoted") or m.group("dquoted") or ""
         return out
 
     def commented_keys(self) -> set[str]:
@@ -181,14 +185,17 @@ class EnvFile:
 
     @staticmethod
     def encode(key: str, value: str, has_comment: bool) -> str:
-        if ("'" in value or "\\" in value or "${" in value
-                or any(not (c.isprintable() or c == " ") for c in value)):
+        if "\\" in value or "${" in value or any(not (c.isprintable() or c == " ") for c in value):
             raise Unstorable(key)
         if value == "":
             return "''" if has_comment else ""
         if BARE.fullmatch(value):
             return value
-        return f"'{value}'"
+        if "'" not in value:
+            return f"'{value}'"
+        if '"' not in value and "$" not in value:  # an apostrophe: the one double-quoted form
+            return f'"{value}"'
+        raise Unstorable(key)
 
     def apply(self, ops: dict[str, Op], anchors: dict[str, str] | None = None) -> "EnvFile":
         """New file with the ops applied; untouched lines stay byte-identical. `anchors` maps a key to the exact text

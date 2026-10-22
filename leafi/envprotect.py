@@ -11,7 +11,9 @@ SECRET_FLOOR = frozenset({"TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "CAM_PASSWO
 # ADR-0011: what may leave the house
 PRIVACY_FLOOR = frozenset({"NOTIFY_WITH_SNAPSHOT", "BOOK_LOOKUP", "AUDIO_KEEP_CLIPS", "EVAL_TRANSCRIPTS",
                            "REDACT_TERMS", "BRAIN_BACKEND", "STUDY_BRAIN_MODEL", "TTS_BACKEND_EN", "TTS_BACKEND_ZH",
-                           "LEAFI_NO_NETWORK"})  # switching the network guard off widens what may leave the house
+                           "LEAFI_NO_NETWORK",  # switching the network guard off widens what may leave the house
+                           "OLLAMA_URL",  # the vision judge posts camera frames there: off the LAN = images leave
+                           "TELEGRAM_CHAT_ID"})  # where NOTIFY_WITH_SNAPSHOT frames and alerts are delivered
 
 # ADR-0011 / ADR-0003 release gates: (key, a value that must be refused); "*" = any non-empty value
 GATE_FLOOR = (("PRON_AUTO_JUDGE", "true"), ("ASR_HOTWORDS", "lexicon"), ("OCR_SNAP", "auto"),
