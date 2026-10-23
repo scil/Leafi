@@ -2,8 +2,8 @@
 lemminflect lemmas. Everything runs offline; nothing here opens a socket.
 
 - `is_word`: the household lexicon ∪ the word lists under `models/wordlists/` (SCOWL size-60 `en_GB-ise.txt`,
-  `en_US.txt`, a CYP-LEX extract `cyplex.txt`; one word per line, fetched by `leafi doctor --download`), or,
-  when no list is installed, a word lemminflect's dictionary knows.
+  `en_US.txt`, a CYP-LEX extract `cyplex.txt` built by `build_cyplex`; one word per line, fetched by
+  `leafi doctor --download`), or, when no list is installed, a word lemminflect's dictionary knows.
 - `phones`: espeak-ng through `phonemizer` (the `espeakng-loader` DLL), stress marks removed, plus the second
   pronunciation of a few homographs; empty when the phonemizer cannot load.
 - `lemmas`: `{w} ∪ lemminflect.getAllLemmas(w)` over every part of speech (OOV rules off), minus the
@@ -29,6 +29,29 @@ HOMOGRAPHS_VERSION = "1"
 HOMOGRAPHS = {"read": ("red",), "lead": ("led",), "live": ("liv",), "wind": ("wined",), "tear": ("tare",),
               "bow": ("bough", "beau"), "close": ("cloze",), "wound": ("wownd",)}
 WORDLIST_FILES = ("en_GB-ise.txt", "en_US.txt", "cyplex.txt")
+# CYP-LEX word forms enter `is_word` from this many occurrences in an age band (untuned; research M0.2 §3.1).
+CYPLEX_MIN_COUNT = 3
+WORDLIST_VERSIONS = {"en_GB-ise.txt": "scowl-60-2026.02.25", "en_US.txt": "scowl-60-2026.02.25",
+                     "cyplex.txt": f"cyplex-2024-03-21-min{CYPLEX_MIN_COUNT}"}
+
+
+def build_cyplex(csv_paths: Iterable[Path], out: Path, min_count: int = CYPLEX_MIN_COUNT) -> int:
+    """`cyplex.txt` from CYP-LEX `main_cyplex*.csv` files: word forms with `Count >= min_count`, case-folded,
+    one per line. Returns the number of words written."""
+    import csv
+
+    words: set[str] = set()
+    for p in csv_paths:
+        with open(p, encoding="utf-8-sig", newline="") as f:  # main_cyplex1012.csv starts with a BOM
+            for row in csv.DictReader(f):
+                w = (row.get("Word") or "").strip().lower()
+                if w and int(row.get("Count") or 0) >= min_count:
+                    words.add(w)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".part")
+    tmp.write_text("".join(w + "\n" for w in sorted(words)), encoding="utf-8")
+    tmp.replace(out)
+    return len(words)
 
 
 class LocalWordInfo:
@@ -54,7 +77,8 @@ class LocalWordInfo:
             self._lem_ok = True
         except ImportError:
             lem_v, self._lem_ok = "none", False
-        self.versions = {"wordlists": ",".join(found) or "none", "lemmas": f"{lem_v}+overrides-{OVERRIDES_VERSION}",
+        versions = dict.fromkeys(WORDLIST_VERSIONS[name] for name in found)
+        self.versions = {"wordlists": ",".join(versions) or "none","lemmas": f"{lem_v}+overrides-{OVERRIDES_VERSION}",
                          "phones": f"espeak+homographs-{HOMOGRAPHS_VERSION}" if self._phonemize else "none"}
 
     # ---- loading

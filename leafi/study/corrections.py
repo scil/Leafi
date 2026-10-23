@@ -1,7 +1,8 @@
 """Corrections (B5, ADR-0010 §3 and §6, ADR-0013 → Correction interaction).
 
 Applying a correction to revision r is ONE transaction: correction row; revision r+1 with the corrected
-span verified and the edit map; verified spans and the active ReadingState transformed; every miscue of
+span verified and the edit map; verified spans, the active ReadingState and every page read of the page in an
+open cycle re-tokenised in place; every miscue of
 the page (any revision) with status candidate/unsure/confirmed whose span maps onto the corrected span →
 invalidated(page_text_corrected); Difficulties recomputed; lexicon updated.
 """
@@ -46,7 +47,12 @@ def locate(text: str, old_text: str, near: int | None = None, window: tuple[int,
 
 def retokenize(state: ReadingState, old_text: str, new_text: str, edits: list[pages.Edit],
                edited: tuple[int, int], revision_id: int) -> ReadingState:
-    """Re-tokenise the active ReadingState on the new revision (ADR-0013 → Correction interaction)."""
+    """Re-tokenise a page read's ReadingState on the new revision in place (ADR-0013 → Correction interaction).
+
+    Untouched tokens carry status, `miscue_id`, `created_by` and `supplied`; a touched token (its span overlaps
+    the edit) loses them and becomes `unread` behind the mapped `ccur` (the learner read the old text there) or
+    `unattempted` at or after it. Only `unattempted` touched tokens pull `pcur` back or reopen a sentence.
+    """
     new = ReadingState.from_text(new_text, page_read_id=state.page_read_id, revision_id=revision_id)
     by_span = {}
     for t in state.tokens:
@@ -58,28 +64,43 @@ def retokenize(state: ReadingState, old_text: str, new_text: str, edits: list[pa
         if old is None:
             touched.append(i)
             continue
-        t.status, t.created_by, t.miscue_id = old.status, old.created_by, old.miscue_id
-    first_touched = min(touched) if touched else None
+        t.status, t.created_by, t.miscue_id, t.supplied = old.status, old.created_by, old.miscue_id, old.supplied
 
     def map_cursor(c: int) -> int:
         pos = state.tokens[c].start if c < state.n else len(old_text)
         npos = pages.map_point(pos, edits, "start")
-        idx = next((i for i, t in enumerate(new.tokens) if t.start >= npos), new.n)
-        if first_touched is not None and idx > first_touched:
-            idx = first_touched
-        return idx
+        return next((i for i, t in enumerate(new.tokens) if t.start >= npos), new.n)
 
     new.ccur = map_cursor(state.ccur)
     new.pcur = max(new.ccur, map_cursor(state.pcur))
+    reopened = {i for i in touched if i >= new.ccur}
+    for i in touched:
+        new.tokens[i].status = "unattempted" if i in reopened else "unread"
+    if reopened:
+        new.pcur = min(new.pcur, min(reopened))
+
     old_sent_of = {pages.map_span(t.span, edits): t.sentence_id for t in state.tokens}
     for sid in new.sentence_ids():
         idx = range(new.first_index(sid), new.last_index(sid) + 1)
-        if any(i in touched for i in idx):
+        if any(i in reopened for i in idx):
             continue
-        if all(old_sent_of.get(new.tokens[i].span) in state.completed for i in idx):
+        kept = [i for i in idx if i not in touched]
+        if kept:
+            done = all(old_sent_of.get(new.tokens[i].span) in state.completed for i in kept)
+        else:  # every token replaced, all behind the frontier
+            done = idx[-1] < new.ccur
+        if done:
             new.completed.add(sid)
     new.turn_id = state.turn_id + 1
     return new
+
+
+def _open_cycle_reads(store: Store, page_id: int, revision_id: int, skip: int | None) -> list[tuple[int, dict]]:
+    """Page reads of the page whose cycle is open, at the revision being corrected (ADR-0013)."""
+    rows = store.all("SELECT pr.id, pr.reading_state FROM page_reads pr JOIN cycles c ON c.id = pr.cycle_id "
+                     "WHERE pr.page_id=? AND pr.page_revision_id=? AND c.status='open' "
+                     "AND pr.reading_state IS NOT NULL ORDER BY pr.id", (page_id, revision_id))
+    return [(r["id"], loads(r["reading_state"])) for r in rows if r["id"] != skip]
 
 
 def _source_learner(source: str, learner_id: int | None) -> int | None:
@@ -109,12 +130,19 @@ def apply_correction(store: Store, *, page_id: int, revision_id: int, char_start
         verified = pages.transform_verified(cur.spans_verified, edits) + [list(edited_new)]
         new_rev = pages.insert_revision(store, page_id, text, "correction", verified, edits)
 
+        def save(page_read_id: int, st: ReadingState) -> None:
+            store.execute("UPDATE page_reads SET page_revision_id=?, reading_state=? WHERE id=?",
+                          (new_rev, dumps(st.to_json()), page_read_id))
+
         new_state = None
         if state is not None:
             new_state = retokenize(state, cur.text, text, edits, edited_new, new_rev)
             if state.page_read_id is not None:
-                store.execute("UPDATE page_reads SET page_revision_id=?, reading_state=? WHERE id=?",
-                              (new_rev, dumps(new_state.to_json()), state.page_read_id))
+                save(state.page_read_id, new_state)
+        for read_id, data in _open_cycle_reads(store, page_id, cur.id, state.page_read_id if state else None):
+            other = ReadingState.from_json(cur.text, data)
+            other.page_read_id = read_id
+            save(read_id, retokenize(other, cur.text, text, edits, edited_new, new_rev))
 
         revs = {r.id: r.rev for r in pages.chain(store, page_id)}
         invalidated: list[int] = []
