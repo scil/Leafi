@@ -4,23 +4,14 @@ surfacing as LISTENER_LOST (TD-16) and a lost speech lease stopping the session 
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-import time
 
 import pytest
 
-from leafi.core.hub import Hub
 from leafi.core.ports import AudioChunk, ListenerLost
-from leafi.core.storage import Store, loads
 from leafi.services import asr
 from leafi.services.asr.mock import MockAsr
 from leafi.services.asr.sherpa import words_from
-from leafi.services.brain.mock import MockBrain
-from leafi.study.session import StudySession
-from tests.fakes import FakeMouth, FakeSynth, RecordingFace, ScriptedListener
 from tests.test_services_mock import LOUD, QUIET, FakeEar
-from tests.test_study_text_mode import PAGE
 
 # ---------------------------------------------------------------- VoiceListener
 
@@ -161,114 +152,7 @@ def test_bpe_vocab_from_tokens_scores_longer_pieces_higher(tmp_path):
 # ---------------------------------------------------------------- session: LISTENER_LOST (TD-16)
 
 
-class LostAfterScript(ScriptedListener):
-    def __init__(self, script, released: asyncio.Event) -> None:
-        super().__init__(script, voice=True)
-        self.released = released
-
-    async def next_utterance(self, timeout_s):
-        if not self.script:
-            self.released.set()
-            raise ListenerLost("microphone unplugged")
-        return await super().next_utterance(timeout_s)
-
-
-class GatedConsole(ScriptedListener):
-    """A console whose lines only become available once `gate` is set (so the voice reading goes first)."""
-
-    def __init__(self, script, gate: asyncio.Event) -> None:
-        super().__init__(script)
-        self.gate = gate
-
-    async def next_utterance(self, timeout_s):
-        await self.gate.wait()
-        return await super().next_utterance(timeout_s)
-
-
-async def test_session_continues_on_the_console_when_the_microphone_dies(settings):
-    gate = asyncio.Event()
-    store = Store(settings.db_path)
-    face = RecordingFace()
-    hub = Hub(faces={"c": face}, policy="none")
-    voice = LostAfterScript(["The cat sat on the hat by the door."], gate)
-    console = GatedConsole(["Mia saw a small brown fox.", "/stop"], gate)
-    session = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(), listener=voice,
-                           control_source=console)
-    await asyncio.wait_for(session.run(book_title="Fixture", page_text=PAGE, page_number=1), 10)
-    assert "LISTENER_LOST" in session.flags.transitions and session.flags.listener_lost
-    assert any("microphone" in t for t in face.texts)
-    summary = loads(store.one("SELECT summary FROM reading_sessions")["summary"])
-    assert summary["listener_lost"] is True and summary["stopped"] is True
-    read = store.one("SELECT tokens_committed FROM page_reads")
-    assert read["tokens_committed"] == 15  # both sentences read: 9 by voice, 6 typed after the switch
-    assert session.voice is False and session.listener is console
-    assert console.script == []  # the typed line and /stop were consumed after the loss
-    rows = [tuple(r) for r in store.all("SELECT key, state, reason FROM alert_outbox")]
-    assert rows == [("study-mic", "event", "mic_lost")]  # ADR-0016: queued once, a code, not the device name
-
-
-async def test_session_stops_when_the_microphone_dies_and_there_is_no_console(settings):
-    gate = asyncio.Event()
-    store = Store(settings.db_path)
-    face = RecordingFace()
-    session = StudySession(store=store, hub=Hub(faces={"c": face}, policy="none"), settings=settings,
-                           brain=MockBrain(), listener=LostAfterScript(["The cat sat on the hat by the door."], gate))
-    await asyncio.wait_for(session.run(book_title="Fixture", page_text=PAGE, page_number=1), 10)
-    assert session.flags.listener_lost and session.flags.stopped
-    assert any("no keyboard" in t for t in face.texts)
-    assert store.one("SELECT ended_at FROM reading_sessions")["ended_at"] is not None
-    assert store.one("SELECT reason FROM alert_outbox")["reason"] == "mic_lost"
-
-
 # ---------------------------------------------------------------- session: lease lost (TD-15)
-
-
-class BlockingListener(ScriptedListener):
-    """After the script it blocks forever (a learner who went quiet in voice mode would time out instead)."""
-
-    waiting = False
-
-    async def next_utterance(self, timeout_s):
-        if not self.script:
-            self.waiting = True
-            await asyncio.sleep(3600)
-        return await super().next_utterance(timeout_s)
-
-
-async def test_a_lost_lease_stops_the_session_and_silences_the_mouths(settings, tmp_path):
-    """TD-15: a second launch that took the lease over (the TTL expired while this process was suspended)
-    must not find a session that keeps speaking and writing; this process stops itself at the next renewal."""
-    settings = settings.model_copy(update={"lease_ttl_s": 0.3})
-    store = Store(settings.db_path)
-    face = RecordingFace()
-    mouth = FakeMouth()
-    hub = Hub(faces={"c": face}, mouths={"m": mouth}, synthesizer=FakeSynth(tmp_path), policy="all")
-    listener = BlockingListener(["The cat sat on the hat by the door."])
-    session = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(), listener=listener)
-    task = asyncio.create_task(session.run(book_title="Fixture", page_text=PAGE, page_number=1))
-    stable, last = 0, -1
-    for _ in range(250):  # until the reading line was processed, its line spoken, and the session waits
-        await asyncio.sleep(0.02)
-        done = session.state is not None and 1 in session.state.completed
-        stable = stable + 1 if (done and len(mouth.played) == last) else 0
-        last = len(mouth.played)
-        if listener.waiting and stable >= 5:
-            break
-    played_before = len(mouth.played)
-    settings.lease_path.write_text(json.dumps({"pid": os.getpid(), "token": "another-launch",
-                                               "expires": time.time() + 60}), encoding="utf-8")
-    await asyncio.wait_for(task, 5)
-    assert session.flags.lease_lost and session.flags.stopped
-    assert len(mouth.played) == played_before, face.texts  # nothing played after the takeover
-    assert any("took over" in t for t in face.texts)  # the learner was told, on the Faces only
-    summary = loads(store.one("SELECT summary FROM reading_sessions")["summary"])
-    assert summary["lease_lost"] is True and summary["interrupted"] is False
-    assert store.one("SELECT ended_at FROM reading_sessions")["ended_at"] is not None
-    assert json.loads(settings.lease_path.read_text(encoding="utf-8"))["token"] == "another-launch"  # not unlinked
-    reads = store.one("SELECT tokens_committed, ended_at FROM page_reads")
-    assert reads["tokens_committed"] == 9 and reads["ended_at"] is not None  # the page read was settled
-    rows = [tuple(r) for r in store.all("SELECT key, state, reason FROM alert_outbox")]
-    assert rows == [("study-lease", "event", "lease_lost")]
 
 
 # ---------------------------------------------------------------- local_pc device resolution (P-6)

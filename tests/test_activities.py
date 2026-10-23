@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from leafi.study.harness import rows
+from tests import seed
 from tests.harness_world import PAGE_2, candidates, make_world, run
 
 
@@ -120,6 +121,7 @@ async def test_review_grades_eases_1_to_4_and_writes_retrieval_events(settings):
     items = []
     for key in ("fox", "moon", "dark"):
         item = knowledge.upsert_item(w.store, w.s.learner_id, "word", key)
+        seed.card(w.store, item)
         cid = fake.add_due_card(key)
         nid = fake.cards[cid]["note"]
         w.store.execute("UPDATE anki_outbox SET state='acked', anki_note_id=?, updated_at=? WHERE knowledge_item_id=?",

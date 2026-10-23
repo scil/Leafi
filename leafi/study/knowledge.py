@@ -24,14 +24,9 @@ KNOWLEDGE_MIN_SESSIONS = 2
 # ---------------------------------------------------------------- items and encounters
 
 
-# Card fields are built from the item's encounters at push time until `add_cards` stores them (ADR-0017 §7.2, M6),
-# so an outbox row's provenance is that of the explanations it will carry (plan M3 decision).
-CARD_PROVENANCE = "derived_from_learner"
-
-
 def upsert_item(store: Store, learner_id: int, kind: str, key: str, language: str = "en",
                 sense_hint: str = "") -> int:
-    """The learner's item and its first outbox `add` are created in one transaction (review 1 #16)."""
+    """The learner's item. Cards are never queued here: `add_cards` is the one path into Anki (ADR-0017 §7.2)."""
     key = key.strip()
     with store.transaction():
         row = store.one("SELECT id FROM knowledge_items WHERE learner_id=? AND kind=? AND language=? AND key=? "
@@ -39,18 +34,9 @@ def upsert_item(store: Store, learner_id: int, kind: str, key: str, language: st
         if row:
             return row["id"]
         now = now_iso()
-        item_id = learner_store.insert(store, "knowledge_items", learner_id, kind=kind, language=language, key=key,
-                                       sense_hint=sense_hint, status="new", anki_item_key=str(uuid.uuid4()),
-                                       created_at=now, updated_at=now)
-        _queue_card(store, learner_id, item_id, "add")
-    return item_id
-
-
-def _queue_card(store: Store, learner_id: int, item_id: int, op: str) -> None:
-    cls, sources = learner_store.prov(CARD_PROVENANCE, [learner_id])
-    learner_store.insert(store, "anki_outbox", learner_id, sources=[learner_id], knowledge_item_id=item_id, op=op,
-                         state="pending", updated_at=now_iso(), card_provenance_class=cls,
-                         card_source_learners=sources)
+        return learner_store.insert(store, "knowledge_items", learner_id, kind=kind, language=language, key=key,
+                                    sense_hint=sense_hint, status="new", anki_item_key=str(uuid.uuid4()),
+                                    created_at=now, updated_at=now)
 
 
 def add_encounter(store: Store, item_id: int, *, session_id: int | None, trigger: str,
@@ -70,19 +56,9 @@ def add_encounter(store: Store, item_id: int, *, session_id: int | None, trigger
             explanation_zh=explanation_zh, example=example, explanation_provenance_class=exp[0],
             explanation_source_learners=exp[1], trigger=trigger, created_at=now_iso())
         store.execute("UPDATE knowledge_items SET updated_at=? WHERE id=?", (now_iso(), item_id))
-        _queue_update_if_pushed(store, learner_id, item_id)
         if trigger in ("explain", "check"):
             recompute_difficulties(store, learner_id)
     return enc
-
-
-def _queue_update_if_pushed(store: Store, learner_id: int, item_id: int) -> None:
-    """Removed with M6's `add_cards`, the one path into Anki (ADR-0017 §7.2); kept for the v1 session."""
-    pushed = store.one("SELECT id FROM anki_outbox WHERE knowledge_item_id=? AND anki_note_id IS NOT NULL "
-                       "ORDER BY id DESC LIMIT 1", (item_id,))
-    pending = store.one("SELECT id FROM anki_outbox WHERE knowledge_item_id=? AND state='pending'", (item_id,))
-    if pushed and not pending:
-        _queue_card(store, learner_id, item_id, "update")
 
 
 # ---------------------------------------------------------------- Difficulties (ADR-0013)
@@ -112,10 +88,13 @@ def recompute_difficulties(store: Store, learner_id: int | None, now: dt.datetim
         store.execute("DELETE FROM difficulties WHERE learner_id=?", (learner_id,))
         # words: per (miscue_key, session) the best evidence
         per: dict[str, dict[int, tuple[float, str]]] = defaultdict(dict)
+        # ADR-0013 Difficulties: `unsure` counts only with reason disagreed or idle; not_practised, skipped,
+        # interrupted and unclear are no evidence about the learner (v = 0, and no row from them)
         for r in store.all(
             "SELECT m.expected, m.status, s.id AS sid, s.started_at FROM miscues m "
             "JOIN page_reads pr ON pr.id = m.page_read_id JOIN reading_sessions s ON s.id = pr.session_id "
-            "WHERE m.status IN ('confirmed','unsure') AND s.learner_id=?", (learner_id,)):
+            "WHERE (m.status = 'confirmed' OR (m.status = 'unsure' AND m.unsure_reason IN ('disagreed','idle'))) "
+            "AND s.learner_id=?", (learner_id,)):
             key = norm(r["expected"])
             v = V_CONFIRMED if r["status"] == "confirmed" else V_UNSURE
             prev = per[key].get(r["sid"])

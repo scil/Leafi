@@ -17,7 +17,7 @@ devices (adapters: go2rtc camera, local pc, console, frigate, xiaozhi, wyoming, 
 - **core** owns the capability ports (`Eye`, `Ear`, `Mouth`, `Face`, `Presence`, `Notifier`, `Listener`), the `Hub` that loads `config/devices.yml`, settings, SQLite access, and the `say()` routing with the voice policy. It imports nothing from the other rings.
 - **devices** implements ports for real hardware. Each adapter is one file; it may implement several ports. Adapters never contain tutoring logic.
 - **services** wrap models behind small interfaces with a backend registry: `asr`, `tts`, `ocr`, `pronunciation`, `brain`, `vision`. Every service has a `mock` backend; backends are chosen by config.
-- **tracks** hold the behaviour: `study` (book study state machine, alignment, coaching, knowledge, Anki) and `habits` (today still the legacy `agent/` package).
+- **tracks** hold the behaviour: `study` (the study harness of ADR-0017, alignment, coaching, knowledge, Anki) and `habits` (today still the legacy `agent/` package).
 - **composition root** `leafi/app.py` (used by `cli.py`) is the only place that imports everything: it reads `devices.yml`, asks the devices registry for adapter factories, builds services from the registries, constructs Listeners (Ear + VAD + ASR, or console) and hands the Hub its adapters plus a `Synthesizer` (a core-defined protocol that `services/tts` implements). Core therefore never imports devices or services (codex review B1).
 
 Audio ownership (codex review B2): `AudioChunk`/`AudioClip` carry sample rate, channels, dtype and a monotonic timestamp; a voice `Utterance` carries an in-memory `AudioRef` (bounded ring, released after the Practice step that may score it); typed Utterances carry none and can never receive a pronunciation score.
@@ -29,7 +29,7 @@ leafi/
   core/        ports.py hub.py config.py storage.py audio.py text.py
   devices/     go2rtc_camera.py local_pc.py console.py frigate_presence.py notifiers.py xiaozhi_server.py (later) wyoming.py (later)
   services/    asr/ tts/ ocr/ pronunciation/ brain/ vision/   (each: __init__.py with the Protocol + registry, one module per backend, mock.py)
-  study/       books.py pages.py page_tracker.py alignment.py miscues.py coach.py session.py knowledge.py anki.py review.py corrections.py lexicon.py
+  study/       books.py pages.py page_tracker.py alignment.py miscues.py coach.py knowledge.py cards.py anki.py harness/ review.py corrections.py lexicon.py
   cli.py       python -m leafi <command>
 agent/         legacy habit track; unchanged until T2 (product.md) migrates it onto the Hub
 ```
@@ -45,7 +45,7 @@ agent/         legacy habit track; unchanged until T2 (product.md) migrates it o
 
 ## Runtime picture
 
-1. `python -m leafi study` starts the Hub (loads devices), warms services in the background, then runs the `study.session` state machine: identify book → find page → read loop → practice → check → wrap.
+1. `python -m leafi study` starts the Hub (loads devices), warms services in the background, then runs the study harness loop (`study.harness.loop`, ADR-0017 §2): identify the learner and the book, then at each boundary a menu, the default policy (the Brain from M7) and negotiation choose the next activity — read, practise, review, read aloud, cards, break — until the learner ends or time is up; finalize and deliver close it.
 2. The read loop asks the `Listener` for the next Utterance (audio → VAD → ASR, or typed text), aligns it to the current page revision (observations + committed cursor, ADR-0009), stores observations and candidate miscues, and asks `coach` for the immediate line (local static phrases); the Brain is called only for enrichment (explanations, questions), asynchronously, with a strict output schema and a revision guard.
 3. `hub.say()` turns the line into audio through `services/tts` and plays it on every Mouth per policy, and shows the text on every Face.
 4. Habit tasks keep running from `agent/main.py` unchanged until they are migrated.

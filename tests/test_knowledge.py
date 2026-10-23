@@ -39,7 +39,10 @@ def test_unsure_needs_three_distinct_sessions_for_a_watch_row(store):
         _miscue_in_new_session(store, b, p, r, "unsure", "disagreed")
     knowledge.recompute_difficulties(store, seed.learner(store))
     assert _rows(store) == {}
-    _miscue_in_new_session(store, b, p, r, "unsure", "skipped")
+    _miscue_in_new_session(store, b, p, r, "unsure", "skipped")  # no evidence (ADR-0013): still no row
+    knowledge.recompute_difficulties(store, seed.learner(store))
+    assert _rows(store) == {}
+    _miscue_in_new_session(store, b, p, r, "unsure", "idle")
     knowledge.recompute_difficulties(store, seed.learner(store))
     assert _rows(store) == {("through", "watch"): pytest.approx(0.9, abs=1e-3)}
 
@@ -84,12 +87,11 @@ def test_practice_order_by_weight_then_position(store):
         (5, "trees"), (1, "wind"), (3, "through")]
 
 
-def test_items_are_unique_per_kind_language_key_sense_and_queue_an_anki_add(store):
+def test_items_are_unique_per_kind_language_key_sense_and_queue_no_card(store):
     a = knowledge.upsert_item(store, seed.learner(store), "word", "bank", sense_hint="river")
     assert knowledge.upsert_item(store, seed.learner(store), "word", "bank", sense_hint="river") == a
     assert knowledge.upsert_item(store, seed.learner(store), "word", "bank", sense_hint="money") != a
-    ops = store.all("SELECT op, state FROM anki_outbox WHERE knowledge_item_id=?", (a,))
-    assert [(o["op"], o["state"]) for o in ops] == [("add", "pending")]
+    assert store.one("SELECT COUNT(*) AS n FROM anki_outbox")["n"] == 0  # `add_cards` is the one path (ADR-0017 §7.2)
 
 
 def test_card_fields_are_english_first(store):
@@ -102,20 +104,6 @@ def test_card_fields_are_english_first(store):
     assert f["背面"].index("moved air") < f["背面"].index("吹")
 
 
-def test_item_and_its_outbox_add_are_created_atomically(store):
-    """Review 1 #16: a failure between the two inserts must not leave an unscheduled item."""
-    import sqlite3
-
-    def deny_outbox(action, table, *_):
-        return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_INSERT and table == "anki_outbox" else sqlite3.SQLITE_OK
-
-    store.conn.set_authorizer(deny_outbox)
-    with pytest.raises(sqlite3.DatabaseError):
-        knowledge.upsert_item(store, seed.learner(store), "word", "blew")
-    store.conn.set_authorizer(None)
-    item = knowledge.upsert_item(store, seed.learner(store), "word", "blew")
-    assert store.one("SELECT COUNT(*) AS n FROM knowledge_items")["n"] == 1
-    assert store.one("SELECT COUNT(*) AS n FROM anki_outbox WHERE knowledge_item_id=?", (item,))["n"] == 1
 
 
 def test_difficulties_follow_the_mutation_that_changed_their_evidence(store):

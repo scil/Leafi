@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import random
+import sqlite3
 import time
 from dataclasses import dataclass, field
 
@@ -20,7 +21,7 @@ from leafi.core import learner_store
 from leafi.core import lease as speech_lease
 from leafi.core.storage import Store, dumps, now_iso
 from leafi.study import books, controls, knowledge, lexicon, records
-from leafi.study.harness import guests, policy, rows
+from leafi.study.harness import busy, guests, policy, rows
 from leafi.study.harness import settings as hs
 from leafi.study.harness.activities import KINDS
 from leafi.study.harness.identify import identify
@@ -123,31 +124,73 @@ async def identify_book(s: Session, w: World, env: Env) -> None:
         w.page_id, w.pending = prev["page_id"], None  # read_listen opens it with range `rest` (§8.5)
 
 
+def _flush_pending(s: Session) -> None:
+    """§7.3: an end status that could not be written is kept in memory and written with the next write."""
+    while s.pending_rows:
+        aid, status, outcome = s.pending_rows[0]
+        rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id)
+        s.pending_rows.pop(0)
+
+
 async def run_activity(s: Session, w: World, act: Activity, *, continuation: bool = False) -> ActivityStatus:
-    """Start and finish rows inside; a cancelled activity ends with the latch's mapped status, never `running`."""
+    """Start and finish rows inside; a cancelled activity ends with the latch's mapped status, never `running`;
+    a step still busy at its time limit ends the activity `store_busy` (§7.3)."""
     params = dict(act.params) | ({"continuation": True} if continuation else {})
     s.latch.epoch.bump()  # activity start
-    aid = rows.start_activity(
-        s.store, session_id=s.session_id, kind=act.kind, cycle_id=s.cycle_id, params=params,
-        continuation=continuation, arm=s.arm, propensity=s.propensity,
-        policy_version=policy.policy_version(policy.order_of(s)), decided_by=act.decided_by,
-        override=act.override or s.boundary.override, autonomy=s.autonomy, epoch=s.latch.epoch.turn_id)
-    status, outcome = ActivityStatus.INTERNAL_ERROR, None
+
+    def start() -> int:
+        _flush_pending(s)
+        return rows.start_activity(
+            s.store, session_id=s.session_id, kind=act.kind, cycle_id=s.cycle_id, params=params,
+            continuation=continuation, arm=s.arm, propensity=s.propensity,
+            policy_version=policy.policy_version(policy.order_of(s)), decided_by=act.decided_by,
+            override=act.override or s.boundary.override, autonomy=s.autonomy, epoch=s.latch.epoch.turn_id)
+
+    try:
+        aid = await busy.retry(start)
+    except busy.StoreBusy:
+        log.warning("store busy: %s did not start", act.kind)
+        return ActivityStatus.STORE_BUSY
+    outcome = None
+
+    def finish_now(status) -> ActivityStatus:
+        """No awaiting: also used while the scope is being cancelled. Busy → kept for the next write."""
+        try:
+            rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id)
+        except sqlite3.OperationalError as e:
+            if not busy.is_busy(e):
+                raise
+            s.pending_rows.append((aid, ActivityStatus(status), outcome))
+        s.latch.epoch.bump()  # activity end
+        w.first_boundary = False
+        return ActivityStatus(status)
+
     try:
         status, outcome = await KINDS[act.kind](w, Activity(act.kind, params, act.decided_by, act.content,
                                                             act.content_owner, act.override), aid)
     except StaleInput:
-        status = ActivityStatus.ABORTED_STALE
+        return finish_now(ActivityStatus.ABORTED_STALE)
     except (Terminal, anyio.get_cancelled_exc_class()):
-        status = s.latch.status()
+        finish_now(s.latch.status())
         raise
+    except sqlite3.OperationalError as e:
+        if not busy.is_busy(e):
+            s.latch.terminate("internal_error")
+            finish_now(ActivityStatus.INTERNAL_ERROR)
+            raise
+        log.warning("store busy inside %s", act.kind)
+        return finish_now(ActivityStatus.STORE_BUSY)
     except Exception:
         s.latch.terminate("internal_error")
+        finish_now(ActivityStatus.INTERNAL_ERROR)
         raise
-    finally:
-        rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id)
-        s.latch.epoch.bump()  # activity end
-        w.first_boundary = False
+    # any other BaseException is a process exit: the row stays `running` for startup recovery (§2, §8.5)
+    try:
+        await busy.retry(lambda: rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id))
+    except busy.StoreBusy:
+        s.pending_rows.append((aid, ActivityStatus(status), outcome))
+    s.latch.epoch.bump()  # activity end
+    w.first_boundary = False
     return ActivityStatus(status)
 
 
@@ -156,6 +199,7 @@ def finalize(s: Session, w: World, env: Env) -> dict:
     end-state rule (ADR-0018 §1). A failure leaves the work to startup recovery."""
     store = s.store
     reason = s.latch.terminal or "end"
+    _flush_pending(s)
     with store.transaction():
         if s.cycle_id is not None:
             rows.close_cycle(store, s.cycle_id, "stop" if reason == "stop" else "wrap")
@@ -181,6 +225,12 @@ async def deliver(s: Session, w: World, env: Env, summ: dict) -> None:
     else:
         await io.line("idle" if s.latch.terminal == "idle_session" else "bye")
         summ["closing_line"] = "done"
+    try:  # the parent's notification: counts only (security.md egress table)
+        await env.hub.notify("Leafi: reading done",
+                             f"pages {summ.get('pages', 0)}, words read {summ.get('tokens_committed', 0)}, "
+                             f"words to practise {summ.get('candidates', 0)}, new items {summ.get('items_learned', 0)}")
+    except Exception:
+        log.warning("notification failed", exc_info=True)
     summ["anki_synced"] = "skipped"
     if env.anki is not None:
         from leafi.study import anki
@@ -240,14 +290,24 @@ async def run_session(env: Env) -> int:
         except* Exception as eg:
             log.error("session failed", exc_info=eg)
             latch.terminate("internal_error")
-        summ = finalize(s, w, env)
+        try:
+            summ = finalize(s, w, env)
+        except sqlite3.OperationalError as e:
+            if not busy.is_busy(e):
+                raise
+            log.warning("store busy at finalize: left to startup recovery (ADR-0017 §7.3)")
+            summ = None
         for step, limit in ((deliver, DELIVER_S), (extract_notes, EXTRACT_S)):
             try:
                 with anyio.move_on_after(limit, shield=True):
-                    await step(s, w, env, summ)
+                    await step(s, w, env, summ if summ is not None else {"end": latch.terminal or "end"})
             except Exception:
                 log.exception("post-session step failed")  # one step's failure never skips the next
-        store.execute("UPDATE reading_sessions SET summary=? WHERE id=?", (dumps(summ), sid))  # each step's outcome
+        if summ is not None:
+            try:
+                store.execute("UPDATE reading_sessions SET summary=? WHERE id=?", (dumps(summ), sid))
+            except sqlite3.OperationalError:
+                log.warning("summary not written (store busy)")
         return sid
     finally:
         if inputs is not None:
@@ -282,8 +342,11 @@ async def _body(s: Session, w: World, env: Env) -> None:
         last = await run_activity(s, w, act)
         s.previous_boundary_was_wait = act.kind == "wait"
         s.boundary = Boundary()
-        while last == ActivityStatus.PAGE_TURNED and w.pending is not None and continuation_allowed(s):
-            last = await run_activity(s, w, Activity("read_listen", {"page": "next", "range": "rest"}, "default"),
-                                      continuation=True)  # §8.2: same cycle, on every turn
+        while continuation_allowed(s) and (
+                (last == ActivityStatus.PAGE_TURNED and w.pending is not None)  # §8.2: same cycle, on every turn
+                or (last == ActivityStatus.ABORTED_STALE and act.kind == "read_listen")):  # §1: an Ear switch
+            page = "next" if last == ActivityStatus.PAGE_TURNED else "current"  # keeps cycle and page read
+            last = await run_activity(s, w, Activity("read_listen", {"page": page, "range": "rest"}, "default"),
+                                      continuation=True)
         if last in TERMINAL:
             break

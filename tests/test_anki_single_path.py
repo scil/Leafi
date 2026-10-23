@@ -1,5 +1,4 @@
-"""ADR-0017 §7.2: `add_cards` writes the card text into `anki_outbox`; `push` sends the stored fields. (The v1
-writers `upsert_item`'s queued add and `_queue_update_if_pushed` go with the v1 session in M6f.)"""
+"""ADR-0017 §7.2: only `add_cards` writes the outbox; `push` sends the stored fields."""
 
 from __future__ import annotations
 
@@ -10,7 +9,6 @@ from tests.harness_world import make_world, run
 
 def _explained(w, key: str, sentence: str) -> int:
     item = knowledge.upsert_item(w.store, w.s.learner_id, "word", key)
-    w.store.execute("DELETE FROM anki_outbox WHERE knowledge_item_id=?", (item,))  # the v1 queued add (M6f)
     knowledge.add_encounter(w.store, item, session_id=w.s.session_id, trigger="explain", context_sentence=sentence,
                             explanation_en=f"meaning of {key}")
     return item
@@ -46,6 +44,12 @@ async def test_a_flagged_card_is_sent_with_a_tag_the_learner_sees(settings):
     await anki.sync_outbox(w.store, anki.AnkiClient(transport=fake.transport()), "Leafi")
     tagged = [n for n in fake.notes.values() if n["fields"]["正面"] == "fox"]
     assert tagged and "leafi-check" in tagged[0]["tags"]
+
+
+def test_an_item_or_an_explanation_queues_no_card_by_itself(settings):
+    w = make_world(settings, settings, [])
+    _explained(w, "fox", "The fox ran home.")
+    assert w.store.one("SELECT COUNT(*) AS n FROM anki_outbox")["n"] == 0
 
 
 async def test_a_rejected_card_writes_nothing(settings):

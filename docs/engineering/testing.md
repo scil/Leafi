@@ -7,7 +7,7 @@ Runner and command: `pytest.ini` + `.venv\Scripts\python -m pytest -q` (asyncio 
 | Layer | What | Fixtures |
 |---|---|---|
 | Pure logic | alignment (multi-utterance scenarios), miscue transitions, page matching, correction/revision chain, difficulty weights, habit scorer | plain data, temp SQLite |
-| Track with mocks | `study.session` end to end with a scripted console listener, recording Faces, mock services, a controllable clock | `tests/conftest.py` |
+| Track with mocks | the study harness (`study.harness.loop.run_session`) end to end with a scripted console listener, recording Faces, mock services; deadlines moved by the test, not waited for | `tests/conftest.py`; `tests/harness_session.py` (whole sessions), `tests/harness_world.py` (one activity on a `World`), `tests/harness_helpers.py` (menu, policy, negotiation on a `Session` with scripted talk) |
 | Adapters against fakes | fake go2rtc HTTP server (records `src`, simulates duration), stateful fake AnkiConnect (notes, cards, lost-ack mode, parent edits), blocking/cancellable fake Mouth | `tests/fakes/` |
 | Privacy | httpx transport recorder with canaries; `LEAFI_NO_NETWORK=1` subprocess run | `tests/test_privacy.py` |
 | Hardware / models | real sherpa-onnx, RapidOCR on fixture images and desk photos, Kokoro, OpenPronounce | `@pytest.mark.hardware`, run with `LEAFI_HW_TESTS=1` |

@@ -43,7 +43,7 @@ plus the score distributions of `ok` and `wrong` rows (min, quartiles, max).
 ## Decision rule
 
 - Pick the highest threshold whose false-correction rate is ≤ 15 % with ≥ 40 flagged rows. Set it as
-  `PRON_CONFIRM_BELOW` (today a constant in `study/session.py`; make it a setting when the value is known)
+  `PRON_CONFIRM_BELOW` (today a constant in `study/harness/activities.py`; make it a setting when the value is known)
   and flip `PRON_AUTO_JUDGE=true` in `.env`.
 - No threshold passes → keep `PRON_AUTO_JUDGE=false`, record the table, and look at the `ok` rows with low
   scores: short function words and flapped /t/ (as in "little") are the expected offenders; the fix is a

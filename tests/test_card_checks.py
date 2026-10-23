@@ -50,6 +50,6 @@ def test_flag_a_second_unknown_word_in_the_sentence(store):
 def test_reject_a_duplicate_for_this_learner(store):
     learner, item = _item(store, "fox")
     other = knowledge.upsert_item(store, learner, "phrase", "fox")
-    store.execute("UPDATE anki_outbox SET front='fox' WHERE knowledge_item_id=?", (other,))
+    store.execute("UPDATE anki_outbox SET front='fox' WHERE id=?", (seed.card(store, other),))
     fields, sentence = cards.stored_text(store, item)
     assert cards.check(store, learner, item, fields, sentence) == ("reject", "a card for this word already exists")

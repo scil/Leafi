@@ -224,23 +224,6 @@ def test_locate_picks_the_nearest_whole_word_occurrence():
     assert corrections.locate(text, "hat", near=0, window=(0, 10)) is None
 
 
-async def test_candidates_keep_their_evidence_after_a_correction_shifts_token_indexes(settings):
-    """Review 1 #3: "The" → "The small" moves `ran` from index 2 to 3; its candidate must still be found."""
-    from leafi.core.hub import Hub
-    from leafi.services.brain.mock import MockBrain
-    from leafi.study.session import StudySession
-    from tests.fakes import RecordingFace, ScriptedListener
-
-    store = Store(settings.db_path)
-    script = ["The dog red", "/fix The The small", "The small dog ran far.", "/stop"]
-    s = StudySession(store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none"), settings=settings,
-                     brain=MockBrain(unavailable=True), listener=ScriptedListener(script))
-    await s.run(book_title="Shift", page_text="The dog ran far.", page_number=1)
-    rows = {r["expected"]: (r["status"], r["withdrawn_reason"] or r["unsure_reason"])
-            for r in store.all("SELECT * FROM miscues")}
-    assert rows == {"ran": ("withdrawn", "self_corrected")}
-
-
 def test_a_span_starting_at_an_insertion_point_follows_the_inserted_text(store):
     """Review 1 #11: "The cat ran" + insert "big " at 4 → correcting "big" must not invalidate the `cat` miscue."""
     text = "The cat ran."

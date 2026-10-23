@@ -2,7 +2,7 @@
 
 The session is a sequence of activities chosen at boundaries (ADR-0017); this file draws it and adds nothing. **The session loop, menu, negotiation, construction, deadlines, controls and records are owned by ADR-0017; the reading rules (alignment, completion, cycles and candidates, practice, `/back`, Difficulties, CHECK outcomes) by ADR-0013; who is studying, guests and egress by ADR-0018.** Page identity and revisions: ADR-0010.
 
-Status: ADR-0017 and ADR-0018 are accepted, ADR-0013 v2 is proposed, and the code still runs the v1 state machine in `leafi/study/session.py` (READ → PRACTICE at a sentence end → CHECK) until plan [`../../plans/active/2026-10-22-ai-led-study.md`](../../plans/active/2026-10-22-ai-led-study.md) replaces it.
+Status: ADR-0013 v2, ADR-0017 and ADR-0018 are accepted; since plan M6 (2026-10-23) the code runs this loop in `leafi/study/harness/` on the default policy, without a Brain (M7), recognition (M8) or the egress mediator (M5) — see plan [`../../plans/active/2026-10-22-ai-led-study.md`](../../plans/active/2026-10-22-ai-led-study.md).
 
 ## The session loop
 

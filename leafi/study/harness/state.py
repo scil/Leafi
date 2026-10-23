@@ -96,6 +96,7 @@ class Session:
     previous_boundary_was_wait: bool = False
     generate: Callable[..., Any] | None = None  # M7: the Brain's `generate`; None = no Brain-owned content
     routable_answer: bool = False                 # M7: an eligible `answer` backend exists
+    pending_rows: list = field(default_factory=list)  # §7.3: activity ends a busy store could not take yet
 
     def facts(self) -> Facts:
         return self.facts_fn(self)

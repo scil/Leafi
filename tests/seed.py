@@ -15,6 +15,15 @@ def learner(store: Store, name: str | None = None) -> int:
     return learner_store.create(store, name) if name else learner_store.ensure_learner(store)
 
 
+def card(store: Store, item_id: int, op: str = "add") -> int:
+    """An outbox row as `add_cards` (or a later update) queues it; fields are built at push time when unstored."""
+    learner = store.one("SELECT learner_id FROM knowledge_items WHERE id=?", (item_id,))["learner_id"]
+    cls, src = learner_store.prov("derived_from_learner", [learner])
+    return learner_store.insert(store, "anki_outbox", learner, sources=[learner], knowledge_item_id=item_id, op=op,
+                                state="pending", updated_at=now_iso(), card_provenance_class=cls,
+                                card_source_learners=src)
+
+
 def book_page(store: Store, text: str, *, title: str = "Fixture", source: str = "ocr", number: int | None = 1):
     book_id = books.find_or_create(store, title)
     page_id = pages.create_page(store, book_id, number, pages.observations_of(text))

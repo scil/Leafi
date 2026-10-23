@@ -36,6 +36,8 @@ def test_items_and_cards_are_per_learner(store, two):
     a = knowledge.upsert_item(store, ada, "word", "blew")
     b = knowledge.upsert_item(store, ben, "word", "blew")
     assert a != b and knowledge.upsert_item(store, ada, "word", "blew") == a
+    seed.card(store, a)
+    seed.card(store, b)
     owners = {r["knowledge_item_id"]: r["learner_id"] for r in store.all("SELECT * FROM anki_outbox")}
     assert owners == {a: ada, b: ben}
     e = knowledge.add_encounter(store, b, session_id=None, trigger="explain", explanation_en="moved air")
@@ -78,8 +80,8 @@ async def test_review_answers_and_decks_are_per_learner(store, two):
     ada, ben = two
     fake = FakeAnki()
     client = anki.AnkiClient(transport=fake.transport())
-    knowledge.upsert_item(store, ada, "word", "blew")
-    knowledge.upsert_item(store, ben, "word", "wind")
+    seed.card(store, knowledge.upsert_item(store, ada, "word", "blew"))
+    seed.card(store, knowledge.upsert_item(store, ben, "word", "wind"))
     await anki.sync_outbox(store, client)
     assert sorted(n["deck"] for n in fake.notes.values()) == ["Leafi Ada #1", "Leafi Ben #2"]
     ben_note = next(nid for nid, n in fake.notes.items() if n["deck"] == "Leafi Ben #2")
@@ -145,35 +147,6 @@ def test_the_fence_refuses_a_learner_being_forgotten(store, two):
         learner_store.insert(store, "learner_notes", ben, sources=[999], text="x", provenance_class="learner",
                              source_learners="[999]", created_at="t")
     assert store.one("SELECT COUNT(*) AS n FROM knowledge_items")["n"] == 1 and item
-
-
-async def test_a_whole_session_writes_as_its_learner(settings, tmp_path):
-    """The full v1 session (every writer it calls) run as the second of two learners."""
-    from pathlib import Path
-
-    from leafi.core.hub import Hub
-    from leafi.services.brain.mock import MockBrain
-    from leafi.study.session import StudySession
-    from tests.fakes import RecordingFace, ScriptedListener
-    from tests.test_study_text_mode import SCRIPT, questions
-
-    store = Store(settings.db_path)
-    ada, ben = seed.learner(store, "Ada"), seed.learner(store, "Ben")
-    page = Path("tests/fixtures/pages/p1.txt").read_text(encoding="utf-8")
-    fake = FakeAnki()
-    fake.add_due_card("blew", "moved air")
-    session = StudySession(store=store, hub=Hub(faces={"c": RecordingFace()}, policy="none"), settings=settings,
-                           brain=MockBrain(questions), anki_client=anki.AnkiClient(transport=fake.transport()),
-                           listener=ScriptedListener(SCRIPT), learner_id=ben)
-    sid = await session.run(book_title="Fixture", page_text=page, page_number=1)
-    assert learner_store.session_learner(store, sid) == ben
-    for table in ("knowledge_items", "encounters", "difficulties", "anki_outbox", "review_answers"):
-        owners = {r[0] for r in store.all(f"SELECT learner_id FROM {table}")}
-        assert owners <= {ben}, table
-    assert {r[0] for r in store.all("SELECT source_learners FROM utterances")} == {f"[{ben}]"}
-    assert {r[0] for r in store.all("SELECT source_learner_id FROM corrections")} == {ben}
-    assert store.one("SELECT COUNT(*) AS n FROM review_answers")["n"] == 1
-    assert ada not in {r[0] for r in store.all("SELECT learner_id FROM knowledge_items")}
 
 
 def test_choose_picks_names_or_the_only_learner(store):

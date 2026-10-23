@@ -462,7 +462,7 @@ class Store:
     `journal_mode` forces a mode in tests; production leaves it None and the library version decides (ADR-0019).
     """
 
-    def __init__(self, path: Path | str, journal_mode: str | None = None) -> None:
+    def __init__(self, path: Path | str, journal_mode: str | None = None, busy_timeout_ms: int = 5000) -> None:
         self.path = Path(path)
         memory = str(path) == ":memory:"
         self._lock: _FileLock | None = None
@@ -478,7 +478,9 @@ class Store:
             self.conn.execute("PRAGMA foreign_keys = ON")
             if not memory:
                 self._set_journal_mode(journal_mode)
-            self.conn.execute("PRAGMA busy_timeout = 5000")  # the supervisor and a session write one file (ADR-0016)
+            # the supervisor and a session write one file (ADR-0016); the study process uses 250 ms and retries a
+            # busy write with anyio sleeps, so its event loop never blocks for seconds (ADR-0017 §7.3)
+            self.conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
             self.conn.execute(f"PRAGMA journal_size_limit = {JOURNAL_SIZE_LIMIT}")
             self.conn.execute("PRAGMA secure_delete = ON")  # forgotten rows are overwritten, not left in free pages
             self._depth = 0

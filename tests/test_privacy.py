@@ -1,5 +1,6 @@
-"""Egress policy (ADR-0011, security.md): (a) outbound recorder with canaries over a full session that uses
-the real Claude backend, notifier and Anki client; (b) subprocess runs with LEAFI_NO_NETWORK=1."""
+"""Egress policy (ADR-0011, security.md): (a) outbound recorder with canaries over a full harness session with
+the notifier and Anki client (no Brain call until M7; M5 rewrites this file for ADR-0018); (b) subprocess runs
+with LEAFI_NO_NETWORK=1."""
 
 from __future__ import annotations
 
@@ -18,9 +19,7 @@ from leafi.core.ports import AudioRef, Utterance, Word
 from leafi.core.storage import Store
 from leafi.core.text import typed_utterance
 from leafi.devices.notifiers import NotifierDevice
-from leafi.services import brain as brain_service
 from leafi.study import anki
-from leafi.study.session import StudySession
 from tests.fakes import RecordingFace, ScriptedListener
 from tests.fakes.anki import FakeAnki
 
@@ -77,29 +76,30 @@ async def test_no_canary_leaves_in_any_outbound_body(settings, monkeypatch):
 
     settings.anthropic_api_key = "test-key-not-real"
     settings.redact_terms = f"{NAME},{SCHOOL},{LABEL}"
-    claude = brain_service.REGISTRY.create("claude", settings)
     notifier = NotifierDevice("parent", {"bark_url": "https://api.day.app/KEY", "telegram_bot_token": "T",
                                          "telegram_chat_id": "C"})
-    hub = Hub(faces={"f": RecordingFace()}, notifiers={"parent": notifier}, policy="none")
-    script = [
+    listener = ScriptedListener([
+        None,                                        # no objection: reading starts
         _voice(f"This book belongs to {NAME}"),
-        _voice(f"what does {NAME} mean"),            # target from the page → redacted before leaving
+        _voice(f"what does {NAME} mean"),            # an explanation: no Brain until M7, so nothing leaves
         _voice(f"my name is {NAME} from {SCHOOL}"),  # learner free text: stays local
         _voice("of Quillfield Academy. The fox ran home."),
         _voice("It was late and dark."),
         _voice(f"{LABEL} was written in pencil."),
-        _voice(f"{NAME} lives at home with {SCHOOL} friends"),  # CHECK answer: compared locally
         "/stop",
-    ]
-    session = StudySession(store=Store(settings.db_path), hub=hub, settings=settings, brain=claude,
-                           anki_client=anki.AnkiClient(settings.anki_url), listener=ScriptedListener(script, voice=True))
-    await session.run(book_title="Canary book", page_text=PAGE, page_number=1)
+    ], voice=True)
+    hub = Hub(faces={"f": RecordingFace()}, notifiers={"parent": notifier}, policy="none",
+              listeners={"voice": listener})
+    from leafi.study.harness import loop
+
+    await loop.run_session(loop.Env(store=Store(settings.db_path), hub=hub, settings=settings, listener=listener,
+                                    anki=anki.AnkiClient(settings.anki_url), book_title="Canary book",
+                                    page_text=PAGE, page_number=1, learner=NAME))
 
     hosts = {urlsplit(str(r.url)).hostname for r in sent}
-    assert "api.anthropic.com" in hosts, "the Claude path was not exercised"
+    assert "api.anthropic.com" not in hosts  # M6 runs with cloud text off; the Brain path returns with M5/M7
+    assert {"api.day.app", "api.telegram.org"} <= hosts, "the notifier path was not exercised"
     assert hosts <= ALLOWED_HOSTS, hosts
-    claude_bodies = [r.content.decode() for r in sent if urlsplit(str(r.url)).hostname == "api.anthropic.com"]
-    assert any("[name]" in json.loads(b)["messages"][0]["content"] for b in claude_bodies)  # redacted, not absent
     for r in sent:
         if urlsplit(str(r.url)).hostname == "127.0.0.1":
             continue  # AnkiConnect on loopback is inside the LAN boundary
@@ -129,10 +129,13 @@ async def test_operational_alerts_leave_only_as_catalog_sentences(settings, monk
         async def next_utterance(self, timeout_s):
             raise ListenerLost(f"Microphone ({NAME}'s DJI Mic at {LABEL}) stopped")
 
+    from leafi.study.harness import loop
+
     store = Store(settings.db_path)
-    session = StudySession(store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none"), settings=settings,
-                           brain=None, listener=DyingMic([], voice=True))
-    await asyncio.wait_for(session.run(book_title="Canary book", page_text=PAGE, page_number=1), 10)
+    mic = DyingMic([], voice=True)
+    await asyncio.wait_for(loop.run_session(loop.Env(
+        store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none", listeners={"mic": mic}), settings=settings,
+        listener=mic, book_title="Canary book", page_text=PAGE, page_number=1, learner="Ada")), 10)
     alerts.insert(store, f"keeper-{NAME}", "down", f"{SCHOOL} exploded")  # what keep.ps1 could be made to pass
 
     notifier = NotifierDevice("ops", {"telegram_bot_token": "T", "telegram_chat_id": "C"})
@@ -263,16 +266,19 @@ async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatc
     hub = Hub(faces={"f": face}, mouths={"cam": mouth}, policy="all", synthesizer=service)
     learner_word = "Zorblatt"
     script = [
+        "",                                              # no objection: reading starts
         f"This book belongs to {NAME}",
         f"what does {NAME} mean",                       # explain_wait embeds the (page) target → redacted
         f"/fix belongs {learner_word}",                  # learner-typed correction text → local-only line
         "/stop",
     ]
     console = GatedConsole(script)
-    session = StudySession(store=Store(settings.db_path), hub=hub, settings=settings,
-                           brain=brain_service.REGISTRY.create("mock", settings), listener=console)
-    await asyncio.wait_for(session.run(book_title="Canary book", page_text=PAGE, page_number=1), 20)
-    assert "EXPLAIN" in session.flags.transitions and "CORRECT" in session.flags.transitions
+    hub.listeners = {"console": console}
+    from leafi.study.harness import loop
+
+    await asyncio.wait_for(loop.run_session(loop.Env(
+        store=Store(settings.db_path), hub=hub, settings=settings, listener=console, book_title="Canary book",
+        page_text=PAGE, page_number=1, learner="Ada")), 20)
     assert any(t.startswith("Good question!") and "[name]" in t for t in spoken), spoken  # redacted, sent
     local = [text for text, _, _ in service.backends["zh"].calls]
     assert any(learner_word in t for t in local), local  # the correction line went to the local backend

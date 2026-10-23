@@ -44,7 +44,7 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Check: `scripts/probes/p3_ocr_compare.py --capture 3 --out cache/desk` then `--dir cache/desk` (silent snapshots); `LEAFI_HW_TESTS=1 pytest tests/test_hardware.py -k rotation`.
 
 ## "Leafi stopped by itself" / "I can't hear the microphone any more" / two sessions
-- Start: `leafi/study/session.py` (`_renew_loop`, `_listener_lost`, `listen`), `leafi/core/lease.py`, `leafi/services/asr/__init__.py::VoiceListener._pump`.
+- Start: `leafi/study/harness/inputs.py` (`_renew_lease`, `_listener_lost`, `listen`), `leafi/core/lease.py`, `leafi/services/asr/__init__.py::VoiceListener._pump`.
 - Invariant: a failed lease renewal (another launch took `data/leafi.lock` after the TTL expired, e.g. after a suspend) stops this session at its next renewal (≤ `LEASE_TTL_S`/3) with no more audio and summary `lease_lost=true` (TD-15); a dead Ear raises `ListenerLost` once, the session says so and continues on the console when one exists, else stops (`LISTENER_LOST`, TD-16). Replug = restart the session.
 - Check: `tests/test_voice_mode.py`.
 
@@ -70,12 +70,12 @@ Search this file for the symptom or the user's words; read only the matching ent
 
 ## "practice never ends" / "skip did nothing" / controls
 - Note: `/skip` typed while Leafi is talking only cuts that line (`Hub.skip_current`); it is not delivered to the state, so practice still waits for a retry or another `/skip`. ADR-0013 promises only `/stop` during playback (plan Decision log, review 2 D4).
-- Start: `leafi/study/session.py` (`practice`, `_practise_word`, `_read_control`, `_depart`), `leafi/study/controls.py`.
+- Start: `leafi/study/harness/activities.py` (`practise_errors`, `read_listen`, `_page_turn`), `leafi/study/harness/rows.py::close_cycle`, `leafi/study/controls.py`.
 - Trap: control precedence wins everywhere, even when the page text says "stop" or the practised word is "skip" (ADR-0013 "skip always"); only a spoken utterance longer than 6 words is never a control; `/back N` counts from the sentence just read when `pcur` sits at a sentence start or at the page end (`alignment.back`).
 - Check: `tests/test_practice.py`, `tests/test_session_controls.py`.
 
 ## "/stop does nothing while Leafi is talking" / "page turned but Leafi kept the old page"
-- Start: `leafi/study/session.py` (`say`, `_during_playback`, `listen`, `_watch_page`), `leafi/core/hub.py` (`stop_speaking`, `skip_current`), `leafi/study/page_tracker.py::changed`.
+- Start: `leafi/study/harness/inputs.py` (`say`, `_deliver`, `listen`, `_watch_page`), `leafi/core/hub.py` (`stop_speaking`, `skip_current`), `leafi/study/page_tracker.py::changed`.
 - Invariant: the console is read by one persistent task also during playback; `/stop` cancels speech and is routed to the current state; an Eye page turn becomes `/page`. Text mode has no Eye.
 - Check: `tests/test_control_dispatch.py`.
 

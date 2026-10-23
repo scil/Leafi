@@ -317,6 +317,12 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
             await io.line("noop")
     finally:
         io.page_open = False
+        if s.latch.terminal == "stop":  # ADR-0013 control table: stop completes the current sentence by (iii)
+            sid = w.state.current_sentence()
+            if sid is not None and sid not in w.state.completed and \
+                    any(t.status != "unattempted" for t in w.state.tokens if t.sentence_id == sid):
+                w.state, _ = complete_sentence(w.state, sid)
+                w.save_state()
         w.end_page_read()
 
 

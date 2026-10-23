@@ -22,22 +22,19 @@ class _Eye:
 
 @pytest.fixture
 def captured(monkeypatch, settings):
-    """The kwargs `run_study` builds the StudySession with; the session itself does not run."""
+    """The `Env` `run_study` builds the harness session from; the session itself does not run."""
     from leafi import app
-    from leafi.study import session as session_module
+    from leafi.study.harness import loop
 
     got: dict = {}
 
-    class Recorder:
-        def __init__(self, **kw):
-            got.update(kw)
-
-        async def run(self, **kw):
-            return 1
+    async def recorder(env):
+        got.update(vars(env))
+        return 1
 
     hub = Hub(faces={"f": RecordingFace()}, eyes={"desk": _Eye()}, policy="none", study_eye="desk")
     monkeypatch.setattr(app, "build", lambda *a, **k: SimpleNamespace(hub=hub))
-    monkeypatch.setattr(session_module, "StudySession", Recorder)
+    monkeypatch.setattr(loop, "run_session", recorder)
     settings.ocr_backend = "mock"
     settings.book_lookup = "off"
     return got

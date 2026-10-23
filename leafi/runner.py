@@ -26,7 +26,9 @@ async def run_study(settings: Settings, args: argparse.Namespace) -> int:
         if unknown:
             log.warning("--mouth: no such Mouth %s (have %s)", sorted(unknown), sorted(built.hub.mouths))
         built.hub.mouths = {n: m for n, m in built.hub.mouths.items() if n in keep}
-    store = Store(settings.db_path)
+    from leafi.study.harness.busy import STUDY_BUSY_TIMEOUT_MS
+
+    store = Store(settings.db_path, busy_timeout_ms=STUDY_BUSY_TIMEOUT_MS)  # ADR-0017 §7.3
     try:
         return await _run(settings, args, built, store)
     finally:
@@ -38,13 +40,10 @@ async def run_study(settings: Settings, args: argparse.Namespace) -> int:
 
 
 async def _run(settings: Settings, args: argparse.Namespace, built, store: Store) -> int:
-    from leafi.services import brain as brain_service
     from leafi.services import pronunciation
     from leafi.study.anki import AnkiClient
-    from leafi.study.session import StudySession
+    from leafi.study.harness import loop
 
-    brain_name = "mock" if args.mock else settings.brain_backend
-    brain = brain_service.REGISTRY.create(brain_name, settings)
     pron = None
     if settings.pron_auto_judge and not args.text:
         pron = pronunciation.REGISTRY.create("mock" if args.mock else settings.pron_backend, settings)
@@ -68,23 +67,20 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
     from leafi.core import learner_store
     from leafi.services.wordinfo import LocalWordInfo
 
-    try:
-        learner_id, enrolled = learner_store.choose(store, getattr(args, "learner", None))
-    except learner_store.LearnerChoice as e:
-        print(f"Leafi: {e}")
-        return 2
-    if enrolled:
-        print(f"Leafi: enrolled a new learner, {args.learner.strip()} (#{learner_id})")
     lexicon = [r["word"] for r in store.all("SELECT DISTINCT word FROM lexicon")]
-    session = StudySession(store=store, hub=built.hub, settings=settings, brain=brain,
-                           anki_client=None if args.mock else AnkiClient(settings.anki_url), pron=pron,
-                           page_tracker=tracker, ocr=ocr, catalog=catalog,
-                           word_info=LocalWordInfo(settings.models_dir, lexicon), learner_id=learner_id)
     page_text = args.page_text.read_text(encoding="utf-8") if args.page_text else None
+    # The Brain arrives with M7 (plan): until then every session runs the default policy, and code owns content.
+    env = loop.Env(store=store, hub=built.hub, settings=settings, page_tracker=tracker, ocr=ocr, catalog=catalog,
+                   anki=None if args.mock else AnkiClient(settings.anki_url), pron=pron,
+                   word_info=LocalWordInfo(settings.models_dir, lexicon), book_title=args.book, page_text=page_text,
+                   page_number=args.page, learner=getattr(args, "learner", None))
     try:
-        sid = await session.run(book_title=args.book, page_text=page_text, page_number=args.page)
+        sid = await loop.run_session(env)
     except LeaseHeld as e:
         print(f"Another Leafi session holds the speech lease: {e}")
+        return 2
+    except learner_store.LearnerChoice as e:
+        print(f"Leafi: {e}")
         return 2
     print(f"session {sid} saved to {settings.db_path}")
     return 0

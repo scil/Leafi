@@ -115,26 +115,3 @@ def test_split_number():
     assert split_number(["Tom had a kite.", "Page 7"]) == (7, ["Tom had a kite."])
     assert split_number(["Tom had 3 kites."]) == (None, ["Tom had 3 kites."])
 
-
-async def test_session_identifies_the_book_and_page_from_the_camera(settings):
-    from leafi.core.hub import Hub
-    from leafi.services.brain.mock import MockBrain
-    from leafi.services.catalog.mock import MockCatalog
-    from leafi.study.session import StudySession
-    from tests.fakes import RecordingFace, ScriptedListener
-
-    store = Store(settings.db_path)
-    page = render(PAGES[0], number=3)
-    eye = FakeEye([render("Cover", isbn="9780140328721"), page])
-    ocr = MockOcr()
-    face = RecordingFace()
-    hub = Hub(faces={"f": face}, eyes={"desk_cam": eye}, policy="none", study_eye="desk_cam")
-    s = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(),
-                     listener=ScriptedListener(["yes", "Tom had a red kite.", "/stop"]),
-                     page_tracker=PageTracker(store, eye, ocr, settings, sleep=_nosleep), ocr=ocr,
-                     catalog=MockCatalog({"9780140328721": "Kite Day"}))
-    await s.run()
-    assert store.one("SELECT title, isbn FROM books")[:] == ("Kite Day", "9780140328721")
-    assert store.one("SELECT printed_number FROM pages")["printed_number"] == 3
-    assert any("Kite Day" in t for t in face.texts)
-    assert store.one("SELECT COUNT(*) AS n FROM observations")["n"] == 5

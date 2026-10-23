@@ -41,6 +41,7 @@ def _history(store, learner, book, page, rev):
                  created_at=now_iso())
     store.execute("UPDATE reading_sessions SET ended_at=? WHERE id=?", (now_iso(), s))
     item = knowledge.upsert_item(store, learner, "word", "blew")
+    seed.card(store, item)
     knowledge.add_encounter(store, item, session_id=s, trigger="explain", explanation_en="moved air")
     learner_store.insert(store, "review_answers", learner, knowledge_item_id=item, card_id=1, ease=3,
                          state="acked", created_at=now_iso())

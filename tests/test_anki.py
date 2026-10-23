@@ -19,6 +19,7 @@ def _item(store, key="blew"):
     item = knowledge.upsert_item(store, seed.learner(store), "word", key)
     knowledge.add_encounter(store, item, session_id=None, trigger="explain", explanation_en="moved air",
                             explanation_zh="吹", example="The wind blew.")
+    seed.card(store, item)  # what `add_cards` queues
     return item
 
 
@@ -77,6 +78,7 @@ async def test_parent_edits_win_on_update(store):
     fake.parent_edit(nid, "背面", "parent's own wording")
     knowledge.add_encounter(store, item, session_id=None, trigger="explain", explanation_en="pushed air",
                             explanation_zh="吹动", example="It blew away.")
+    seed.card(store, item, "update")
     rep = await anki.sync_outbox(store, _client(fake))
     assert fake.notes[nid]["fields"]["背面"] == "parent's own wording"
     assert rep.conflicts and "背面" in rep.conflicts[0]
@@ -85,9 +87,11 @@ async def test_parent_edits_win_on_update(store):
 async def test_update_touches_unedited_fields(store):
     fake = FakeAnki()
     item = knowledge.upsert_item(store, seed.learner(store), "word", "blew")
+    seed.card(store, item)
     await anki.sync_outbox(store, _client(fake))
     nid = next(iter(fake.notes))
     knowledge.add_encounter(store, item, session_id=None, trigger="explain", explanation_en="moved air")
+    seed.card(store, item, "update")
     await anki.sync_outbox(store, _client(fake))
     assert fake.notes[nid]["fields"]["背面"] == "moved air"
 
@@ -139,6 +143,7 @@ async def test_lost_add_recovery_does_not_adopt_parent_edits_as_leafi_values(sto
     assert (await anki.sync_outbox(store, _client(fake))).deduped == 1
     knowledge.add_encounter(store, item, session_id=None, trigger="explain", explanation_en="pushed air",
                             explanation_zh="吹动", example="It blew away.")
+    seed.card(store, item, "update")
     rep = await anki.sync_outbox(store, _client(fake))
     assert fake.notes[nid]["fields"]["背面"] == "parent's own wording"
     assert rep.conflicts
