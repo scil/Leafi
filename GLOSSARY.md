@@ -87,9 +87,9 @@ One immutable version of a Page's text; OCR makes the first, each Correction mak
 **Alignment**:
 The mapping of an Utterance onto the current Page revision (a window around the cursors first, the whole page when that fails) that yields Observations and a Committed cursor (ADR-0013).
 
-**Off-task speech**:
-An Utterance, or a run of three or more heard words inside one, that Alignment cannot anchor to the page; it changes nothing and is never a miscue.
-_Avoid_: noise, garbage
+**Unaligned speech**:
+An Utterance, or a run of three or more heard words inside one, that Alignment cannot anchor to the page; it changes nothing, is never a miscue, and is reported as "not tracked", never as a verdict on the learner.
+_Avoid_: off-task (a verdict the alignment cannot make), noise, garbage
 
 **Observation**:
 What Alignment saw, with no judgement attached: a matched, substituted or deleted span of expected words, or an insertion between two expected words.

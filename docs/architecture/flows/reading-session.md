@@ -43,7 +43,7 @@ sequenceDiagram
         L->>Lis: reads
         Lis-->>S: Utterance(words, times, conf|None)
         S->>A: align(reading_state, utterance, word_info)
-        A-->>S: state', observations, events (sentence_reached | off_task | line_skipped)
+        A-->>S: state', observations, events (sentence_reached | unaligned | line_skipped)
         S->>S: store utterance, observations, state', candidates (owned by the cycle), withdrawals
         Note over S,H: no practice, no line at a sentence end, only ADR-0017 §6.1's silence cues and recovery lines
     end
@@ -56,7 +56,7 @@ sequenceDiagram
     loop each candidate, on its own page read
         S->>H: show the sentence, model the word
         L->>Lis: retries (≤ 2, skip always offered)
-        S->>S: pass → withdrawn(practice), else unsure(disagreed, unclear, idle or skipped), plus a practices row
+        S->>S: pass → withdrawn(practice), else unsure(disagreed, unclear, idle or skipped), plus a practices row (≤ 2 attempts per miscue)
     end
     S->>S: the next boundary-chosen reading closes the cycle → anything still open becomes unsure(not_practised)
 ```

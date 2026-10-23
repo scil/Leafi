@@ -7,7 +7,7 @@ Status: active, started 2026-10-22. Implements ADR-0017 (accepted 2026-10-22), A
 Today `leafi/study/session.py` is a fixed state machine (READ → PRACTICE at each sentence end → CHECK) for one unnamed child, and the Brain may see page text only. After this plan:
 
 - A session is a sequence of activities. The Brain, or a configurable default policy, picks each one from a menu the harness computes; the harness constructs, runs, times, limits and records it (ADR-0017).
-- Reading is never interrupted by correction. Errors are practised afterwards from the cycle's candidates; alignment tracks lost starts, rereads and off-task speech and stops crediting real-word misreadings (ADR-0013 v2).
+- Reading is never interrupted by correction. Errors are practised afterwards from the cycle's candidates; alignment tracks lost starts and rereads, ignores speech it cannot align, and stops crediting real-word misreadings (ADR-0013 v2).
 - Several learners share one Leafi with separate records, recognised locally; learner text may reach the cloud per the learner's setting, pseudonymised, through one egress layer with a socket guard behind it (ADR-0018).
 
 Who sees the result: the learner (a session that reads first and practises after, and that follows their choices at their autonomy level), the owner (settings for policy, session length, autonomy, privacy; an arm report), agents (one loop, typed records, tests per ADR Confirmation).
@@ -25,11 +25,13 @@ Each milestone ends with the full suite green, its ADR Confirmation tests presen
 
 ### M0 — Design gates (no code)
 
-1. Review ADR-0013 v2: codex (`gpt-6-astra`) and `code-plan-review` on the same prompt file, independently, then compared (AGENTS.md → Verification: it adds mechanisms). Fix, re-review the increment once, owner accepts → `status: accepted`.
+1. Review ADR-0013 v2: codex (`gpt-6-astra`) and `code-plan-review` on the same prompt file, independently, then compared (AGENTS.md → Verification: it adds mechanisms). Round 1 done 2026-10-22 (codex fallback: a fresh Claude session); rev 2 written. Next: one increment round by codex on the rev-2 diff, then the owner accepts → `status: accepted`.
 2. Licence check of the word list `WordInfo.is_word` uses (the frequency list ADR-0017 §6.2 ranks with, SUBTLEX-UK children's or an alternative); record the choice and licence in the Decision log. `num2words` is LGPL-2.1, used unmodified as a library.
-3. Decide the speaker-embedding model for ADR-0018 §1 (sherpa-onnx speaker identification; model, licence, version) — recorded here before M8.
+3. The lemma source for `WordInfo.lemmas` (ADR-0013 → Pair classes `inflection`): `tiered-research` → `gather-code-references` over lemminflect, spaCy's lemmatizer (already a dependency of ADR-0018's Presidio), a table from the word list; licence, size, accuracy on child-book inflections; the choice in the Decision log.
+4. A timed prototype of the v2 DP (vectorised, packed tie-break keys) on a 400-token page with 25 heard words, checked against a brute-force reference on small inputs; the p95 recorded in Surprises. Over 100 ms → the design changes (e.g. a page pass restricted to sentence starts) before acceptance, not after.
+5. Decide the speaker-embedding model for ADR-0018 §1 (sherpa-onnx speaker identification; model, licence, version) — recorded here before M8.
 
-Acceptance: ADR-0013 `status: accepted`; Decision log rows for 2 and 3.
+Acceptance: ADR-0013 `status: accepted`; Decision log rows for 2, 3 and 5; the prototype figure for 4.
 
 ### M1 — TD-1: `anthropic` ≥ 1.x on `httpx2` (ADR-0017 §10 precondition)
 
@@ -50,9 +52,9 @@ Acceptance: `tests/test_open_db.py`, `tests/test_migration_5.py`, `tests/test_fo
 
 ### M4 — Reading algorithm v2 (ADR-0013 v2; after M0.1)
 
-1. `norm` v2: `num2words` readings, heard number collapsing, `TOKENIZER_VERSION = 2`; token boundaries equal v1's on every fixture page (`tests/test_norm.py`).
-2. `WordInfo` port, espeak-ng phones through the existing `phonemizer` + `espeakng-loader`, the word list from M0.2, a table fake for tests; `study/function_words.py`.
-3. `align` v2: pair classes, fast pass and page pass, back jumps, affine deletions, acceptance 4(a)–(c), `off_task`, rule 5 marks, rule 6–7 status updates; every walkthrough (a)–(p) as a test; `tests/test_alignment_perf.py` (hardware-marked, 100 ms p95, 400 tokens, 25 words).
+1. `norm` v2: `num2words` readings in canonical form, `TOKENIZER_VERSION = 2`; token boundaries equal v1's on every fixture page (`tests/test_norm.py`).
+2. `WordInfo` port: espeak-ng phones through the existing `phonemizer` + `espeakng-loader` with the homograph table, the word list from M0.2, the lemma source from M0.3, answers precomputed per revision and per utterance, versions into `page_reads.alignment_versions`; a table fake for tests; `study/function_words.py`.
+3. `align` v2 from the M0.4 prototype: pair classes, `number join`, fast pass and page pass, back jumps, affine deletions, the entry and sentence-skip costs, boundary per visit, acceptance 4(a)–(d) and the ceiling, `unaligned`, rule 5 marks, rules 6–10; `supply`; `open_page_read`; every walkthrough (a)–(w) as a test; `tests/test_alignment_oracle.py`; `tests/test_alignment_perf.py` (hardware-marked, 100 ms p95, 400 tokens, 25 words).
 4. `scripts/evals/reading_eval.py` and the labelled set under `data/evals/reading/` (the owner reads fixture pages with deliberate errors; silent, PC microphone): false-alarm and miss rates printed; result in Surprises.
 
 The v1 session keeps working on v2 alignment (its PRACTICE calls the v2 retry test) until M6 replaces it. Acceptance: the tests above; the false-alarm rate recorded (a breach is a TD row, not a blocker for M6, because `practise_errors` frames every candidate as practice).
@@ -98,7 +100,7 @@ Voice: enrolment by averaged clips, per-Ear thresholds from this household's pro
 
 ### M10 — Measurements, console and closing docs
 
-Perceived-moment budgets and the output reserve measured per Mouth (PC and camera, ADR-0017 §5.2; the camera only with the owner present and audible); Ollama memory and latency next to the other models (research D10) to lift `GATE_FLOOR`; console buttons of ADR-0017 §10 and ADR-0018 §7.6, checked with `check-console.js`; `docs/ownership-map.md`, `code-locator.md`, `testing.md` updated; ADR-0017 `revised` note listing where the code differs.
+Perceived-moment budgets and the output reserve measured per Mouth (PC and camera, ADR-0017 §5.2; the camera only with the owner present and audible); Ollama memory and latency next to the other models (research D10) to lift `GATE_FLOOR`; console buttons of ADR-0017 §10, ADR-0018 §7.6 and ADR-0013's reading evaluation, checked with `check-console.js`; `docs/ownership-map.md`, `code-locator.md`, `testing.md` updated; ADR-0017 `revised` note listing where the code differs.
 
 ## Validation and acceptance
 
@@ -115,7 +117,8 @@ Perceived-moment budgets and the output reserve measured per Mouth (PC and camer
 ## Progress
 
 - [x] 2026-10-22 ADR-0017 and ADR-0018 accepted by the owner; ADR-0013 v2 written (proposed); `flows/reading-session.md`, `product.md` B3/B4/B7, `GLOSSARY.md`, `data-model.md` (migration 5), `reliability.md`, `security.md` (prompt-safety allow-list) updated; this plan written.
-- [ ] M0 design gates
+- [x] 2026-10-22 M0.1 round 1 on ADR-0013 v2: `code-plan-review` (3 High) and a fresh Claude session for codex, whose quota had run out (2 High); 5 of 6 themes found by both; compared in `reviews/2026-10-22-adr-0013-v2-round-1-comparison.md`; rev 2 resolves every finding (ADR-0017 pointers, `data-model.md`, glossary updated with it).
+- [ ] M0 design gates (remaining: codex increment round, M0.2–M0.5, owner acceptance)
 - [ ] M1 TD-1
 - [ ] M2 harness prototype
 - [ ] M3 learners and migration 5
@@ -135,7 +138,9 @@ Perceived-moment budgets and the output reserve measured per Mouth (PC and camer
 
 - 2026-10-22 ADR-0013 v2 is written into the existing file (`0013-reading-algorithm-v1.md`) instead of a new ADR number, so that ADR-0013 stays the single owner AGENTS.md and ADR-0017 point to and no link breaks; v1 stays in git history.
 - 2026-10-22 ADR-0018 §7.5's documents change in M5 together with the egress code, not at acceptance: changing AGENTS.md's boundary and `security.md`'s egress table before the mediator and the socket grants exist would state an enforcement that does not run. Until M5, code keeps to the v1 egress rule.
-- 2026-10-22 ADR-0013 v2 choices the review should test: function-word and (default) inflection misses produce no miscue row at all, only a categorised observation (simpler than an immediately settled `unsure`); `/back` never crosses a page; within one cycle a `(page, revision)` has one page read, which is how rereading an earlier page can withdraw its candidates; `interrupted` keeps v1's 0.3 Difficulty weight because ADR-0017 §8.6 names only `not_practised` and `skipped` as zero.
+- 2026-10-22 ADR-0013 v2 rev 1 choices: function-word and (default) inflection misses produce no miscue row, only a categorised observation (kept in rev 2; neither reviewer found a loss the summary or the evaluation needs); `/back` never crosses a page (kept); within one cycle a page has one page read (kept, now moved to a new revision in place by a correction).
+- 2026-10-22 ADR-0013 v2 rev 2, author's calls on review findings the owner may override (listed in the round-1 comparison): `unsure(interrupted)` and `unsure(unclear)` contribute 0 to Difficulties (rev 1 kept v1's 0.3 for `interrupted`); a supplied function word is a candidate; a spoken lone function word never anchors, a typed one does (ADR-0017 §8 amended to "when spoken"); the internal-cost ceiling rejects heavily misread short utterances instead of producing candidates.
+- 2026-10-22 Codex quota ran out at the start of M0.1; the `codex-review` skill's fallback (a fresh session of another agent on the same prompt file) ran instead. Two Claude reviewers share a model's blind spots, so the codex increment round is kept as a gate rather than skipped.
 - 2026-10-22 Milestone order: M5 (egress) before M7 because M7 is the first code that would send learner text to the Brain; M6 runs on the default policy and needs no Brain.
 
 ## Outcomes & retrospective

@@ -40,10 +40,10 @@ ADR-0017, ADR-0018 and ADR-0013 v2 change the shape above in one migration (ADR-
 | `learner_notes`, `learner_note_citations`, `book_notes` | new; notes cite the activities they rest on | ADR-0017 §7.1 |
 | `consents`, `egress_log` | new (ISO/IEC TS 27560 column names; HMAC, never a body) | ADR-0018 §2, §4.2 |
 | provenance | `provenance_class` and `source_learners` (NOT NULL, no default) on every stored text that can reach a payload | ADR-0018 §3 |
-| `page_reads` | + `cycle_id`; at most one per `(cycle, page, revision)`; + counts `self_corrections`, `repetitions`, `off_task_words`; `reading_state` json + `off_task_run` | ADR-0013 → Definitions, Running-record conventions |
-| `observations` | kind + `off_task`; + `category` (`exact`/`phones`/`fuzzy`/`inflection`/`substitute`/`function_word`), `repeat`, `self_correction` | ADR-0013 → align rule 5 |
-| `miscues` | + `cycle_id` (the owning cycle); `unsure_reason` + `unclear` | ADR-0013 → Cycles, Practice |
-| `practices` | `outcome` + `unclear` | ADR-0013 → Practice |
+| `page_reads` | + `cycle_id`; at most one per `(cycle, page)` (a correction moves it to the new revision in place); + `alignment_versions` (json: word list, `FUNCTION_WORDS`, phonemizer, lemma source); + counts `self_corrections`, `repetitions`, `unaligned_words`, `function_word_misses`, `not_reached`; `reading_state` json: tokens with `miscue_id` and `created_by`, + `unaligned_run`, `unaligned_words`, `prompted` | ADR-0013 → Definitions, Opening a page read, Running-record conventions |
+| `observations` | kind + `unaligned` (with `token_start`/`token_end` NULL, so those columns become nullable for that kind only); + `pair_class` (`exact`/`phones`/`fuzzy`/`join`/`inflection`/`substitute`, NULL for deletions and insertions), `function_word`, `repeat`, `self_correction` | ADR-0013 → align rules 4–5 |
+| `miscues` | + `cycle_id` (the owning cycle); + `origin` (`substitution`/`deletion`/`supplied`); `unsure_reason` + `unclear`; `expected_token_index` stays the index at the revision of creation (tokens are found by `miscue_id`); partial unique index on `(page_read_id, expected_token_index) WHERE status = 'candidate'` | ADR-0013 → align rule 7, Supplying a word, Cycles, Practice |
+| `practices` | `outcome` + `unclear`, `idle`; `attempt` 1–2 per miscue across activities | ADR-0013 → Practice |
 | `page_revisions` | `tokenizer_version` 2 for new revisions (token boundaries unchanged) | ADR-0013 → `norm()` v2 |
 | `knowledge_items` | kind + `pattern`; status + `ignored`; status changed only by `item_status.apply` | ADR-0017 §6.2 |
 | `encounters` | trigger + `teach_ok`, `teach_incorrect` | ADR-0013 → Difficulties |

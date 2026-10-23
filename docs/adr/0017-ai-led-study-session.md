@@ -4,7 +4,8 @@ accepted: 2026-10-22 (owner)
 date: 2026-10-21
 revised: 2026-10-22 (v4: the independent codex and code-plan-review rounds on v3 and the owner's answers — session length and end timing configurable for every case, evaluation randomised per session, mastery producers, quiz answers under decision 6, routing tables per household; v3: configurable default policy with per-step code/Brain content, exploration, configurable mastery, parent features deferred; earlier rounds, see Reviews)
 supersedes: 0013 (session rules only, see §8)
-amends: 0003, 0013 (Difficulties and Reposition speech: §8.6, §6.1)
+amends: 0003, 0013 (Difficulties and the first-words prompt: §8.6, §6.1)
+revised-after-acceptance: 2026-10-22 (pointers into ADR-0013 v2 after its round-1 reviews: §3.4 `item_said`, §6.1, §8, §8.1)
 ---
 
 # The Brain leads the study session; the study harness executes, measures and limits it
@@ -221,7 +222,7 @@ sequence(s, obs, menu) -> Decision | None:
 
 A spoken answer counts only when it is **confidently recognised**: every word of the transcript has confidence ≥ `ANSWER_MIN_CONF` (0.8, *untuned*); otherwise the outcome is `unavailable`, whatever it seems to say (owner decision 6, extended to success as well as failure, and to `quiz`). Typed answers always count.
 
-- `item_said`: ADR-0013's retry test on the whole answer; `cloze_word`: the answer is the cloze word (exact, a homophone, or the same phones — ADR-0013 v2's real-word rule, §8); `item_used`: one `judge` call (§5.1) with few-shot examples → `yes` / `no` / `cannot_tell`.
+- `item_said`: success when the answer's content words, after `norm`, are exactly the item's words, each by ADR-0013's pair class `exact` or `phones` ("through" and "it's through" succeed; "I don't know what through means" does not); otherwise `fail`; `cloze_word`: the answer is the cloze word (exact, a homophone, or the same phones — ADR-0013 v2's real-word rule, §8); `item_used`: one `judge` call (§5.1) with few-shot examples → `yes` / `no` / `cannot_tell`.
 - `quiz`: ADR-0013 → CHECK outcomes on a counted answer; an uncounted spoken answer is `unavailable` and writes no encounter.
 - Silence, `skip`, `cannot_tell`, no eligible `judge` backend → `unavailable`: no retrieval event, no encounter.
 - `success` / `fail` write a `retrieval_events` row (full timestamp, household day, evidence `typed` | `heard_confident` | `acoustic`) and, for `teach_items` and `recall_items`, an encounter (§8.6).
@@ -293,7 +294,7 @@ Every default is a starting value; *untuned* ones have no measured or published 
 | `stuck_only` (default) | soft non-verbal cue on Mouths, "…" on Faces | "Want a hint?"; on yes Leafi says the word, the token is marked `supplied` | nothing | `reading.encourage` line (≤ 1) |
 | `sentence_end` | as `stuck_only` | as `stuck_only` | an encourage line when the sentence had a self-correction | as above |
 
-**Recovery dialogue is outside this table** and always allowed (the Reposition prompt, "I can't see the page", listener lost, page uncertain, lease or device messages). `reading.encourage`: `none` | `specific` (default; names a self-correction or effort, never "smart") | `frequent` (offered, though research P37/P38 warn against frequent praise). Leafi never prompts guessing a word from a picture (research P2). A `supplied` token becomes a candidate with `heard = null`, reason `supplied`.
+**Recovery dialogue is outside this table** and always allowed (ADR-0013's first-words prompt, "I can't see the page", listener lost, page uncertain, lease or device messages). `reading.encourage`: `none` | `specific` (default; names a self-correction or effort, never "smart") | `frequent` (offered, though research P37/P38 warn against frequent praise). Leafi never prompts guessing a word from a picture (research P2). A `supplied` token becomes a candidate with `heard = null`, reason `supplied`.
 
 ### 6.2 Items, what is new, and mastery
 
@@ -352,16 +353,16 @@ The study process opens its store with `busy_timeout` 250 ms and retries a busy 
 
 ## 8. What remains of ADR-0013 and what changes
 
-Kept as written: `align` rules 1–8, Reposition (its prompt is recovery dialogue, §6.1), Sentence completion (i)–(iii) and its token updates, Practice (run by `practise_errors`), `/back N`, Correction interaction, CHECK outcomes (run by `quiz`, with §3.4's rule), the Async guard (extended in §1).
+ADR-0013 v2 holds the whole reading algorithm, including what this section asked of it; where the list below and ADR-0013 differ, ADR-0013 wins. Its Practice is run by `practise_errors`, its CHECK outcomes by `quiz` (with §3.4's rule), and its first-words prompt is recovery dialogue (§6.1).
 
-1. **Candidate lifecycle.** Sentence completion no longer runs PRACTICE. A candidate is owned by the cycle whose `read_listen` created it and stays `candidate` across sentences and pages; `/back` reopening its sentence leaves it `candidate`; a later match withdraws it as `reread` while the cycle is open. Closing a cycle settles every candidate it still owns: `unsure(not_practised)`, or `unsure(skipped)` on `stop`.
+1. **Candidate lifecycle.** Sentence completion no longer runs PRACTICE. A candidate is owned by the cycle whose `read_listen` created it and stays `candidate` across sentences and pages; `/back` reopening its sentence leaves it `candidate`; a later match withdraws it (ADR-0013 rule 7) while the cycle is open. Closing a cycle settles every candidate it still owns: `unsure(not_practised)`, or `unsure(skipped)` on `stop`.
 2. **Page turn / `next page`** during `read_listen` completes the current sentence by (iii) and ends the activity with `page_turned`, without settlement; when the learner keeps reading, a continuation starts in the same cycle, again on every further turn; continuations count toward session minutes, not toward `activities_per_cycle`. A page turn during `practise_errors` ends it with `page_turned`; unpractised candidates stay owned by the cycle.
 3. "After PRACTICE ends" and "Page completion → CHECK" are replaced by the menu.
 4. The per-sentence line (`sentence_done`) is removed; Leafi speaks inside reading only as §6.1 allows.
 5. **Interrupted session**: on startup a stale session's `running` activity becomes `interrupted`, its open cycle closes with reason `interrupted`, its candidates become `unsure(interrupted)`; guest end states per ADR-0018 §1; "continue from page N?" uses the last page read of that learner and book.
 6. **Difficulties (amended).** `unsure` reasons `not_practised` and `skipped` contribute `v(s) = 0` and do not count toward the existence rule. `teach_items` and `recall_items` write an encounter with trigger `teach_incorrect` for a `fail` (counted like `check(incorrect)`) and `teach_ok` for a success (ignored by Difficulties). `confirmed` still needs acoustic evidence.
 
-**ADR-0013 v2 is required before code.** It holds §8.1–8.6 as pseudocode, hand-run on A→B→C page turns, `/back` across a page turn and `stop` mid-practice, and folds in the prior-art changes to alignment: a real-word pair at sim ≥ 0.80 is a substitution (house/horse, there/three, though/through), fuzzy credit stays for non-words and same-phone pairs, a practice retry passes only on an exact match, a homophone or the same phones; one page-wide alignment with internal jumps, affine deletions and an off-task outcome replaces the bounded window, the "> 3 deletions" rule and the two-strike Reposition (Project LISTEN MultiMatch, *adapted*); function words kept as observations but never practised and never anchoring alone; running-record conventions (self-correction and repetition are not errors; a told word is) with a self-correction count; numbers through `num2words`; a stated false-alarm budget; dropped inflections decided for dialect; ASR hotwords for the practice retry only (TD-17). Until v2 is accepted, `align` stays as rules 1–8 and no §8 code is written.
+**ADR-0013 v2 is required before code.** It holds §8.1–8.6 as pseudocode, hand-run on A→B→C page turns, `/back` across a page turn and `stop` mid-practice, and folds in the prior-art changes to alignment: a real-word pair at sim ≥ 0.80 is a substitution (house/horse, there/three, though/through), fuzzy credit stays for non-words and same-phone pairs, a practice retry passes only on an exact match, a homophone or the same phones; one page-wide alignment with internal jumps, affine deletions and an unaligned outcome (named off-task before ADR-0013 v2 rev 2) replaces the bounded window, the "> 3 deletions" rule and the two-strike Reposition (Project LISTEN MultiMatch, *adapted*); function words kept as observations but never practised and never anchoring alone when spoken; running-record conventions (self-correction and repetition are not errors; a told word is) with a self-correction count; numbers through `num2words`; a stated false-alarm budget; dropped inflections decided for dialect; ASR hotwords for the practice retry only (TD-17). Until v2 is accepted, `align` stays as rules 1–8 and no §8 code is written.
 
 ## 9. Evaluation: the Brain leads, an exploration share measures it (owner decision, option B; randomised per session)
 
