@@ -2,7 +2,7 @@
 
 | id | Item | Owner | Grade | Trigger to pay |
 |---|---|---|---|---|
-| TD-1 | `anthropic` SDK is pinned at 0.120.2: it has `output_config` and `thinking` but no `fallbacks` parameter (checked 2026-10-19), so refusal fallback is application-owned. Upgrade to 1.x (httpx2) is a separate ticket once a reason exists. | brain | C | a feature that needs 1.x; run `/claude-api upgrade python` in its own commit |
+| TD-1 | Resolved 2026-10-23 (plan M1): `anthropic` 1.17.0 on `httpx2` 2.16.0; `httpx2.alias_httpx()` runs in `leafi/__init__.py`, `agent/__init__.py` and the pytest plugin `tests/_alias_httpx.py`, so every `import httpx` is httpx2; both SDK clients have `max_retries=0`, a timeout and `open_telemetry=False`; probes P-B1/P-B6 in `tests/test_brain_sdk.py`. Left: 2.x moves to API version 2026-10-21, its own migration (`/claude-api api-version`); refusal fallback stays application-owned until M7. | brain | — | 2.x: when a feature needs API version 2026-10-21 |
 | TD-9 | Resolved 2026-10-19 (ADR-0011 amendment): habit snapshot becomes opt-in `NOTIFY_WITH_SNAPSHOT` (default false); implementation + test in S1. Owner may flip it in `.env`. | habits | — | done when S1 lands |
 | TD-10 | Frigate/MQTT host ports and host go2rtc RTSP 2554 are bound without auth (merged into TD-3 scope: all supporting services, not only Frigate). | deployment | C | any non-PC device on the LAN |
 | TD-2 | Resolved 2026-10-20: ruff in `requirements-dev.txt`, `[tool.ruff]` in `pyproject.toml`, clean on `leafi/` and `tests/`; `agent/` not yet linted. | repo | D | lint `agent/` when it is next touched |

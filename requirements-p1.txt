@@ -1,4 +1,4 @@
 # P1 视觉验证依赖(torch 需先按 CUDA 12.8 装,见 README):
 #   .venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu128
 ultralytics>=8.3
-anthropic>=0.66
+anthropic>=1.17,<2

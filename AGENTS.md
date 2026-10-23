@@ -46,7 +46,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 - go2rtc API source strings may not contain spaces; pad silence into the file in `tts.py`, not via `#raw=`. Instance: 2026-08-07.
 - `.env` is reread only when the Frigate container is recreated (`scripts\win\apply-env.bat`). Instance: 2026-08.
 - Xiaomi camera needs internet to fetch P2P keys per connection; do not firewall it. Instance: 2026-08-07.
-- `anthropic` here is 0.120 (pre-1.x): no `fallbacks` (TD-1).
+- `anthropic` is 1.17 on `httpx2`, and `import leafi` / `import agent` alias `httpx` to `httpx2`: nothing may import `httpx` before them (RuntimeError), and a test that patches `httpx` sees SDK traffic only through the alias (TD-1). 2.x changes the API version; do not bump unasked.
 - The Python install's `DLLs\sqlite3.dll` is hand-replaced (SQLite 3.54.1; stock 3.49.1 has the WAL-reset bug). `scoop update python312` reverts it and `leafi.db` silently leaves WAL; `leafi doctor` shows it; redo ADR-0019 §2. Instance: 2026-10-22.
 
 ## Pointers

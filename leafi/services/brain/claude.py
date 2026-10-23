@@ -1,9 +1,10 @@
 """Claude backend (cloud, text only). Egress: api.anthropic.com with the BrainRequest payload only (ADR-0011).
 
-SDK: `anthropic` 0.120.2 (TD-1) has `output_config.format` (json_schema structured outputs) but no
-`fallbacks`, so fallback is application-owned: an empty key, a refusal, a timeout or an invalid reply all
-return None and the session uses static phrases. Deadline `BRAIN_DEADLINE_S` (12 s) overall, one retry.
-`anthropic` is imported on first use.
+SDK: `anthropic` 1.17.0 on `httpx2` (TD-1; 2.x moves to API version 2026-10-21 and is a separate step).
+Fallback is application-owned: an empty key, a refusal, a timeout or an invalid reply all return None and the
+session uses static phrases. The client never retries (`max_retries=0`, one retry owner, ADR-0017 §5) and
+never traces (`open_telemetry=False`); this module retries once within `BRAIN_DEADLINE_S` (12 s) until M7's
+`brain_call` replaces it. `anthropic` is imported on first use.
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ class ClaudeBrain:
         if self._client is None:
             import anthropic  # lazy
 
-            self._client = anthropic.AsyncAnthropic(api_key=self._key, max_retries=0, timeout=self.deadline_s)
+            self._client = anthropic.AsyncAnthropic(api_key=self._key, max_retries=0, timeout=self.deadline_s,
+                                                    open_telemetry=False)
         return self._client
 
     def request_params(self, req: BrainRequest) -> dict:
@@ -74,7 +76,7 @@ def create(settings, client=None) -> ClaudeBrain:
 
 def status(settings) -> tuple[str, str]:
     if not has_package("anthropic"):
-        return "missing package", "uv pip install --python .venv anthropic==0.120.2"
+        return "missing package", "uv pip install --python .venv anthropic==1.17.0"
     if not settings.anthropic_api_key:
         return "disabled", "ANTHROPIC_API_KEY empty: static Coach-voice phrases only"
     return "ok", f"model {settings.study_brain_model}"

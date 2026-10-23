@@ -23,7 +23,9 @@ def _get_client():
     if _client is None:
         import anthropic
 
-        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        # TD-1: no SDK retries (a failure falls back to a static phrase at once), a bounded wait, no tracing
+        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=0, timeout=10.0,
+                                           open_telemetry=False)
     return _client
 
 
