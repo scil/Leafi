@@ -428,7 +428,37 @@ What to measure, per combination:
 
 Exit criterion *(proposed)*: Combination 2 replaces Combination 1 in a mechanism only where it removes more hand-written code than it adds glue, without failing any row above.
 
-## 8. Open questions and gaps
+### 7.1 Prototype results (plan M2, 2026-10-23)
+
+Run on this PC (Windows 11, Python 3.12.10) after TD-1, so both combinations sit on `anthropic` 1.17.0 + `httpx2` 2.16.0 and Combination 2 uses `pydantic-ai-slim[anthropic]` **2.59.0** (no longer the 2.31.1 pin of §5). Libraries in a separate prototype venv: tenacity 9.2.1, stamina 26.1.0, apache-burr[aiosqlite] 0.43.0, python-statemachine 3.2.2 (not exercised). Code: `scripts/prototypes/harness/` (`common.py` shared: latch, deadline watcher, activities, recovery, mock Claude as an `httpx2.MockTransport`; `comb1.py`, `comb2.py`; `bench.py`). Migrations were not compared (settled by M3, plan Decision log 2026-10-23). The deadline probes P-A1–P-A7 are the same for both and are now `tests/test_deadline_probes.py` (all pass: a hung SDK request, `anyio.sleep` and a TaskGroup child stop within 0.25 s of a 0.3 s deadline; a bare `create_task` child outlives the scope; a shielded cleanup is cut at its own budget; a library that swallows the cancellation once is cancelled again at its next await; an abandoned thread with a stop flag does not delay the caller or the process exit; 50 deadline-cancelled requests leave the client working).
+
+| Measure | Combination 1 (thin) | Combination 2 (library-backed) |
+|---|---|---|
+| Flow steps 1–3 (read, practise, page turn mid-practice) | pass: `page_turned`, the untouched candidates stay owned and settle `not_practised` at the cycle's close | pass, same rows |
+| Step 4: stop / deadline / lease loss inside `listen`, event → activity row final | 16 / 16 / 16 ms; nothing spoken after `lease_lost` | 15 / 16 / 15 ms; same |
+| Stop inside a hung Brain call → session end | 12 ms | 13 ms |
+| Step 5: `TerminateProcess` in the Brain call, between the effects and the activity row, during practice; restart with Leafi's recovery | no duplicate rows, nothing left `running`, cycle closed, one "continue from page A?" at each point | same with Leafi's recovery; **Burr's own resume** (`initialize_from(resume_at_next_action=True)`) restarts at `run` after the last two kill points and re-runs the killed activity: **1 duplicated ledger row** after the effects-commit kill (0 after the practice kill only because recovery had already settled the candidates) |
+| Step 6: autonomy 2, silence then "skip" | two asks, the skip consumed once, nothing started | same |
+| Retries: 503 then 200 | 2 requests | 2 requests |
+| A 400 | 1 request | 1 request |
+| Primary 500 × 4, then a second tier | primary retried to 3 requests, then 1 to the second tier | **primary 1 request**, then the second tier: `FallbackModel` falls back on the first error, so a retry owner can only sit around the whole chain |
+| Budget 0.3 s left, a 503 (P-B2) | gives up at once: 1 request, 15 ms | **2 requests, 421 ms**: stamina's `timeout` is relative and its sleep plus the next attempt overran the budget |
+| Added latency per decision, 200 mocked decisions (persist + dispatch + LLM layer, mock model instant) p50 / p95 | 10.6 / 14.0 ms (mostly two SQLite commits) | 25.6 / 30.1 ms (+ Burr's state write after each action) |
+| LLM layer per call vs the raw SDK call, n = 100, p50 / p95 | 0.28 / 0.47 vs 0.28 / 0.48 ms | 2.15 / 3.64 vs 0.36 / 1.03 ms |
+| Privacy: canary in any request body; netguard installed before importing the combination | none; import clean | none; import clean. pydantic-ai prints an advertising banner on stderr unless `PYDANTIC_AI_NO_BANNER=1`; stamina logs `stamina.retry_scheduled` through `logging` by default |
+| Harness code (non-blank, non-comment, non-docstring lines of the combination file) | 111 | 107 |
+| New packages / installed size | 1 (tenacity) / 95 KB | 9 (tenacity, stamina, apache-burr, aiosqlite, pydantic-ai-slim, pydantic-graph, genai-prices, griffelib, logfire-api) / 15.8 MB |
+
+Not measured: `SQLITE_BUSY` under a supervisor write lock (Burr's aiosqlite connection is a second writer into `leafi.db`, *inferred* risk), Ollama/magpie first-try validity (§5 test 3; needs the local models), streaming time to first token (§5 test 5).
+
+Reading, by §7's exit criterion (Combination 2 replaces Combination 1 in a mechanism only where it removes more hand-written code than it adds glue, without failing any row):
+
+- **Retries: Combination 1.** stamina removes the ~25-line loop but fails P-B2 (it overran a 0.3 s budget by 121 ms with a second request); the loop with tenacity's waits gave up at once.
+- **Orchestration: Combination 1.** Burr replaced a 15-line `while` loop with about 35 lines of actions, transitions and builder, doubled the added latency, and its persisted state resumes into the killed side-effecting activity, the failure §4 predicted; with Leafi's recovery doing the real work, its checkpoint table is a second source of truth.
+- **LLM calls: Combination 1, by judgement rather than the line count.** pydantic-ai saved about 13 lines (the re-ask and the fallback loop) and adds 2 ms per call, which is negligible beside a model call, and failed no row. Against it: 8 packages and 15.8 MB for those 13 lines, a fallback that cannot retry the primary first (ADR-0017 §5's cascade needs per-tier retries, budgets and `degraded`, which M7's `brain_call` writes either way), and a stderr banner. Re-evaluate if the Brain grows agentic tool loops (§5's runner-up note still holds).
+- **Deadlines:** anyio scopes as specified; the probes are the first Confirmation tests.
+
+
 
 - **Unverified installs.** That the `sqlite-vec` (LangGraph saver) and DBOS wheels install and run on Windows.
 - **Unverified behaviour:**
