@@ -5,7 +5,7 @@ date: 2026-10-21
 revised: 2026-10-22 (v4: the independent codex and code-plan-review rounds on v3 and the owner's answers — session length and end timing configurable for every case, evaluation randomised per session, mastery producers, quiz answers under decision 6, routing tables per household; v3: configurable default policy with per-step code/Brain content, exploration, configurable mastery, parent features deferred; earlier rounds, see Reviews)
 supersedes: 0013 (session rules only, see §8)
 amends: 0003, 0013 (Difficulties and the first-words prompt: §8.6, §6.1)
-revised-after-acceptance: 2026-10-22 (pointers into ADR-0013 v2 after its round-1 and round-2 reviews: §3.4 `item_said`, §6.1, §8, §8.1, §8.2, §8.5)
+revised-after-acceptance: 2026-10-22 (pointers into ADR-0013 v2 after its round-1 and round-2 reviews: §3.4 `item_said`, §6.1, §8, §8.1, §8.2, §8.5; §6.2's frequency source CYP-LEX instead of SUBTLEX-UK, owner decision)
 ---
 
 # The Brain leads the study session; the study harness executes, measures and limits it
@@ -298,7 +298,7 @@ Every default is a starting value; *untuned* ones have no measured or published 
 
 ### 6.2 Items, what is new, and mastery
 
-`knowledge_items` are per learner and gain the status `ignored`. New = no row for this learner, or `new`. Rank: one-unknown sentences first (AnkiMorphs), level band above the learner's (Cambridge YLE, SUBTLEX-UK children's frequency), then frequency.
+`knowledge_items` are per learner and gain the status `ignored`. New = no row for this learner, or `new`. Rank: one-unknown sentences first (AnkiMorphs), level band above the learner's (Cambridge YLE level when its official list has been downloaded and the lemma is on it, else CYP-LEX children's-book frequency, ages 7–9 then 10–12; owner decision 2026-10-22, research `2026-10-22-word-list.md`), then frequency.
 
 **Transitions** (`item_status.apply(event)` is the only code that changes status): `new → learning` on the item's first retrieval event of any outcome, or when its card is first acknowledged by Anki; `learning → known` and `known → lapsed` by `mastery.mode`; `* → ignored` by the Brain's request or the learner. **Retrieval-event writers**: `teach_items`, `recall_items`, `quiz` (per cited item), `review_anki` (per reviewed card's item).
 
