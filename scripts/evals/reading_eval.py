@@ -138,6 +138,11 @@ def main() -> int:
     args = ap.parse_args()
     settings = Settings()
     out = run(settings, args.max_age, args.limit)
+    from leafi.study import alignment
+
+    # the untuned thresholds this run used, so runs can be compared lever by lever (TD-28)
+    out["thresholds"] = {k: getattr(alignment, k) for k in (
+        "ANCHOR_CONF", "LOW_CONF", "RETRY_MIN_CONF", "TRIGGER_PER_WORD", "CEILING_PER_WORD", "PAGE_MARGIN")}
     print(json.dumps(out, indent=2))
     res = Path(settings.data_dir) / "evals" / "results"
     res.mkdir(parents=True, exist_ok=True)

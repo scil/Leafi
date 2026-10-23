@@ -53,6 +53,27 @@ Reading of the numbers:
 - **Unaligned utterances (11–15 %) are not false alarms but lost tracking**: short sentences read with several substitutions fall under the acceptance rules or the ceiling. They also hide words from the false-alarm count, so the true rate under a looser acceptance would be higher.
 - **The miss rate (~80 %) mostly measures a different task**: a word scored 0–3 for pronunciation is often still recognised as the target word by an ASR whose language model expects it, so `align` sees a match. This set cannot say much about misreadings; the Storiza corpus or the owner's set must.
 
+### 5.1 Second run: `LOW_CONF` 0.5 → 0.9 (2026-10-23, at da39206; one lever changed)
+
+Same set, same `LocalWordInfo` versions, every other threshold unchanged (`ANCHOR_CONF` 0.8, `RETRY_MIN_CONF` 0.5, trigger 5, ceiling 7, page margin 10, now recorded in the result file); 680 s; `data/evals/results/reading-eval-speechocean762-20261023T065559Z.json` against `…T053452Z.json`.
+
+| | all: `LOW_CONF` 0.5 | all: 0.9 | children ≤ 12: 0.5 | children ≤ 12: 0.9 |
+|---|---|---|---|---|
+| false alarms on correct content words | 963 (7.4 %) | 337 (**2.6 %**) | 539 (9.9 %) | 159 (**2.9 %**) |
+| false alarms: substitutions / deletions | 918 / 45 | 292 / 45 | 525 / 14 | 145 / 14 |
+| errors caught (hits) of 2,001 / 283 | 393 | 127 (**−68 %**) | 60 | 20 (**−67 %**) |
+| miss rate | 80.4 % | 93.7 % | 78.8 % | 92.9 % |
+| share of candidates that are real errors (hits ÷ (hits + false alarms)) | 29.0 % | 27.4 % | 10.0 % | 11.2 % |
+| unaligned utterances | 562 (11.2 %) | 562 (11.2 %) | 306 (14.7 %) | 306 (14.7 %) |
+| ASR confidence of remaining false alarms p10 / p50 / p90 | 0.581 / 0.823 / 0.992 | 0.911 / 0.976 / 0.999 | | |
+
+Reading of the numbers:
+- **The budget is now met** (2.6 %, children 2.9 % ≤ 5 %).
+- **But the threshold did not separate errors from false alarms**: it removed about two thirds of each (false alarms −65 %, hits −68 %), so the share of candidates that are real errors stayed where it was (29 % → 27 %; children 10 % → 11 %). On this set, the ASR's confidence is as low on a word the experts scored 0–3 as on an accented word they accepted, so confidence alone buys the budget by practising fewer words, not by practising better ones.
+- **Deletions are untouched** (45 before and after): `LOW_CONF` applies only to heard substitutions.
+- **Unaligned utterances are unchanged**, as expected: `LOW_CONF` acts after acceptance.
+- **Caveat on hits**: speechocean762's errors are mostly mispronunciations; a lower hit count here may matter less for real misreadings (substituted words), which only the Storiza corpus or the owner's set can show.
+
 ## 6. Sources
 
 | id | tier | title / url | source-date | checked | supports |
