@@ -80,6 +80,8 @@ def test_doctor_reports_every_service(settings):
     out = doctor.report(settings)
     for label in ("asr", "tts en", "tts zh", "ocr", "pronunciation", "brain", "book lookup"):
         assert label in out
+    assert out.count("    for: ") == len(doctor.SERVICES) + 2  # every row says what it is for (+ sqlite, wordlists)
+    assert set(doctor.PURPOSE) == {label for label, _, _ in doctor.SERVICES} | {"sqlite", "wordlists"}
     assert "ANTHROPIC_API_KEY empty" in out
     assert "deferred" in out
     assert "REDACT_TERMS is empty" in out

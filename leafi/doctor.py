@@ -34,7 +34,24 @@ SERVICES: list[tuple[str, str, str]] = [
     ("book lookup", "leafi.services.catalog", "book_lookup"),
 ]
 
-KOKORO_RELEASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
+# What each row is for and whom it serves, printed under it so the owner can judge a missing item.
+PURPOSE = {
+    "asr": "turns the learner's reading aloud into words for alignment; serves the learner's reading session",
+    "vad": "finds where speech starts and ends so the ASR gets whole utterances; serves the learner's session",
+    "tts en": "Leafi's English voice: models a word in practice, reads aloud; serves the learner",
+    "tts zh": "Leafi's Chinese voice for explanations (edge: the text goes to Microsoft); serves the learner",
+    "ocr": "reads the page text from the camera image, so Leafi knows what should be read; serves the learner",
+    "ocr second opinion": "a second OCR on hard pages (not built yet); would serve the learner",
+    "pronunciation": "scores a practised word's sound, only with PRON_AUTO_JUDGE; serves the learner's practice",
+    "brain": "Claude: word explanations and comprehension questions, text only; serves the learner",
+    "brain local fallback": "a local Ollama model used when Claude is unreachable; serves the learner",
+    "book lookup": "finds a book's title from its ISBN on Open Library; serves the owner adding books",
+    "sqlite": "the database of sessions, miscues and progress (data/leafi.db); serves the owner and every session",
+    "wordlists": ("tells a misread real word (a candidate error to practise) from a garbled one (only observed); "
+                  "later ranks new words by level (M7); serves the learner's error detection"),
+}
+
+KOKORO_RELEASE ="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 
 
 def rows(settings: Settings) -> Iterator[tuple[str, str, str, str]]:
@@ -106,10 +123,15 @@ def wordlist_line(settings: Settings) -> str:
 
 def report(settings: Settings) -> str:
     lines = [f"{'service':<22}{'backend':<16}{'state':<16}detail"]
+
+    def add(label: str, line: str) -> None:
+        lines.append(line)
+        lines.append(f"{'':<4}for: {PURPOSE[label]}")
+
     for label, backend, state, detail in rows(settings):
-        lines.append(f"{label:<22}{backend:<16}{state:<16}{detail}")
-    lines.append(sqlite_line(settings))
-    lines.append(wordlist_line(settings))
+        add(label, f"{label:<22}{backend:<16}{state:<16}{detail}")
+    add("sqlite", sqlite_line(settings))
+    add("wordlists", wordlist_line(settings))
     if not settings.redact_list():
         lines.append("WARNING: REDACT_TERMS is empty; set it with: python -m leafi setup --redact \"<name>,<school>\"")
     if settings.pron_auto_judge:
