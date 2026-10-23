@@ -281,8 +281,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("devices", help="print the parsed devices.yml and the Hub").set_defaults(fn=cmd_devices)
     d = sub.add_parser("doctor", help="backend and model status")
     d.add_argument("--download", action="store_true", help="fetch the missing models under MODELS_DIR")
-    d.add_argument("--only", nargs="*", choices=["asr", "vad", "tts en", "pronunciation", "ocr"],
-                   help="restrict --download to these services")
+    d.add_argument("--only", nargs="*", choices=["asr", "vad", "tts en", "pronunciation", "ocr", "speechocean762"],
+                   help="restrict --download to these services; evaluation data (speechocean762) only when named")
     d.set_defaults(fn=cmd_doctor)
     s = sub.add_parser("study", help="run a reading session")
     s.add_argument("--text", action="store_true", help="typed input on the console, no hardware")

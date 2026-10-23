@@ -30,6 +30,27 @@ Checked: 2026-10-22. Method: `tiered-research` (T1 = the dataset's own site, its
 3. Storiza: re-check access in M10; no work until data exists.
 4. The owner's labelled set: after (2), on the PC headset, silent.
 
+## 5. First results (2026-10-22, ADR-0013 v2 at 8bc2fe9)
+
+`python scripts/evals/reading_eval.py --set speechocean762`: all 5,000 utterances, Parakeet TDT 0.6B v2 int8 on CPU, `LocalWordInfo` without word lists (lemminflect's dictionary for `is_word`, espeak-ng phones with homographs, lemminflect lemmas + overrides-1); 646 s. Labels: ≥ 7 correct, 0–3 error, 4–6 excluded.
+
+| | all speakers | children ≤ 12 |
+|---|---|---|
+| utterances | 5,000 | 2,080 |
+| unaligned utterances | 562 (11.2 %) | 306 (14.7 %) |
+| correct content words | 13,092 | 5,464 |
+| false alarms on them | 963 (**7.4 %**) | 539 (**9.9 %**) |
+| false alarms that are substitutions / deletions | 918 / 45 | 525 / 14 |
+| error words (scored 0–3) | 2,001 | 283 |
+| caught (hits) | 393 (miss rate 80.4 %) | 60 (miss rate 78.8 %) |
+| ASR confidence, correct words p10 / p50 / p90 | 0.816 / 0.998 / 1.0 | 0.775 / 0.996 / 1.0 |
+| ASR confidence, false-alarm words p10 / p50 / p90 | 0.581 / 0.823 / 0.992 | 0.566 / 0.805 / 0.989 |
+
+Reading of the numbers:
+- **The budget (≤ 5 %) is breached** (TD-28). The false alarms are almost all substitutions the ASR heard confidently enough to pass `LOW_CONF` (0.5): accented vowels the experts accepted (see→say, where→were, know→now, all→are, live→leave, world→word) and names the ASR does not know (Layla→Lila, Jim→James, Mary→Marie, Tim→team). Their confidences sit well below correct words' (median 0.82 vs 0.998), so `LOW_CONF` is the first lever; its effect is measured, not assumed.
+- **Unaligned utterances (11–15 %) are not false alarms but lost tracking**: short sentences read with several substitutions fall under the acceptance rules or the ceiling. They also hide words from the false-alarm count, so the true rate under a looser acceptance would be higher.
+- **The miss rate (~80 %) mostly measures a different task**: a word scored 0–3 for pronunciation is often still recognised as the target word by an ASR whose language model expects it, so `align` sees a match. This set cannot say much about misreadings; the Storiza corpus or the owner's set must.
+
 ## 4. Sources
 
 | id | tier | title / url | source-date | checked | supports |

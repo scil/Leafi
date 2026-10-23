@@ -20,6 +20,7 @@
 | Telegram (operational alerts, ADR-0016) | one fixed catalog sentence (`leafi/core/alerts.py::render`), chosen by codes; never a device name, IP, stream name, exception text or learner data | `leafi/ops/alerts.py::deliver` → `NotifierDevice.send` | `TELEGRAM_*` |
 | Xiaomi cloud | P2P keys, by go2rtc, outside Leafi | — | — |
 | Model downloads | only `python -m leafi doctor --download` | `leafi/doctor.py` | explicit |
+| Evaluation data downloads (OpenSLR SLR101 speechocean762, public CC BY 4.0 audio) | a `GET` of a fixed archive URL; nothing sent | `leafi/doctor.py::download_speechocean762` | explicit, only `doctor --download --only speechocean762` |
 
 Everything else stays on the LAN. OpenPronounce is configured with an offline reference voice (Kokoro) and pre-provisioned checkpoints; gTTS is off.
 

@@ -194,14 +194,51 @@ def _probe_image() -> bytes:
     return buf.getvalue()
 
 
+SPEECHOCEAN762 = "https://www.openslr.org/resources/101/speechocean762.tar.gz"  # SLR101, CC BY 4.0
+
+
+def eval_dir(settings: Settings, name: str) -> Path:
+    return Path(settings.data_dir) / "evals" / name
+
+
+def download_speechocean762(settings: Settings) -> str:
+    """Public evaluation data for ADR-0013's false-alarm budget (plan M4.4a): 520 MB, CC BY 4.0 (Zhang et al.,
+    Interspeech 2021). Learner-free public audio, stored under data/ (gitignored)."""
+    d = eval_dir(settings, "speechocean762")
+    if (d / "resource" / "scores.json").exists():
+        return "present"
+    d.parent.mkdir(parents=True, exist_ok=True)
+    archive = d.parent / "speechocean762.tar.gz"
+    if not archive.exists():
+        _fetch(SPEECHOCEAN762, archive)
+    root = d.resolve()
+    with tarfile.open(archive, "r:gz") as tar:
+        for m in tar.getmembers():
+            name = Path(m.name)
+            rel = Path(*name.parts[1:]) if name.parts and name.parts[0] == "speechocean762" else name
+            target = (d / rel).resolve()
+            if not (m.isfile() or m.isdir()) or not str(target).startswith(str(root)):
+                continue  # links, devices and paths leaving the folder are never extracted
+            if m.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tar.extractfile(m) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1 << 20)
+    archive.unlink()
+    return "downloaded"
+
+
 DOWNLOADS = [("asr", download_asr), ("vad", download_vad), ("tts en", download_tts),
              ("pronunciation", download_pronunciation), ("ocr", download_ocr)]
+# Evaluation data: fetched only when named in `--only`, never by a plain `--download`.
+OPTIONAL_DOWNLOADS = [("speechocean762", download_speechocean762)]
 
 
 def download(settings: Settings, only: set[str] | None = None) -> list[tuple[str, str]]:
     out = []
-    for label, fn in DOWNLOADS:
-        if only and label not in only:
+    for label, fn in DOWNLOADS + OPTIONAL_DOWNLOADS:
+        if (only and label not in only) or (not only and (label, fn) in OPTIONAL_DOWNLOADS):
             continue
         try:
             out.append((label, fn(settings)))
