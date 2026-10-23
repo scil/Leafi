@@ -124,6 +124,7 @@ async def run_session(s: Session, brain: Brain, decision_s: float = 5.0) -> str:
                     while True:
                         checkpoint(s)
                         deadline = min(time.monotonic() + decision_s, s.hard_deadline)
+                        d = None  # move_on_after skips the assignment when the decision times out
                         with anyio.move_on_after(deadline - time.monotonic()):
                             d = await brain.decide(observation(s), deadline)
                         kind, by = (d.activity, "brain") if d and d.activity in MENU else ("end", "default")
