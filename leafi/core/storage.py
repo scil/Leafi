@@ -635,6 +635,21 @@ def backup_file(path: Path | str, dest: Path | str) -> Path:
         lock.release()
 
 
+BACKUPS_KEPT = 3  # owner decision 2026-10-23: the newest three, migration backups included
+
+
+def prune_backups(folder: Path, keep: int = BACKUPS_KEPT) -> list[Path]:
+    """Delete every `leafi-*.db` in `folder` but the `keep` newest by modification time; returns the deleted.
+    Backups keep forgotten data (ADR-0019 §8), so pruning is also how a `forget` reaches them."""
+    if keep < 1:
+        raise ValueError("keep at least one backup")
+    found = sorted(folder.glob("leafi-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    gone = found[keep:]
+    for p in gone:
+        p.unlink()
+    return gone
+
+
 def _truncate(conn: sqlite3.Connection) -> bool:
     if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
         return True

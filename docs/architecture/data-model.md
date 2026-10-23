@@ -73,3 +73,4 @@ As built (plan M3, Decision log 2026-10-23): a table with several texts has one 
 | `utterances.text`, `observations`, `miscues`, `practices` | kept (learning history); the only deletions are `python -m leafi forget --session <id>`, `--book <id>` (ADR-0010 §9) and `--learner <id> --yes` (ADR-0018 §1) |
 | `data/evals/` transcripts | opt-in (`EVAL_TRANSCRIPTS=true`), 30 days |
 | logs | no raw utterance text at INFO; DEBUG only when `LEAFI_DEBUG_TEXT=1` |
+| `data/backups/leafi-*.db` | until the owner prunes: `python -m leafi backup --prune` (console 清除旧备份) keeps the newest 3 by time, migration backups included (owner decision 2026-10-23); `forget` never edits a backup and says so |

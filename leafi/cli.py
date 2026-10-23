@@ -147,9 +147,20 @@ def cmd_backup(args: argparse.Namespace) -> int:
     Works at any schema version, so it runs before `migrate`."""
     import datetime as dt
 
-    from leafi.core.storage import backup_file
+    from leafi.core.storage import BACKUPS_KEPT, backup_file, prune_backups
 
     settings = _settings()
+    if args.prune:
+        keep = BACKUPS_KEPT if args.keep is None else args.keep
+        if keep < 1:
+            print("--keep must be at least 1")
+            return 2
+        folder = settings.data_dir / "backups"
+        gone = prune_backups(folder, keep) if folder.is_dir() else []
+        for p in gone:
+            print(f"deleted {p.name}")
+        print(f"kept the newest {keep} backup(s) in {folder}; deleted {len(gone)}")
+        return 0
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     dest = args.to or settings.data_dir / "backups" / f"leafi-{stamp}.db"
     if not settings.db_path.exists():
@@ -387,6 +398,9 @@ def main(argv: list[str] | None = None) -> int:
     f.set_defaults(fn=cmd_forget)
     b = sub.add_parser("backup", help="consistent copy of data/leafi.db (SQLite backup API, ADR-0019)")
     b.add_argument("--to", type=Path, help="destination file (default data/backups/leafi-<UTC time>.db)")
+    b.add_argument("--prune", action="store_true",
+                   help="instead of backing up, delete all but the newest --keep backups in data/backups")
+    b.add_argument("--keep", type=int, help="backups --prune keeps (default storage.BACKUPS_KEPT, 3)")
     b.set_defaults(fn=cmd_backup)
     m = sub.add_parser("migrate", help="bring data/leafi.db to the latest schema; every other Leafi process "
                        "closed (ADR-0018 §7.2)")

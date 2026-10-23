@@ -178,6 +178,8 @@ Perceived-moment budgets and the output reserve measured per Mouth (PC and camer
 - 2026-10-23 M3 v1 Anki path kept until M6's `add_cards`: `upsert_item` still queues an `add` and `_queue_update_if_pushed` an `update` (ADR-0017 §7.2 removes both with `add_cards`), each row with card provenance `derived_from_learner` of its learner, since the fields are built from the explanations at push time. Eases 1–4 are accepted; until `item_status.apply` (M7) a hard (2) neither promotes nor lapses an item.
 - 2026-10-23 M3 `forget --learner` prints what would go and needs `--yes`; `--delete-anki-deck` is the separate deck confirmation; cards already in Anki are listed by note id. The TTS-cache sidecars (M5) and `data/evals/decisions/` (M7) join its stores when they exist.
 
+- 2026-10-23 Owner decision: backups are pruned by hand, keeping the newest 3 by modification time, the migration backups (`leafi-v4-*.db`) treated like any other: `python -m leafi backup --prune [--keep N]`, console buttons 备份数据库 and 清除旧备份 (red, asks first).
+
 - 2026-10-22 Owner decision: `LOW_CONF` 0.5 → 0.9 now, evaluated later (TD-28). A substitution heard below 0.9 confidence is an observation, not a candidate. Chosen from the first speechocean762 run (false-alarm words median confidence 0.82, correct words 0.998); its cost in caught misreadings is unmeasured.
 
 ## Outcomes & retrospective

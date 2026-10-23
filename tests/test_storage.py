@@ -295,6 +295,28 @@ def test_backup_command_writes_a_timestamped_copy(tmp_path, settings, monkeypatc
     assert "1 backup(s)" in capsys.readouterr().out
 
 
+def test_prune_keeps_the_newest_backups_whatever_their_prefix(settings, monkeypatch, capsys):
+    """Owner decision 2026-10-23: the newest three by time, migration (`leafi-v4-…`) backups included."""
+    import os
+
+    from leafi import cli
+
+    monkeypatch.setattr(cli, "_settings", lambda: settings)
+    folder = settings.data_dir / "backups"
+    folder.mkdir(parents=True)
+    names = ["leafi-a.db", "leafi-v4-b.db", "leafi-c-pre-wal.db", "leafi-d.db", "leafi-e.db"]
+    for age, name in enumerate(reversed(names)):  # leafi-e.db newest
+        (folder / name).write_bytes(b"x")
+        os.utime(folder / name, (1_000_000 - age * 10, 1_000_000 - age * 10))
+    (folder / "notes.txt").write_text("not a backup")
+    assert cli.main(["backup", "--prune"]) == 0
+    assert sorted(p.name for p in folder.iterdir()) == ["leafi-c-pre-wal.db", "leafi-d.db", "leafi-e.db",
+                                                         "notes.txt"]
+    assert "deleted 2" in capsys.readouterr().out
+    assert cli.main(["backup", "--prune", "--keep", "0"]) == 2
+    assert len(list(folder.glob("leafi-*.db"))) == 3
+
+
 def test_leafi_miscue_status_and_reason_enums_are_enforced(tmp_path):
     import sqlite3
 
