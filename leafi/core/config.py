@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     pages_retain_days: int = 7
     review_known_interval_days: int = 21
     review_max_cards: int = 5
+    guest_keep_days: int = 7  # ADR-0018 §1: an unconfirmed guest's session is kept this long; 0 = delete at wrap
 
     # ---- Anki ----
     anki_url: str = "http://127.0.0.1:8765"

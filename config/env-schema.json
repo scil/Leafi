@@ -1936,6 +1936,20 @@
       },
       "help": "`learning→known` interval; cards per review turn"
     },
+    "GUEST_KEEP_DAYS": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "7",
+          "empty": "error"
+        }
+      },
+      "help": "days an unconfirmed guest's session is kept before it is forgotten; 0-30, 0 = delete at wrap (ADR-0018 §1)"
+    },
     "SENTENCE_PAUSE_S": {
       "group": "study-ops",
       "type": "float",

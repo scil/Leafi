@@ -1,0 +1,289 @@
+"""The session loop (ADR-0017 §2; the pseudocode is the rule, this follows it step by step).
+
+Lease first; recovery and the guest sweep; the session starts owned by a fresh guest; inside one cancel scope
+with no deadline and one task group (the deadline watcher, the input readers): identify, assign the arm, identify
+the book, then boundaries — menu, sequence (the default policy until M7 brings a Brain), negotiate, run — with
+continuations after a page turn. `finalize` does local work only; `deliver` and `extract_notes` run shielded with
+their own limits; the lease is released whatever happened.
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+import time
+from dataclasses import dataclass, field
+
+import anyio
+
+from leafi.core import learner_store
+from leafi.core import lease as speech_lease
+from leafi.core.storage import Store, dumps, now_iso
+from leafi.study import books, controls, knowledge, lexicon, records
+from leafi.study.harness import guests, policy, rows
+from leafi.study.harness import settings as hs
+from leafi.study.harness.activities import KINDS
+from leafi.study.harness.identify import identify
+from leafi.study.harness.inputs import Inputs, StaleInput
+from leafi.study.harness.latch import Latch, Terminal
+from leafi.study.harness.ledger import Ledger
+from leafi.study.harness.menu import allowed
+from leafi.study.harness.negotiate import REOBSERVE, negotiate
+from leafi.study.harness.state import Activity, Boundary, Session
+from leafi.study.harness.status import TERMINAL, ActivityStatus
+from leafi.study.harness.world import PageRequest, World
+
+log = logging.getLogger("leafi.harness.loop")
+
+DELIVER_S, EXTRACT_S = 10.0, 20.0
+
+
+@dataclass
+class Env:
+    """What a session is built from (the runner fills it from the app's devices and services)."""
+
+    store: Store
+    hub: object
+    settings: object  # the household Settings
+    listener: object | None = None
+    control_source: object | None = None
+    page_tracker: object | None = None
+    ocr: object | None = None
+    catalog: object | None = None
+    anki: object | None = None
+    pron: object | None = None
+    word_info: object | None = None
+    book_title: str | None = None
+    page_text: str | None = None
+    page_number: int | None = None
+    learner: str | None = None  # `study --learner NAME`
+    brain: object | None = None  # M7
+    rng: random.Random = field(default_factory=random.Random)
+    on_built: object | None = None  # tests: called with (session, world) once built
+
+
+def assign_arm(s: Session, has_brain: bool, rng: random.Random) -> None:
+    """§9: per session, after identification. Without a Brain every session is the default policy's."""
+    if s.settings["policy.sequencer"] == "brain" and has_brain:
+        share = float(s.settings["policy.explore_share"])
+        s.arm = "default" if rng.random() < share else "brain"
+        s.propensity = share if s.arm == "default" else 1.0 - share
+    else:
+        s.arm, s.propensity = "default", 1.0
+
+
+def set_deadlines(s: Session) -> None:
+    """§1 / §6.3: soft = start + session length; hard = soft + grace (`hard` end mode: no grace)."""
+    soft = time.monotonic() + 60.0 * s.settings.session_max_min()
+    grace = 0 if s.settings["session.end_mode"] == "hard" else int(s.settings["session.grace_min"])
+    s.soft_deadline = soft
+    s.latch.hard_deadline = soft + 60.0 * grace
+
+
+def continuation_allowed(s: Session) -> bool:
+    return not s.past_soft_deadline() or s.settings["session.end_mode"] == "finish_activity"
+
+
+async def identify_book(s: Session, w: World, env: Env) -> None:
+    io = w.inputs
+    title, isbn = env.book_title, None
+    if not title and env.ocr is not None and env.hub.eye() is not None:
+        guess = await books.identify(env.hub.eye(), env.ocr, env.catalog)
+        if guess.title:
+            await io.line("confirm_title", title=guess.title)
+            u = await io.listen(env.settings.study_idle_s)
+            s.checkpoint()
+            ctl = controls.parse(u.text) if u is not None else None
+            if ctl is not None and ctl.kind == "yes":
+                title, isbn = guess.title, guess.isbn
+    while not title:
+        await io.line("ask_title")
+        u = await io.listen(env.settings.study_idle_s)
+        s.checkpoint()
+        if u is None:
+            s.latch.terminate("idle_session")
+            s.checkpoint()
+        title = u.text.strip() if controls.parse(u.text) is None else None
+    w.book_id = books.find_or_create(s.store, title, isbn, language=env.settings.study_language)
+    s.store.execute("UPDATE reading_sessions SET book_id=? WHERE id=?", (w.book_id, s.session_id))
+    if env.page_text is not None:
+        w.pending = PageRequest(env.page_number, env.page_text)
+        return
+    if env.page_number is not None:
+        w.pending = PageRequest(env.page_number, None)
+    prev = records.resumable_read(s.store, s.learner_id, w.book_id)
+    if prev is None:
+        return
+    printed = s.store.one("SELECT printed_number FROM pages WHERE id=?", (prev["page_id"],))["printed_number"]
+    await io.line("continue_offer", page=printed or prev["page_id"])
+    u = await io.listen(env.settings.study_idle_s)
+    s.checkpoint()
+    ctl = controls.parse(u.text) if u is not None else None
+    if ctl is not None and ctl.kind == "yes":
+        w.page_id, w.pending = prev["page_id"], None  # read_listen opens it with range `rest` (§8.5)
+
+
+async def run_activity(s: Session, w: World, act: Activity, *, continuation: bool = False) -> ActivityStatus:
+    """Start and finish rows inside; a cancelled activity ends with the latch's mapped status, never `running`."""
+    params = dict(act.params) | ({"continuation": True} if continuation else {})
+    s.latch.epoch.bump()  # activity start
+    aid = rows.start_activity(
+        s.store, session_id=s.session_id, kind=act.kind, cycle_id=s.cycle_id, params=params,
+        continuation=continuation, arm=s.arm, propensity=s.propensity,
+        policy_version=policy.policy_version(policy.order_of(s)), decided_by=act.decided_by,
+        override=act.override or s.boundary.override, autonomy=s.autonomy, epoch=s.latch.epoch.turn_id)
+    status, outcome = ActivityStatus.INTERNAL_ERROR, None
+    try:
+        status, outcome = await KINDS[act.kind](w, Activity(act.kind, params, act.decided_by, act.content,
+                                                            act.content_owner, act.override), aid)
+    except StaleInput:
+        status = ActivityStatus.ABORTED_STALE
+    except (Terminal, anyio.get_cancelled_exc_class()):
+        status = s.latch.status()
+        raise
+    except Exception:
+        s.latch.terminate("internal_error")
+        raise
+    finally:
+        rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id)
+        s.latch.epoch.bump()  # activity end
+        w.first_boundary = False
+    return ActivityStatus(status)
+
+
+def finalize(s: Session, w: World, env: Env) -> dict:
+    """Local work in one transaction: the open cycle closes, the summary counts, `ended_at`; then the guest
+    end-state rule (ADR-0018 §1). A failure leaves the work to startup recovery."""
+    store = s.store
+    reason = s.latch.terminal or "end"
+    with store.transaction():
+        if s.cycle_id is not None:
+            rows.close_cycle(store, s.cycle_id, "stop" if reason == "stop" else "wrap")
+        w.end_page_read()
+        summ = records.summary(store, s.session_id)
+        summ.update(end=reason, arm=s.arm, interrupted=False)
+        store.execute("UPDATE reading_sessions SET ended_at=?, summary=? WHERE id=?",
+                      (now_iso(), dumps(summ), s.session_id))
+    if learner_store.get(store, s.learner_id)["kind"] == "learner":
+        knowledge.recompute_difficulties(store, s.learner_id)
+    if w.book_id is not None:
+        lexicon.rebuild(store, w.book_id)
+    summ["guest"] = guests.finalize_guest(store, s.session_id, env.settings.guest_keep_days)
+    return summ
+
+
+async def deliver(s: Session, w: World, env: Env, summ: dict) -> None:
+    """The closing line only while the lease is held; the Anki outbox; each step's outcome into the summary."""
+    io = w.inputs
+    if s.latch.terminal == "lease_lost":
+        await io.line("lease_lost")  # shown on Faces only: the lease is gone
+        summ["closing_line"] = "skipped"
+    else:
+        await io.line("idle" if s.latch.terminal == "idle_session" else "bye")
+        summ["closing_line"] = "done"
+    summ["anki_synced"] = "skipped"
+    if env.anki is not None:
+        from leafi.study import anki
+
+        try:
+            rep = await anki.sync_outbox(s.store, env.anki, env.settings.anki_deck, env.settings.anki_model)
+            summ["anki_synced"], summ["anki_pending"] = "done", rep.pending
+        except Exception:
+            log.warning("anki sync failed; outbox kept", exc_info=True)
+            summ["anki_synced"] = "failed"
+
+
+async def extract_notes(s: Session, w: World, env: Env, summ: dict) -> None:
+    """§7.1 post-session learner notes: M7 (no Brain yet); skipped for guests."""
+    summ["notes"] = "skipped"
+
+
+async def run_session(env: Env) -> int:
+    store, cfg = env.store, env.settings
+    lease = speech_lease.acquire(cfg.lease_path, cfg.lease_ttl_s)  # refused → LeaseHeld to the caller
+    inputs = None
+    try:
+        rows.recover(store)
+        guests.normalise_orphans(store, cfg.guest_keep_days)
+        guests.sweep(store)
+        guest = guests.new_guest(store)
+        listener = env.listener or env.hub.listener()
+        mode = "voice" if getattr(listener, "is_voice", False) else "text"
+        sid = learner_store.insert(store, "reading_sessions", guest, started_at=now_iso(), mode=mode,
+                                   devices=dumps(sorted(set(env.hub.mouths) | set(env.hub.faces))),
+                                   lease_token=lease.token)
+        latch = Latch()
+        latch.epoch.session_id, latch.epoch.learner_id = sid, guest
+        lst = hs.load(store, guest)
+        inputs = Inputs(hub=env.hub, latch=latch, store=store, listener=listener, control_source=env.control_source,
+                        page_tracker=env.page_tracker, page_poll_s=cfg.page_poll_s, lease=lease)
+        s = Session(store=store, latch=latch, ledger=Ledger(store, sid, lst.limits()), settings=lst, talk=inputs,
+                    session_id=sid, learner_id=guest)
+        w = World(s=s, inputs=inputs, settings=cfg, word_info=env.word_info, anki=env.anki, pron=env.pron,
+                  page_tracker=env.page_tracker)
+        s.facts_fn = w.facts
+        latch.versions = lambda: (hs.version(store, s.learner_id), 0)
+        latch.on_settings_change = lambda: _reload(s)
+        if env.on_built is not None:
+            env.on_built(s, w)
+        try:
+            with anyio.CancelScope() as latch.scope:
+                async with anyio.create_task_group() as latch.tg:
+                    inputs.start()
+                    latch.spawn(latch.deadline_watcher)
+                    try:
+                        await _body(s, w, env)
+                    finally:
+                        latch.tg.cancel_scope.cancel()
+        except* Terminal:
+            pass
+        except* Exception as eg:
+            log.error("session failed", exc_info=eg)
+            latch.terminate("internal_error")
+        summ = finalize(s, w, env)
+        for step, limit in ((deliver, DELIVER_S), (extract_notes, EXTRACT_S)):
+            try:
+                with anyio.move_on_after(limit, shield=True):
+                    await step(s, w, env, summ)
+            except Exception:
+                log.exception("post-session step failed")  # one step's failure never skips the next
+        store.execute("UPDATE reading_sessions SET summary=? WHERE id=?", (dumps(summ), sid))  # each step's outcome
+        return sid
+    finally:
+        if inputs is not None:
+            await inputs.close()
+        lease.release()
+
+
+def _reload(s: Session) -> None:
+    s.settings = hs.load(s.store, s.learner_id)
+    s.ledger.limits = s.settings.limits()
+
+
+async def _body(s: Session, w: World, env: Env) -> None:
+    await identify(s, keep_days=env.settings.guest_keep_days, preset=env.learner)
+    assign_arm(s, env.brain is not None, env.rng)
+    set_deadlines(s)
+    await identify_book(s, w, env)
+    while True:
+        s.checkpoint()
+        await w.refresh()
+        menu = allowed(s)
+        prop = None  # sequence(): the default policy's arm, or a Brain-arm boundary without a Brain (M7)
+        out = await negotiate(s, prop, menu, s.epoch())
+        if out is REOBSERVE:
+            continue
+        act = out.activity
+        if act.kind == "end":
+            await run_activity(s, w, act)  # record_boundary: the end row
+            break
+        if s.past_soft_deadline():
+            break
+        last = await run_activity(s, w, act)
+        s.previous_boundary_was_wait = act.kind == "wait"
+        s.boundary = Boundary()
+        while last == ActivityStatus.PAGE_TURNED and w.pending is not None and continuation_allowed(s):
+            last = await run_activity(s, w, Activity("read_listen", {"page": "next", "range": "rest"}, "default"),
+                                      continuation=True)  # §8.2: same cycle, on every turn
+        if last in TERMINAL:
+            break

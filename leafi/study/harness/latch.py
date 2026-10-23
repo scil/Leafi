@@ -141,4 +141,4 @@ class Latch:
             if now >= self.hard_deadline:
                 self.terminate("time_up_session")
                 return
-            await anyio.sleep(min(self.hard_deadline - now, 3600.0))  # re-read: the deadline may move
+            await anyio.sleep(min(self.hard_deadline - now, 0.25))  # re-read: the deadline is set after identify
