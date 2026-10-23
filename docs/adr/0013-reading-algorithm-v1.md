@@ -2,7 +2,7 @@
 status: proposed
 v1: accepted 2026-10-19, implemented in `leafi/study/alignment.py` (the code follows v1 until this v2 is accepted; ADR-0017 §8)
 date: 2026-10-19
-revised: 2026-10-22 (v2 rev 2: round-1 reviews, see Reviews; v2 rev 1: ADR-0017 §8.1–8.6 as pseudocode and the prior-art changes to alignment; v1 revised 2026-10-19 after codex round 4)
+revised: 2026-10-22 (v2 rev 3: round-2 increment review; v2 rev 2: round-1 reviews, see Reviews; v2 rev 1: ADR-0017 §8.1–8.6 as pseudocode and the prior-art changes to alignment; v1 revised 2026-10-19 after codex round 4)
 supersedes: 0009, 0012
 ---
 
@@ -56,12 +56,15 @@ Costs are flat by class; a substitution cost graded by phone distance (prior-art
 3. best_path(window, entry): the minimum-cost alignment of ALL heard words w[0..m) that aligns ≥ 1 token
    (an all-insertion path is not a path; rule 4 decides whether the best one is accepted). Costs in tenths:
      align word j at token i      pair cost (§Pair classes)
-     number join                  heard words j..j+k−1 (2 ≤ k ≤ 4, all number words) at one numeral token i whose
-                                  readings contain their concatenated canonical form: 0, counts as matched
+     number join                  heard words j..j+k−1 (2 ≤ k ≤ 4) at one numeral token i whose readings contain their
+                                  concatenated canonical form: 0, counts as matched. The words must be number words
+                                  (num2words' English vocabulary: zero … nineteen, the tens, hundred, thousand, million,
+                                  their ordinals) or "and" between two of them; "and" is dropped by the canonical form
      delete tokens (affine)       a run of L ≥ 1 expected tokens skipped between two aligned tokens: 8 + 3·(L − 1)
      insert word                  12   (exceeds substitute, so a heard word prefers an expected token)
      back jump (reread)           directly after aligning token a, align the next word at token k:
-                                  fast pass  max(lo, first_index(sentence(a) − 1)) ≤ k ≤ a
+                                  fast pass  max(lo, first_index(previous sentence of a, or a's own sentence when a
+                                             is in the first)) ≤ k ≤ a
                                   page pass  sentence_start(a) ≤ k ≤ a
                                   cost 4 + 1·(a − k)
      free gaps                    expected tokens before the first aligned token and after the last aligned token
@@ -74,7 +77,8 @@ Costs are flat by class; a substitution cost graded by phone distance (prior-art
    cost(path) is the sum; internal(path) = cost(path) − the entry cost − the boundary charges.
    Ties: lowest cost; then first aligned index nearest pcur; then fewest insertions; then fewest back jumps; then the
    lexicographically earliest path over (expected index, operation: match, phones, fuzzy, join, substitute, delete,
-   insert, jump). The result is unique.
+   insert, jump). The result is unique. Some walkthroughs are decided by this last key (walkthrough (s)); changing the
+   operation order is a design change.
 4. ACCEPT a path iff it has an anchor and, when m ≥ 3, internal(path) ≤ 7·m (the ceiling, untuned; rules (c) and (d)
    bound m ≤ 2 themselves). A "run" is a sequence of matched tokens in
    increasing index order with nothing between them in the path but deleted function-word tokens.
@@ -83,9 +87,10 @@ Costs are flat by class; a substitution cost graded by phone distance (prior-art
      (b) ≥ 2 matched tokens, one of them a content word, and matched ≥ ceil(m / 2)   (fast pass only); or
      (c) m ≤ 2 and exactly one matched token, index ∈ [pcur − 2, pcur + 2], that is a content word, or a function word
          from a typed utterance   (fast pass only); or
-     (d) m = 1 and the path is one substitution at index pcur on a content word, with `is_word(heard)`, confidence ≥
-         ANCHOR_CONF (0.8, untuned), and sim(heard, tok) ≥ 0.5 or the same first letter (a lone plausible misreading)
-         (fast pass only)
+     (d) m = 1 and the path is one substitution at index pcur on a content word, with `is_word(heard)`, heard not in
+         `INTERJECTIONS` (yeah, yes, no, okay, ok, mum, mom, mummy, dad, daddy, wait, look, hey, oh, um, uh, hmm, and
+         the household's names; a versioned list in `study/function_words.py`), confidence ≥ ANCHOR_CONF (0.8, untuned),
+         and sim(heard, tok) ≥ 0.5 or the same first letter (a lone plausible misreading)   (fast pass only)
    Not accepted by either pass → events = [unaligned(m)]; observations = [unaligned(m), no tokens];
    state'.unaligned_run += 1; state'.unaligned_words += m; return.
 5. Observations from the path, each with `pair_class` (null for deletions and insertions) and `function_word`:
@@ -123,12 +128,17 @@ Costs are flat by class; a substitution cost graded by phone distance (prior-art
 
 ```
 supply(state, i):            # Leafi said the word at token i = pcur after the learner accepted a hint
-  tok = tokens[i]; tok.status = candidate                        # a told word is an error, also for a function word
-  new miscue(status = candidate, origin = supplied, heard = null, cycle_id = s.cycle); tok.miscue_id, tok.created_by
+  tok = tokens[i]
+  if tok.status == candidate: its miscue.origin = supplied      # one miscue per token: the existing row is kept
+  elif tok.status ∈ {unattempted, provisional, unread}:          # a told word is an error, also for a function word
+    tok.status = candidate
+    new miscue(status = candidate, origin = supplied, heard = null, observation_id = null, cycle_id = s.cycle);
+    tok.miscue_id, tok.created_by
+  else: nothing (committed or settled: the hint was not needed for the record)
   pcur = max(pcur, i + 1); rule 9; rule 10
 ```
 
-A supplied candidate is settled only by Practice or by `close_cycle`; rule 7 never withdraws it.
+A supplied candidate is settled only by Practice or by `close_cycle`; rule 7 never withdraws it. A supplied miscue has no observation.
 
 ## Unaligned speech and the first-words prompt
 
@@ -152,8 +162,11 @@ open_page_read(s, page, range):                                  # called by rea
   if range is {from, to} or page is familiar: pcur = ccur = from (0 for familiar)
   else (rest):
     prev = this learner's latest page read of page, any session, any revision
-    if prev: c = prev.ccur mapped through the edit maps from prev's revision to r (ADR-0010 §6), clamped to a
-             sentence start; tokens before c → committed; completed = sentences entirely before c; pcur = ccur = c
+    if prev: c = prev.ccur mapped through the edit maps from prev's revision to r (ADR-0010 §6; a position inside
+             a deleted span maps to the first surviving token after it); c = n stays n (the page was finished, the
+             range is empty); otherwise c moves down to the start of its sentence;
+             tokens before c → committed, except tokens whose span a correction since prev's revision touched →
+             unread; completed = sentences entirely before c; pcur = ccur = c
   return pr
 ```
 
@@ -165,7 +178,8 @@ open_page_read(s, page, range):                                  # called by rea
 open_candidates(cycle) = miscues with cycle_id = cycle.id and status = candidate
 close_cycle(cycle, reason):                                      # one transaction
   for m in open_candidates(cycle):
-    m.status = unsure; m.unsure_reason = {stop: skipped, interrupted: interrupted}.get(reason, not_practised)
+    if m has practices rows: m gets Practice step 4's final status from all its rows (a recorded fail → disagreed)
+    else: m.status = unsure; m.unsure_reason = {stop: skipped, interrupted: interrupted}.get(reason, not_practised)
     the token whose miscue_id = m.id in m's page read state → settled (persisted)
   cycle.status = closed; cycle.closed_reason = reason
 reasons: next_reading (another boundary-chosen read_listen or read_aloud starts), wrap, stop, interrupted (startup
@@ -185,7 +199,7 @@ Per selected candidate, in the order ADR-0017 gives (Difficulty weight, then pos
 1. Leafi shows the candidate's sentence on Faces and models the word (TTS).
 2. The learner retries. **The budget is per miscue: at most 2 attempts in total**, also when a page turn interrupted an earlier `practise_errors`. With `ASR_HOTWORDS` on, the retry stream carries the target word as its only hotword; reading streams never carry page hotwords (a page-biased ASR would hide miscues).
 3. Each attempt is `pass` when some heard word is the target by class `exact` or `phones`, or a run of heard number words is it by `number join`, with confidence ≥ `RETRY_MIN_CONF` (0.5, untuned); `fail` when every heard word has confidence ≥ `RETRY_MIN_CONF` and none passes; `idle` when no retry arrives within `PRACTICE_RETRY_S` (10 s voice; text waits); else `unclear`. Fuzzy and inflection classes never pass.
-4. The sequence ends on a `pass`, on `skip`, on `idle`, or after the second attempt. Final status: `pass` → `withdrawn(practice)`; `skip` → `unsure(skipped)`; else `unsure(disagreed)` if any attempt was `fail`, else `unsure(idle)` if the last was `idle`, else `unsure(unclear)`. After `idle`, practice continues with the next candidate.
+4. The sequence ends on a `pass`, on `skip`, on `idle`, or after the second attempt; an attempt cut by a page turn or a terminal writes no row and does not use the budget, and a later `practise_errors` continues with the next attempt number. The final status reads every `practices` row of the miscue, from any activity: `pass` → `withdrawn(practice)`; `skip` → `unsure(skipped)`; else `unsure(disagreed)` if any attempt was `fail`, else `unsure(idle)` if the last was `idle`, else `unsure(unclear)`. After `idle`, practice continues with the next candidate.
 5. Each attempt writes a `practices` row (`attempt` 1–2 per miscue, `outcome ∈ {matched, disagreed, unclear, idle, skipped}`) with `evidence = acoustic` only when `PRON_AUTO_JUDGE` is on and the scorer ran (then the scorer may set `confirmed` instead of `unsure`), else `evidence = none`. **Text mode uses exactly these rules with `evidence = none`; `confirmed` is impossible there.**
 6. After its sequence the token becomes `settled` in its page read state.
 
@@ -220,7 +234,7 @@ The ADR-0017 epoch replaces v1's `(session_id, revision_id, turn_id)`; `turn_id`
 
 **Who applies it.** While a session holds the speech lease, only the session process applies corrections; a correction from another process (a parent tool) is refused with "a study session is running". A correction creates revision r+1 with an edit map.
 
-**Page reads.** Every page read of the corrected page whose cycle is open is re-tokenised on r+1 **in place** (the same row; its revision becomes r+1): each token carries its status, `miscue_id` and `created_by` through the edit map; tokens whose mapped char span overlaps the edited span → `unattempted` and lose `miscue_id`; `pcur`, `ccur` are mapped through the edit map and clamped to the first such token when they were past it; sentences containing such tokens leave `completed`. Page reads of closed cycles keep their revision (they are history; `open_page_read` maps cursors through the edit maps).
+**Page reads.** Every page read of the corrected page whose cycle is open is re-tokenised on r+1 **in place** (the same row; its revision becomes r+1): each token carries its status, `miscue_id` and `created_by` through the edit map; tokens whose mapped char span overlaps the edited span lose `miscue_id` and become `unattempted` when they lie at or after the mapped `ccur`, `unread` when they lie before it (the learner read the old text there; a correction behind the frontier does not send the learner back); `pcur`, `ccur` are mapped through the edit map and clamped to the first `unattempted` such token when they were past it; sentences containing an `unattempted` such token leave `completed`. Page reads of closed cycles keep their revision (they are history; `open_page_read` maps cursors through the edit maps).
 
 **Miscues.** Miscues of **any** revision of this page with status ∈ {candidate, unsure, confirmed} whose `expected_char_span` maps (through the chain of edit maps up to r) into a span overlapping the corrected span → `invalidated(page_text_corrected)`; `withdrawn` and already-`invalidated` rows are untouched. An invalidated candidate leaves its cycle's open set. Difficulties are recomputed inside the same transaction.
 
@@ -260,12 +274,12 @@ Status codes: U unattempted, P provisional, C committed, M candidate, S settled,
 - (c) "The little cap" / "cat sat on the mat.": utterance 1 → candidate at `cat` (`cap` is `substitute`, sim 0.67); utterance 2 enters at `cat` (entry 1 beats inserting "cat", 12) and matches it → `withdrawn(self_corrected)`, token `S`; completion → `C C S C C C C`.
 - (d) "I can see it. I can see it." read sentence by sentence: the second identical utterance aligns in the window starting at sentence 2 and completes it; `/back 1` reopens sentence 2 only (`C C C C U U U U`, cursors (4, 4), `completed = {1}`).
 - (e) "The dog ran away." against "The dog ran. The cat sat.": `away` → insert (12) rather than substitute `The` of sentence 2 (10 + boundary 5, a visit with one aligned token); no candidate.
-- (f) A skipped line of 6 tokens inside an utterance ("A B C D K L" against "A B C D E F G H I J K L", content words): delete run 8 + 3·5 = 23 ≤ 42; the "jump ahead and substitute four words" path costs 6 + 40; `line_skipped(6)`, E–J `R`, no candidate.
-- (g) **Lost start (session 11).** Page: s1 "At the edge of the wood lived a clever old fox." (tokens 0–10), s2 "Every morning he walked down to the river to drink." (11–20), s3 "She smiled at the clever fox." (21–26); `pcur = ccur = 0`; heard "she smiled at the clever fox". The fast window `[0, 17)` cannot reach s3; its minimum is 52 (entry at 4: 4; she/the, smiled/wood, at/lived, the/a substituted: 40; `clever`; delete `old`: 8; `fox`), with 2 of 6 matched, no run, and internal 48 > 42 → not accepted. The page pass (m = 6) enters at 21 (15) with six exact matches: cost 15, internal 0, a run of 6 → used. s1 and s2 complete by (i) with every token `R`; s3 `C`; **no candidate** (v1: four false candidates in s1).
+- (f) A skipped line of 6 tokens inside an utterance ("A B C D K L M" against "A B C D E F G H I J K L M", content words): delete run 8 + 3·5 = 23 against substituting K, L, M onto E, F, G and leaving the rest as a free gap (30) or jumping ahead and substituting four words (6 + 40); internal 23 ≤ 49; `line_skipped(6)`, E–J `R`, no candidate. With only two words after the skip ("A B C D K L"), substituting them onto E, F (20) beats the deletion run (23): two false candidates, a named limit (Consequences).
+- (g) **Lost start (session 11).** Page: s1 "At the edge of the wood lived a clever old fox." (tokens 0–10), s2 "Every morning he walked down to the river to drink." (11–20), s3 "She smiled at the clever fox." (21–26); `pcur = ccur = 0`; heard "she smiled at the clever fox". The fast window `[0, 17)` cannot reach s3; its minimum is 44 (insert "she smiled": 24; `at the` exact at 0–1; clever/edge and fox/of substituted: 20; entry 0), whose only matches are function words (no anchor) and internal 44 > 42 → not accepted (the oracle test holds the exact figure; this walkthrough asserts the outcome). The page pass (m = 6) enters at 21 (15) with six exact matches: cost 15, internal 0, a run of 6 → used. s1 and s2 complete by (i) with every token `R`; s3 `C`; **no candidate** (v1: four false candidates in s1).
 - (h) **Real-word misreading.** "The horse ran." heard "the house ran": `house`/`horse` sim 0.80 but `is_word(house)` → `substitute`; matched `the`, `ran` (2 of 3, `ran` content) → 4(b); candidate at `horse`. At confidence 0.4 the substitution is observed only (`LOW_CONF`), token `P`. Typed "the hosre ran" → `hosre` is not a word → `fuzzy`, matched, no candidate.
-- (i) **Rereads and self-corrections inside an utterance.** "The dog ran fast." heard "the dog the dog ran fast": back jump from `dog` (a = 1) to `the` (k = 0) costs 4 + 1 = 5 against inserting "the dog" (24); the second `the` and `dog` are `repeat` matches; `repetitions = 2`; no candidate. Heard "the dog red the dog ran fast": `red` substituted at `ran` (10), back jump 2 → 0 (6), `the dog ran fast` matched: 16 against inserting "red the dog" (36); `ran` was substituted and then matched in the same path → `self_correction`, no miscue. Heard "the little cap cat sat" for "The little cat sat": inserting `cap` (12) beats substitute + back jump (10 + 4); `cap` is marked `self_correction` (sim 0.67); no candidate.
+- (i) **Rereads and self-corrections inside an utterance.** "The dog ran fast." heard "the dog the dog ran fast": back jump from `dog` (a = 1) to `the` (k = 0) costs 4 + 1 = 5 against inserting "the dog" (24); the second `the` and `dog` are `repeat` matches; `repetitions = 2`; no candidate. Heard "the dog red the dog ran fast": `red` substituted at `ran` (10), back jump 2 → 0 (6), `the dog ran fast` matched: 16 against inserting `red` and jumping back from `dog` (12 + 5 = 17); `ran` was substituted and then matched in the same path → `self_correction`, no miscue. Heard "the little cap cat sat" for "The little cat sat": inserting `cap` (12) beats substitute + back jump (10 + 4); `cap` is marked `self_correction` (sim 0.67); no candidate.
 - (j) **A → B → C in one cycle.** `read_listen` on A opens cycle k; A s1 gets a candidate at A:3; the learner turns the page inside A s2 → the activity ends `page_turned`; s2 stays open (its read tokens `P`, the rest `U`); nothing settles. Continuation on B (same cycle, a new page read); a candidate at B:5; turn → continuation on C; C completes → `completed`. `open_candidates(k) = {A:3, B:5}`. The next boundary runs `practise_errors([A:3, B:5])`, each on its own page read; then a boundary-chosen `read_listen(A, rest)` starts → `close_cycle(k, next_reading)` finds nothing open, and `open_page_read` starts A's new page read at the start of s2 (A's old `ccur`, inside s2, clamped to a sentence start), s1 `C`. Had practice been refused, both would become `unsure(not_practised)` and contribute 0.
-- (k) **`/back` across a page turn.** After (j)'s turn to B, before anything is read on B, "go back": B's page read has `pcur = 0`, so nothing changes but `turn_id`, and Leafi says to turn back. The learner turns back to A → `page_turned` → continuation on A resumes A's page read (`ccur` inside s2, A:3 still `M`). Rereading A s1 ("the cat sat on the mat"): the fast window starts at s2, the fast pass is not accepted, the page pass (m = 6) anchors on s1 (entry 15), its tokens are `C` and stay so, and the match at A:3 → `withdrawn(reread)`.
+- (k) **`/back` across a page turn.** After (j)'s turn to B, before anything is read on B, "go back": B's page read has `pcur = 0`, so nothing changes but `turn_id`, and Leafi says to turn back. The learner turns back to A → `page_turned` → continuation on A resumes A's page read (`ccur` inside s2, A:3 still `M`). Rereading A s1 ("a big cat sat on the mat", A:3 = `sat`, a content word): the fast window starts at s2, the fast pass is not accepted, the page pass (m = 7) anchors on s1 (entry 15), its tokens are `C` and stay so, and the match at A:3 → `withdrawn(reread)`.
 - (l) **`stop` mid-practice.** `practise_errors([A:3, B:5, C:2])` is on B:5 when the learner says stop: A:3 is already settled; B:5 → `unsure(skipped)`; the activity ends `stopped`; `finalize` closes the cycle with reason `stop` → C:2 → `unsure(skipped)`; all three tokens `S` in their page reads.
 - (m) **Unaligned chatter.** During `read_listen`, "can I have a snack after this" with no page word: no anchor in either pass → `unaligned(7)`, no state change. Three such utterances (≥ 6 words) → the first-words prompt, once.
 - (n) **Lone function word.** At `pcur` on "the" of "… to the park", spoken "the" at any confidence → `unaligned(1)` (ADR-0017 §8: never anchoring alone); typed "the" → accepted by 4(c).
@@ -273,11 +287,11 @@ Status codes: U unattempted, P provisional, C committed, M candidate, S settled,
 - (p) **Inflection.** "She smiled at the fox." heard "she smiles at the fox": `smiles`/`smiled` share the lemma `smile` → `inflection`; with `reading.inflections = observe` the token is `P` and the observation keeps the class; with `practise` it is a candidate. "car" heard for "card": different lemmas → `substitute` → candidate.
 - (q) **Chatter with a page word.** Page "Mum went to the shop to buy some milk.", `pcur = 0`, heard "mum can I have a snack after this" (m = 8): the fast path `mum` + 7 substitutions costs 70, internal 70 > 56 → not accepted (4(c) also needs m ≤ 2); the page pass has no run → `unaligned(8)`; no candidate.
 - (r) **One-word sentences.** "Run! Run! Run!" heard "run run run": straight path, three visits of one aligned token in sentences of length 1 → no boundary charge, cost 0; the repeat path (two back jumps) costs 8 → straight wins; all three sentences reached.
-- (s) **Patterned book.** s1 "I see a red bird." (0–4), s2 "I see a blue cat." (5–9), s3 = s1's text (10–14), `pcur = ccur = 5`, heard "I see a red bird": in s2, two substitutions = 20; entering s3 costs 5 + 15 (s2 is a whole unattempted sentence) = 20; the tie goes to the first aligned index nearest `pcur` → s2, candidates at `blue` and `cat`.
+- (s) **Patterned book.** s1 "I see a red bird." (0–4), s2 "I see a blue cat." (5–9), s3 = s1's text (10–14), `pcur = ccur = 5`, heard "I see a red bird": in s2, two substitutions = 20; entering s3 costs 5 + 15 (s2 is a whole unattempted sentence) = 20, so the first aligned index nearest `pcur` → s2; a third path, "I see a" in s2, deleting "blue cat I see a" (8 + 12) and matching "red bird" in s3, also costs 20 from index 5 and loses only on the operation order (substitute before delete at index 8) → candidates at `blue` and `cat`.
 - (t) **Told word.** The learner stops at `dog` in "The little brown dog walked slowly."; "Want a hint?" → yes → Leafi says "dog" → `supply(3)`: `M`, origin supplied, `pcur = 4`. The learner reads "dog walked slowly": `dog` matches but stays `M` (alignment never withdraws a told word); it is practised later.
 - (u) **Slow reader with one misreading.** Same sentence, one word per utterance, spoken: "the little" (4(a)), "brown" (4(c)), "dug" (m = 1: substitution at `pcur` = 3 on `dog`, a real word, confident, sim 0.67 → 4(d), cost 15) → candidate at `dog`; a 1.2 s pause after "dug" does not complete the sentence (`walked`, `slowly` are content words still `U`); "walked", "slowly" (4(c)) → completion → `C C C M C C`.
 - (v) **Correction before a candidate.** Revision r "The big cat sat on the mat." with a candidate at `mat` (index 6, `miscue_id` 41); the learner corrects "big" away → r+1 "The cat sat on the mat."; the page read is re-tokenised in place, the token carrying `miscue_id` 41 is now index 5; `close_cycle` settles index 5, found by `miscue_id`; the miscue row keeps `expected_token_index` 6 at revision r.
-- (w) **Dropped articles after a lost start.** Page-pass case of "The dog saw the cat in the park." heard "dog saw cat in park" (m = 5) when the fast pass fails: entry 15, deleted `the` twice (8 + 8); the run "dog saw · cat in · park" spans deleted function words → 4(a) page form; internal 16 ≤ 35 → accepted; both `the` tokens `P` with no miscue; `The₀` before the entry becomes `R` by rule 6.
+- (w) **Dropped articles after a lost start.** Page-pass case of "The dog saw the cat in the park." heard "dog saw cat in park" (m = 5) with `pcur = 0` and this sentence outside the fast window (a lost start, as in (g)): entry 15, deleted `the` twice (8 + 8); the run "dog saw · cat in · park" spans deleted function words → 4(a) page form; internal 16 ≤ 35 → accepted; both `the` tokens `P` with no miscue; `The₀` before the entry becomes `R` by rule 6.
 
 ## Provenance
 
@@ -313,14 +327,14 @@ Status codes: U unattempted, P provisional, C committed, M candidate, S settled,
 - Real-word misreadings now become candidates, so more candidates appear than in v1; the false-alarm budget keeps that honest, and function words, inflections (by default) and low-confidence substitutions are observed, never practised.
 - A lost start no longer forces speech onto the wrong sentence; the cost is a page pass on poor utterances and a vectorised DP to keep it inside 100 ms.
 - Practice leaves reading entirely; reading speaks only as ADR-0017 §6.1 allows.
-- Named limits: a spoken lone function word is never tracked (it ends `unread` if nothing later reaches it); a word at the start of an utterance that the reader skipped is a free gap, not a deletion; words read before a jump back of more than one sentence inside one utterance are not tracked; a short, heavily misread utterance (3 substitutions in 4 words) is rejected by the ceiling rather than producing candidates; systematic dropped endings never reach Difficulties in v2 (a future `pattern` knowledge item may consume the inflection observations).
+- Named limits: a spoken lone function word is never tracked (it ends `unread` if nothing later reaches it); a word at the start of an utterance that the reader skipped is a free gap, not a deletion; words read before a jump back of more than one sentence inside one utterance are not tracked; a short, heavily misread utterance (3 substitutions in 4 words) is rejected by the ceiling rather than producing candidates, and so is one whose only matched words are function words ("she want to the ship" for "She went to the shop": no anchor); a line skip followed by one or two words at the end of an utterance makes those words substitutions on the skipped tokens (walkthrough (f)); systematic dropped endings never reach Difficulties in v2 (a future `pattern` knowledge item may consume the inflection observations).
 - New data: `WordInfo` (a word list, espeak-ng phones with a homograph table, a lemma source), `num2words`, `FUNCTION_WORDS`, and the columns listed in `data-model.md` → Migration 5.
 - Identical consecutive sentences read twice count as progress (accepted; `/back`).
 
 ## Confirmation
 
-`tests/test_alignment.py` (walkthroughs (a)–(i), (m)–(s), (u), (w); the tie-break order; pair classes with a `WordInfo` table; the page pass runs exactly when rule 2 says; acceptance 4(a)–(d) and the ceiling), `tests/test_alignment_oracle.py` (the DP equals a brute-force enumeration on random small pages and utterances), `tests/test_cycle_candidates.py` (walkthroughs (j)–(l), (t), (v); `close_cycle` reasons map to the stated `unsure` reasons; a correction removes a candidate from the open set and re-tokenises every open page read of the page; `open_page_read` for each range and for a prior page read at an older revision), `tests/test_practice.py` (the per-miscue budget across a page turn; `pass`, `fail`, `unclear`, `idle` and every final status; fuzzy never passes; text mode never `confirmed`), `tests/test_norm.py` (number readings in canonical form; token boundaries equal to v1's on the fixture pages), `tests/test_difficulties.py` (`not_practised`, `skipped`, `interrupted` and `unclear` contribute 0; `teach_incorrect` counts, `teach_ok` does not), `tests/test_corrections.py` (a correction from another process is refused while a session holds the lease), `tests/test_alignment_perf.py` (hardware-marked, the 100 ms bound), and `scripts/evals/reading_eval.py` on the labelled set, with a console button, before `practise_errors` is enabled by default.
+`tests/test_alignment.py` (walkthroughs (a)–(i), (m)–(s), (u), (w); the tie-break order; pair classes with a `WordInfo` table; the page pass runs exactly when rule 2 says; acceptance 4(a)–(d) and the ceiling), `tests/test_alignment_oracle.py` (the DP equals a brute-force enumeration on random small pages and utterances), `tests/test_cycle_candidates.py` (walkthroughs (j)–(l), (t), (v); `close_cycle` reasons map to the stated `unsure` reasons; a correction removes a candidate from the open set and re-tokenises every open page read of the page; `open_page_read` for each range, for a prior page read at an older revision, for a finished page, and for a cursor inside a deleted span; a hint on a token that is already a candidate keeps one miscue; a correction behind the frontier leaves the cursors where they were; a second candidate after a correction at an index an older-revision candidate held), `tests/test_practice.py` (the per-miscue budget across a page turn, with the cut attempt writing no row; `close_cycle` on a candidate with a recorded `fail` gives `disagreed`; `pass`, `fail`, `unclear`, `idle` and every final status; fuzzy never passes; text mode never `confirmed`), `tests/test_norm.py` (number readings in canonical form; token boundaries equal to v1's on the fixture pages), `tests/test_difficulties.py` (`not_practised`, `skipped`, `interrupted` and `unclear` contribute 0; `teach_incorrect` counts, `teach_ok` does not), `tests/test_corrections.py` (a correction from another process is refused while a session holds the lease), `tests/test_alignment_perf.py` (hardware-marked, the 100 ms bound), and `scripts/evals/reading_eval.py` on the labelled set, with a console button, before `practise_errors` is enabled by default.
 
 ## Reviews
 
-v1: codex design reviews 1–5 (2026-10-19) under `../plans/active/reviews/`. v2 round 1 (2026-10-22): `code-plan-review` ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-code-plan-review.md)) and a fresh Claude session standing in for codex, whose quota had run out ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-claude.md)); comparison and resolutions: [round-1 comparison](../plans/active/reviews/2026-10-22-adr-0013-v2-round-1-comparison.md). An increment round by codex is due before acceptance; no v2 code before it is accepted.
+v1: codex design reviews 1–5 (2026-10-19) under `../plans/active/reviews/`. v2 round 1 (2026-10-22): `code-plan-review` ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-code-plan-review.md)) and a fresh Claude session standing in for codex, whose quota had run out ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-claude.md)); comparison and resolutions: [round-1 comparison](../plans/active/reviews/2026-10-22-adr-0013-v2-round-1-comparison.md). Round 2 (2026-10-22), the increment on rev 2, by a fresh Claude session for codex at the owner's request ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-round-2-claude.md)): two High (a second hint on a candidate token; the candidate index keyed on a stale index), six Medium, ten Low; all resolved in rev 3 except its M5 (`miscues.observation_id` is already nullable in schema 4). No v2 code before the owner accepts it.

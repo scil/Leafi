@@ -118,7 +118,8 @@ Perceived-moment budgets and the output reserve measured per Mouth (PC and camer
 
 - [x] 2026-10-22 ADR-0017 and ADR-0018 accepted by the owner; ADR-0013 v2 written (proposed); `flows/reading-session.md`, `product.md` B3/B4/B7, `GLOSSARY.md`, `data-model.md` (migration 5), `reliability.md`, `security.md` (prompt-safety allow-list) updated; this plan written.
 - [x] 2026-10-22 M0.1 round 1 on ADR-0013 v2: `code-plan-review` (3 High) and a fresh Claude session for codex, whose quota had run out (2 High); 5 of 6 themes found by both; compared in `reviews/2026-10-22-adr-0013-v2-round-1-comparison.md`; rev 2 resolves every finding (ADR-0017 pointers, `data-model.md`, glossary updated with it).
-- [ ] M0 design gates (remaining: codex increment round, M0.2–M0.5, owner acceptance)
+- [x] 2026-10-22 M0.1 round 2 (increment on rev 2) by a fresh Claude session at the owner's request instead of waiting for codex: 2 High, 6 Medium, 10 Low (`reviews/2026-10-22-adr-0013-v2-round-2-claude.md`); rev 3 resolves all but M5, which was a false positive (`miscues.observation_id` is already nullable).
+- [ ] M0 design gates (remaining: M0.2–M0.5, owner acceptance of ADR-0013 v2)
 - [ ] M1 TD-1
 - [ ] M2 harness prototype
 - [ ] M3 learners and migration 5
@@ -140,7 +141,8 @@ Perceived-moment budgets and the output reserve measured per Mouth (PC and camer
 - 2026-10-22 ADR-0018 §7.5's documents change in M5 together with the egress code, not at acceptance: changing AGENTS.md's boundary and `security.md`'s egress table before the mediator and the socket grants exist would state an enforcement that does not run. Until M5, code keeps to the v1 egress rule.
 - 2026-10-22 ADR-0013 v2 rev 1 choices: function-word and (default) inflection misses produce no miscue row, only a categorised observation (kept in rev 2; neither reviewer found a loss the summary or the evaluation needs); `/back` never crosses a page (kept); within one cycle a page has one page read (kept, now moved to a new revision in place by a correction).
 - 2026-10-22 ADR-0013 v2 rev 2, author's calls on review findings the owner may override (listed in the round-1 comparison): `unsure(interrupted)` and `unsure(unclear)` contribute 0 to Difficulties (rev 1 kept v1's 0.3 for `interrupted`); a supplied function word is a candidate; a spoken lone function word never anchors, a typed one does (ADR-0017 §8 amended to "when spoken"); the internal-cost ceiling rejects heavily misread short utterances instead of producing candidates.
-- 2026-10-22 Codex quota ran out at the start of M0.1; the `codex-review` skill's fallback (a fresh session of another agent on the same prompt file) ran instead. Two Claude reviewers share a model's blind spots, so the codex increment round is kept as a gate rather than skipped.
+- 2026-10-22 Codex quota ran out at the start of M0.1; the `codex-review` skill's fallback (a fresh session of another agent on the same prompt file) ran instead. The owner then chose not to wait for codex and had a fresh Claude session run the increment round too, so no codex model has reviewed ADR-0013 v2; all three of its reviews share one model's blind spots.
+- 2026-10-22 ADR-0013 v2 rev 3 calls: a hint on a token already a candidate turns that miscue's origin into `supplied` rather than adding a row; a correction behind the frontier marks the touched tokens `unread` instead of sending the cursors back; `close_cycle` gives a candidate with practice attempts the practice final status, so a recorded `fail` is not lost to `not_practised`; one- and two-word skips at an utterance's end remain a named limit (two false candidates) rather than a cost change, until the labelled set shows how often they occur.
 - 2026-10-22 Milestone order: M5 (egress) before M7 because M7 is the first code that would send learner text to the Brain; M6 runs on the default policy and needs no Brain.
 
 ## Outcomes & retrospective
