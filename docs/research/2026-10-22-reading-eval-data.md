@@ -102,6 +102,21 @@ Reading of the numbers:
 - **The unaligned share is an ASR limit on accented learner speech**, which looser acceptance would only turn into candidates on words the learner read correctly (204 of the 518 no-anchor sentences were scored correct throughout). The rules are doing what ADR-0013 intends: nothing is recorded when the transcript does not resemble the page.
 - **Recommendation: keep the defaults** (ceiling 7, share 0.5, lone anchor ≤ 2). The remaining lever for unaligned speech is the ASR itself (model, decoding, or the camera/headset path), measured on the owner's set, not the alignment rules.
 
+### 5.3 Word lists installed (2026-10-23, `LOW_CONF` 0.9, cached ASR)
+
+`WordInfo.is_word` now reads SCOWL size 60 + CYP-LEX `Count ≥ 3` (`scowl-60-2026.02.25,cyplex-2024-03-21-min3`); every threshold as in §5.2's baseline; `…T182730Z.json` against `…T071136Z.json`.
+
+| | without lists | with lists |
+|---|---|---|
+| false alarms on correct content words, all | 337 (2.57 %) | 357 (**2.73 %**) |
+| children ≤ 12 | 159 (2.91 %) | 175 (**3.20 %**) |
+| hits (all / children) | 127 / 20 | 126 / 20 |
+| unaligned utterances (all / children) | 562 / 306 | 573 / 311 |
+
+Why: **the earlier fallback was wrong, not the lists.** Without lists `is_word` asked lemminflect's dictionary, which holds no function words, numbers, contractions, interjections or first names: `the`, `and`, `of`, `three`, `it's`, `oh`, `andy`, `jamie` were all non-words. With the lists 406 of the 4,699 heard word types became words and 2 stopped being words (`momenta`, `skat`). A heard real word can no longer be a `fuzzy` (non-word) match, so a misheard name now counts as a substitution: of the 23 added false alarms, 12 are two speechocean762 names, JAYME heard "Jamie" (7) and ANDY heard "and" (5). In Leafi a book's names are in the household lexicon and `names`, which this evaluation does not supply. The 11 newly unaligned utterances are garbled transcripts ("They well and in and smoulder, like the small no weak") whose real words now cost as substitutions, putting them over the ceiling instead of producing candidates.
+
+Reading: §5.3 is the baseline from now on; the earlier figures were measured on a `WordInfo` that a real install with `doctor --download` no longer uses. The budget still holds.
+
 ## 6. Sources
 
 | id | tier | title / url | source-date | checked | supports |
