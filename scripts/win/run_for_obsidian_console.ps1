@@ -30,6 +30,7 @@ switch ($Button) {
     'logs' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\logs-tail.bat < nul"; Done }  # 看最近日志
     'down' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\down.bat < nul"; Done }  # 停止全部服务
     'edit-env' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\edit-env.bat < nul"; Done }  # 编辑 .env
+    'backup' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\backup.bat < nul"; Done }  # 备份数据库
     'mock' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\mock-run.bat < nul"; Done }  # Mock 联调(不出声)
     'say' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\say-test.bat < nul"; Done }  # 真机试喇叭(会出声)
     'test' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\test.bat < nul"; Done }  # 跑单测
