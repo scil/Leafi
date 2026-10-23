@@ -184,6 +184,9 @@ def main() -> int:
         levers[name] = type(getattr(alignment, name))(value)
         setattr(alignment, name, levers[name])
     settings = Settings()
+    from leafi import bootstrap
+
+    bootstrap.install(settings)  # the socket guard before any service (M5 design D2)
     out = run(settings, args.max_age, args.limit, args.diagnose)
     out["overrides"] = levers
     # the untuned thresholds this run used, so runs can be compared lever by lever (TD-28)

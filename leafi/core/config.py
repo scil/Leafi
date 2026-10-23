@@ -7,6 +7,7 @@ This is the only module in `leafi/` that reads the process environment. Everythi
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -154,6 +155,12 @@ def env_lookup(name: str, settings: Settings | None = None, env_file: Path | Non
         if field in Settings.model_fields:
             return str(getattr(settings, field))
     return None
+
+
+def process_environment() -> Mapping[str, str]:
+    """The process environment, read-only, for the one reader that must see overrides as `Settings` does (the
+    policy fingerprint of `leafi.privacy.versions`)."""
+    return os.environ
 
 
 def env_overrides(keys: list[str]) -> list[str]:

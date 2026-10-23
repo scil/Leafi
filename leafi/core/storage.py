@@ -154,14 +154,15 @@ LEGACY_STEPS: list[str] = [
     """,
 ]
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Provenance of a stored text (ADR-0018 §3): a class and the json list of source learner ids, both NOT NULL with
 # no default, so every writer states them.
 _PROV = "IN ('page','system','learner','derived_from_learner','parent')"
 
 # 5 — learners, the session records of ADR-0017 §7.2, egress and consent (ADR-0018), the ADR-0013 v2 columns.
-SCHEMA = f"""
+# Frozen: migration 5 brings a version-4 file to exactly this, and migration 6 runs after it.
+SCHEMA_V5 = f"""
     CREATE TABLE learners(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         kind TEXT NOT NULL CHECK(kind IN ('learner','guest','anonymous')), display_name TEXT NOT NULL,
@@ -371,6 +372,46 @@ SCHEMA = f"""
     CREATE INDEX activities_session ON activities(session_id);
     """
 
+
+def _edit(schema: str, old: str, new: str) -> str:
+    if schema.count(old) != 1:
+        raise AssertionError(f"schema fragment not found exactly once: {old!r}")
+    return schema.replace(old, new)
+
+
+# 6 — egress under M5 (design 2026-10-23 D5, D8, D10, D19): the `notify` purpose and the attempt's owning process;
+# the session's owner and the end of its egress (`post_done_at`); stored surrogates; the household's protected-name
+# version. `SEEDS` are the rows a fresh file and migration 6 both insert.
+SCHEMA = SCHEMA_V5
+for _old, _new in [
+    ("summary TEXT, lease_token TEXT);\n    CREATE TABLE cycles(",
+     "summary TEXT, lease_token TEXT, owner TEXT, post_done_at TEXT);\n    CREATE TABLE cycles("),
+    ("('decide','generate','answer','judge','word','tts','media','catalog','ops')),",
+     "('decide','generate','answer','judge','word','tts','media','catalog','notify','ops')),"),
+    ("transmitted_attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,\n"
+     "        CHECK((purpose = 'ops') = (learner_id IS NULL)));",
+     "transmitted_attempts INTEGER NOT NULL DEFAULT 0, owner TEXT, created_at TEXT NOT NULL,\n"
+     "        updated_at TEXT NOT NULL, CHECK((purpose = 'ops') = (learner_id IS NULL)));\n"
+     "    CREATE TABLE pseudonyms(\n"
+     "        entity TEXT NOT NULL UNIQUE, surrogate TEXT NOT NULL UNIQUE COLLATE NOCASE, created_at TEXT NOT NULL);\n"
+     "    CREATE TABLE privacy_state(key TEXT PRIMARY KEY, value INTEGER NOT NULL);"),
+]:
+    SCHEMA = _edit(SCHEMA, _old, _new)
+del _old, _new
+# Every change to a name the egress lists protect bumps `protected_version` in the writer's own transaction, so a
+# token prepared under the old lists fails revalidation (design D12) whichever writer made the change.
+_BUMP = "BEGIN UPDATE privacy_state SET value = value + 1 WHERE key = 'protected_version'; END"
+SCHEMA += "".join(f"    CREATE TRIGGER {name} AFTER {event} ON {table} {_BUMP};\n" for name, event, table in [
+    ("learners_protected_insert", "INSERT", "learners"),
+    ("learners_protected_update", "UPDATE OF display_name, alias, kind, forgetting", "learners"),
+    ("learners_protected_delete", "DELETE", "learners"),
+    ("household_terms_protected_insert", "INSERT", "household_terms"),
+    ("household_terms_protected_update", "UPDATE", "household_terms"),
+    ("household_terms_protected_delete", "DELETE", "household_terms"),
+])
+
+SEEDS = "INSERT OR IGNORE INTO privacy_state(key, value) VALUES('protected_version', 0)"
+
 # Migration 5's copy expressions for columns a version-4 row does not have (ADR-0018 §3: existing text becomes
 # `learner` text of the first learner, page-derived fields become `page`). `{L}` is the first learner's id.
 _V5_COPY: dict[str, dict[str, str]] = {
@@ -451,9 +492,9 @@ def wal_safe(version: tuple[int, int, int]) -> bool:
 
 
 def _migrate_hint(db: Path, version: int) -> str:
+    learner = " --learner \"<name of the child who has been reading>\"" if version < 5 else ""
     return (f"{db.name} is at schema {version}, this Leafi needs {SCHEMA_VERSION}: run `python -m leafi backup`, "
-            f"then `python -m leafi migrate --learner \"<name of the child who has been reading>\"` "
-            "with every other Leafi process closed (ADR-0018 §7.2)")
+            f"then `python -m leafi migrate{learner}` with every other Leafi process closed (ADR-0018 §7.2)")
 
 
 class Store:
@@ -538,7 +579,7 @@ class Store:
                 if version == SCHEMA_VERSION:
                     return
                 if version == 0 and _is_empty(self.conn):
-                    for stmt in _split(SCHEMA):
+                    for stmt in _split(SCHEMA) + _split(SEEDS):
                         self.conn.execute(stmt)
                     self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                     return
@@ -649,6 +690,7 @@ def prune_backups(folder: Path, keep: int = BACKUPS_KEPT) -> list[Path]:
     gone = found[keep:]
     for p in gone:
         p.unlink()
+        p.with_suffix(".key").unlink(missing_ok=True)  # the egress key copied beside it (M5 design D8)
     return gone
 
 
@@ -694,9 +736,9 @@ def schema_of(conn: sqlite3.Connection) -> dict[tuple[str, str], str]:
         "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")}
 
 
-def _target() -> sqlite3.Connection:
+def _target(schema: str = SCHEMA) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:", isolation_level=None)
-    for stmt in _split(SCHEMA):
+    for stmt in _split(schema):
         conn.execute(stmt)
     return conn
 
@@ -720,16 +762,16 @@ def rebuild(conn: sqlite3.Connection, table: str, target_sql: str, target_cols: 
     conn.execute(f"ALTER TABLE {new} RENAME TO {table}")
 
 
-def migrate_file(path: Path | str, learner_name: str, *, backup_dir: Path | None = None,
-                 learner_settings: dict | None = None,
+def migrate_file(path: Path | str, learner_name: str | None = None, *, backup_dir: Path | None = None,
+                 learner_settings: dict | None = None, legacy_terms: list[str] | tuple[str, ...] = (),
                  _hook: Callable[[str], None] | None = None) -> MigrationResult:
-    """`python -m leafi migrate --learner <name>`: exclusive lock, a backup, then ONE transaction that brings a
-    version-4 file to `SCHEMA` and writes the first learner; any failure rolls it all back (ADR-0018 §7.2).
-    `_hook(table)` runs before each rebuild, for the failure-injection test."""
+    """`python -m leafi migrate [--learner <name>]`: exclusive lock, a backup, then each pending step in its own
+    transaction; a failure rolls that step back and leaves the file at the last completed version (ADR-0018 §7.2).
+    Step 5 (a version-4 file) writes the first learner and needs `learner_name`; step 6 needs nothing but imports
+    `legacy_terms` (the household's old `REDACT_TERMS`) as names to protect. `_hook(table)` runs before each
+    rebuild, for the failure-injection test."""
     path = Path(path)
-    name = learner_name.strip()
-    if not name:
-        raise ValueError("the first learner needs a name")
+    name = (learner_name or "").strip()
     lock = _FileLock(path, exclusive=True)
     conn = sqlite3.connect(str(path), isolation_level=None)
     try:
@@ -741,6 +783,8 @@ def migrate_file(path: Path | str, learner_name: str, *, backup_dir: Path | None
             raise SchemaError(f"{path.name} is at schema {version}, newer than this Leafi ({SCHEMA_VERSION})")
         if version == 0 and _is_empty(conn):
             raise SchemaError(f"{path.name} is empty; Leafi creates it at schema {SCHEMA_VERSION} on first open")
+        if version < 5 and not name:
+            raise ValueError("the first learner needs a name")
         stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
         dest = (backup_dir or path.parent / "backups") / f"leafi-v{version}-{stamp}.db"
         n = 1
@@ -760,54 +804,112 @@ def migrate_file(path: Path | str, learner_name: str, *, backup_dir: Path | None
                 raise
             version += 1
         result = MigrationResult(version, backup, None)
-        target = _target()
-        want = schema_of(target)
-        conn.execute("PRAGMA foreign_keys = OFF")  # outside the transaction, or the pragma is a no-op
-        conn.execute("PRAGMA legacy_alter_table = ON")
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            have = schema_of(conn)
-            tables = [n for (t, n) in want if t == "table"]
-            for t in tables:
-                if ("table", t) not in have:
-                    conn.execute(target.execute("SELECT sql FROM sqlite_master WHERE name=?", (t,)).fetchone()[0])
-                    result.created.append(t)
-            cur = conn.execute("INSERT INTO learners(kind, display_name, settings, created_at) VALUES "
-                               "('learner', ?, ?, ?)", (name, dumps(learner_settings or {}), now_iso()))
-            result.learner_id = first = int(cur.lastrowid)
-            for t in tables:
-                if t in result.created or have.get(("table", t)) == want[("table", t)]:
-                    continue
-                if _hook is not None:
-                    _hook(t)
-                copy = {c: e.replace("{L}", str(first)) for c, e in _V5_COPY.get(t, {}).items()}
-                rebuild(conn, t, target.execute("SELECT sql FROM sqlite_master WHERE name=?", (t,)).fetchone()[0],
-                        _columns(target, t), copy)
-                result.rebuilt.append(t)
-            have = schema_of(conn)
-            for (kind, n), sql in want.items():
-                if kind == "index" and have.get((kind, n)) != sql:
-                    if (kind, n) in have:
-                        conn.execute(f"DROP INDEX {n}")
-                    conn.execute(target.execute("SELECT sql FROM sqlite_master WHERE name=?", (n,)).fetchone()[0])
-            bad = conn.execute("PRAGMA foreign_key_check").fetchall()
-            if bad:
-                raise SchemaError(f"migration 5: {len(bad)} foreign key violation(s), first {tuple(bad[0])}; "
-                                  "nothing was changed")
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            conn.execute("COMMIT")
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.execute("PRAGMA legacy_alter_table = OFF")
-            conn.execute("PRAGMA foreign_keys = ON")
-            target.close()
+        if version == 4:
+            def first_learner(c: sqlite3.Connection) -> dict[str, str]:
+                cur = c.execute("INSERT INTO learners(kind, display_name, settings, created_at) VALUES "
+                                "('learner', ?, ?, ?)", (name, dumps(learner_settings or {}), now_iso()))
+                result.learner_id = first = int(cur.lastrowid)
+                return {"{L}": str(first)}
+
+            _step(conn, 5, SCHEMA_V5, _V5_COPY, result, _hook, before=first_learner)
+            version = 5
+        if version == 5:
+            _step(conn, 6, SCHEMA, {}, result, _hook, after=lambda c: _v6_data(c, legacy_terms))
         return result
     finally:
         conn.close()
         lock.release()
+
+
+def _step(conn: sqlite3.Connection, number: int, schema: str, copies: dict[str, dict[str, str]],
+          result: MigrationResult, hook: Callable[[str], None] | None, *,
+          before: Callable[[sqlite3.Connection], dict[str, str]] | None = None,
+          after: Callable[[sqlite3.Connection], None] | None = None) -> None:
+    """One migration step in one transaction: create the tables `schema` adds, rebuild those whose DDL differs
+    (copying shared columns and `copies`' expressions, with `before`'s placeholders filled), recreate the indexes,
+    run `after`, check foreign keys, and set `user_version = number`."""
+    target = _target(schema)
+    want = schema_of(target)
+    conn.execute("PRAGMA foreign_keys = OFF")  # outside the transaction, or the pragma is a no-op
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        have = schema_of(conn)
+        tables = [n for (t, n) in want if t == "table"]
+        created = []
+        for t in tables:
+            if ("table", t) not in have:
+                conn.execute(target.execute("SELECT sql FROM sqlite_master WHERE name=?", (t,)).fetchone()[0])
+                created.append(t)
+        fill = before(conn) if before is not None else {}
+        for t in tables:
+            if t in created or have.get(("table", t)) == want[("table", t)]:
+                continue
+            if hook is not None:
+                hook(t)
+            copy = {}
+            for c, e in copies.get(t, {}).items():
+                for k, v in fill.items():
+                    e = e.replace(k, v)
+                copy[c] = e
+            rebuild(conn, t, target.execute("SELECT sql FROM sqlite_master WHERE name=?", (t,)).fetchone()[0],
+                    _columns(target, t), copy)
+            result.rebuilt.append(t)
+        have = schema_of(conn)  # after the rebuilds: a dropped table took its indexes and triggers with it
+        for (kind, n), sql in want.items():
+            if kind in ("index", "trigger") and have.get((kind, n)) != sql:
+                if (kind, n) in have:
+                    conn.execute(f"DROP {kind.upper()} {n}")
+                conn.execute(target.execute("SELECT sql FROM sqlite_master WHERE name=?", (n,)).fetchone()[0])
+        if after is not None:
+            after(conn)
+        bad = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if bad:
+            raise SchemaError(f"migration {number}: {len(bad)} foreign key violation(s), first {tuple(bad[0])}; "
+                              "nothing was changed")
+        conn.execute(f"PRAGMA user_version = {number}")
+        conn.execute("COMMIT")
+        result.created.extend(created)
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute("PRAGMA foreign_keys = ON")
+        target.close()
+
+
+def _v6_data(conn: sqlite3.Connection, legacy_terms: list[str] | tuple[str, ...]) -> None:
+    """Migration 6's rows: the seeds, and the household's old `REDACT_TERMS` as `name` terms (the conservative
+    kind: a name gets a surrogate; `leafi privacy learner <name> school` corrects a school later). A term that is
+    already a learner's name or alias, or already a household term, is skipped."""
+    for stmt in _split(SEEDS):
+        conn.execute(stmt)
+    import_legacy_terms(conn, legacy_terms)
+
+
+def import_legacy_terms(conn: sqlite3.Connection, terms: list[str] | tuple[str, ...]) -> int:
+    """Idempotent: migration 6 runs it, and M5d runs it again before the `REDACT_TERMS` key is removed. Returns
+    the number of rows added (each bumps `protected_version` through the trigger)."""
+    added = 0
+    for term in dict.fromkeys(t.strip() for t in terms if t.strip()):
+        if conn.execute("SELECT 1 FROM learners WHERE kind != 'anonymous' AND (display_name = ? COLLATE NOCASE "
+                        "OR alias = ? COLLATE NOCASE)", (term, term)).fetchone():
+            continue
+        cur = conn.execute("INSERT OR IGNORE INTO household_terms(term, kind, created_at) VALUES(?, 'name', ?)",
+                           (term, now_iso()))
+        added += cur.rowcount
+    return added
+
+
+def file_version(path: Path | str) -> int:
+    """`user_version` of a file at any schema, read-only and without the opener's lock."""
+    conn = sqlite3.connect(f"file:{Path(path).resolve().as_posix()}?mode=ro", uri=True)
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
 
 
 def restore_file(path: Path | str, backup: Path | str) -> None:
@@ -829,7 +931,18 @@ def restore_file(path: Path | str, backup: Path | str) -> None:
 
 
 def _split(script: str) -> list[str]:
-    return [s.strip() for s in script.split(";") if s.strip()]
+    """Statements of a script; a `CREATE TRIGGER … BEGIN …; END` keeps the semicolons of its body."""
+    out: list[str] = []
+    buf = ""
+    for part in script.split(";"):
+        buf = f"{buf};{part}" if buf else part
+        s = buf.strip()
+        if s.upper().startswith("CREATE TRIGGER") and not s.upper().endswith("END"):
+            continue
+        if s:
+            out.append(s)
+        buf = ""
+    return out
 
 
 def dumps(obj: Any) -> str:

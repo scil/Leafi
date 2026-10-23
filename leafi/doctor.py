@@ -47,6 +47,8 @@ PURPOSE = {
     "brain local fallback": "a local Ollama model used when Claude is unreachable; serves the learner",
     "book lookup": "finds a book's title from its ISBN on Open Library; serves the owner adding books",
     "sqlite": "the database of sessions, miscues and progress (data/leafi.db); serves the owner and every session",
+    "schools": ("every learner's school name or \"no school\", replaced before any text leaves (ADR-0018 §3); a "
+                "learner without an answer keeps their own words off the cloud; serves each child's privacy"),
     "wordlists": ("tells a misread real word (a candidate error to practise) from a garbled one (only observed); "
                   "later ranks new words by level (M7); serves the learner's error detection"),
 }
@@ -95,8 +97,9 @@ def sqlite_line(settings: Settings) -> str:
             try:
                 mode = c.execute("PRAGMA journal_mode").fetchone()[0]
                 n = c.execute("PRAGMA user_version").fetchone()[0]
+                learner = " --learner \"<name>\"" if n < 5 else ""
                 schema = f" schema={n}" + ("" if n == storage.SCHEMA_VERSION else
-                                           " (run python -m leafi migrate --learner \"<name>\", ADR-0018 §7.2)")
+                                           f" (run python -m leafi migrate{learner}, ADR-0018 §7.2)")
             finally:
                 c.close()
         except sqlite3.Error as e:
@@ -107,6 +110,29 @@ def sqlite_line(settings: Settings) -> str:
         return f"{'sqlite':<22}{v:<16}{'ok':<16}leafi.db journal_mode={mode}"
     return (f"{'sqlite':<22}{v:<16}{'WAL off':<16}has the WAL-reset bug; leafi.db journal_mode={mode}; "
             "replace the Python install's DLLs\\sqlite3.dll with 3.51.3+ (ADR-0019 §2)")
+
+
+def schools_line(settings: Settings) -> str:
+    """Learners without a school answer (design D10), read-only so it works on a file not yet migrated."""
+    import json
+    import sqlite3
+
+    if not settings.db_path.exists():
+        return f"{'schools':<22}{'leafi.db':<16}{'ok':<16}no learners yet"
+    try:
+        c = sqlite3.connect(f"file:{settings.db_path.resolve().as_posix()}?mode=ro", uri=True)
+        try:
+            rows = c.execute("SELECT display_name, settings FROM learners WHERE kind='learner' AND forgetting=0 "
+                             "ORDER BY id").fetchall()
+        finally:
+            c.close()
+    except sqlite3.Error as e:
+        return f"{'schools':<22}{'leafi.db':<16}{'unknown':<16}{e}"
+    missing = [n for n, s in rows if json.loads(s or "{}").get("privacy.school") is None]
+    if not missing:
+        return f"{'schools':<22}{'leafi.db':<16}{'ok':<16}{len(rows)} learner(s) answered; python -m leafi privacy schools"
+    return (f"{'schools':<22}{'leafi.db':<16}{'not answered':<16}{', '.join(missing)}: set with python -m leafi "
+            "privacy learner \"<name>\" school \"<school>\"|none --yes")
 
 
 def wordlist_line(settings: Settings) -> str:
@@ -131,6 +157,7 @@ def report(settings: Settings) -> str:
     for label, backend, state, detail in rows(settings):
         add(label, f"{label:<22}{backend:<16}{state:<16}{detail}")
     add("sqlite", sqlite_line(settings))
+    add("schools", schools_line(settings))
     add("wordlists", wordlist_line(settings))
     if not settings.redact_list():
         lines.append("WARNING: REDACT_TERMS is empty; set it with: python -m leafi setup --redact \"<name>,<school>\"")

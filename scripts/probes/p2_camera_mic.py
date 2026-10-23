@@ -39,6 +39,9 @@ async def main() -> None:
     ap.add_argument("--keep", action="store_true")
     a = ap.parse_args()
     settings = Settings()
+    from leafi import bootstrap
+
+    bootstrap.install(settings)  # the socket guard before any service (M5 design D2)
     url = f"{a.rtsp}/{settings.stream_name}"
     info = probe(url)
     for s in info.get("streams", []):

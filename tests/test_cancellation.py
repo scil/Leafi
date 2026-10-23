@@ -11,7 +11,7 @@ from leafi.study.harness import activities, loop
 from tests.harness_session import activities as acts
 from tests.harness_session import env, run, summary
 
-START = ["Ada", "yes", None]  # identified, the default chain's read_listen starts
+START = ["Ada", "yes", "no school", None]  # identified, the default chain's read_listen starts
 
 
 class Clock:

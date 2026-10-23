@@ -55,6 +55,19 @@ As built (plan M3, Decision log 2026-10-23): a table with several texts has one 
 | `review_answers` | `ease IN (1,2,3,4)` | ADR-0017 §3.1 |
 | `corrections` | + `source_learner_id`, `forgotten` | ADR-0018 §3 |
 
+## Migration 6 (in `storage.py` since M5a)
+
+Egress under M5 (`docs/plans/active/2026-10-23-m5-egress-design.md` D5, D8, D10, D12, D19). `SCHEMA_V5` is frozen: a version-4 file runs step 5 to it and then step 6, each step in its own transaction (`storage._step`); a version-5 file runs step 6 alone and needs no `--learner`. `SEEDS` are the rows a fresh file and step 6 both insert. `tests/test_migration_6.py` asserts schema and seed rows equal a fresh file.
+
+| Entity | Change | Owner of the meaning |
+|---|---|---|
+| `egress_log` | purpose + `notify` (the parent notification: a learner's surrogate and counts); + `owner` (`pid:start` of the writing process, for recovery of stuck `sending` rows) | design D5, D8 |
+| `reading_sessions` | + `owner`, `post_done_at` (written after delivery and extraction; the sweeper and `forget` treat a session as disposable only once it is set) | design D5 |
+| `pseudonyms` | new: entity (`learner:<id>`, `former:<id>`, `term:<id>`), surrogate, both unique (surrogate case-insensitively) | design D10 |
+| `privacy_state` | new: `protected_version`, bumped by triggers on every insert, delete or name/alias/kind/forgetting update of `learners` and every change to `household_terms`, in the writer's transaction | design D12 |
+| `learners.settings` | the privacy keys `cloud.text`, `privacy.media`, `privacy.school` (`none` or a `household_terms` id of kind `school`) and `privacy.version`, written only by `leafi.privacy.settings` (the harness's `settings.save` refuses them) | design D10, D12 |
+| `household_terms` | the household's old `REDACT_TERMS` imported as kind `name` (a learner's own name skipped); `import_legacy_terms` runs again before the key is removed | design D12 |
+
 ## Invariants
 
 - Page text is read only through `pages.current_text()`; verified spans survive re-OCR. Test: `tests/test_corrections.py`.

@@ -49,7 +49,18 @@ def test_core_imports_nothing_from_other_rings():
     bad = []
     for f in _files("core"):
         for name in _imports(f):
-            if name.startswith(("leafi.devices", "leafi.services", "leafi.study", "leafi.app", "leafi.cli")):
+            if name.startswith(("leafi.devices", "leafi.services", "leafi.study", "leafi.app", "leafi.cli",
+                                "leafi.privacy", "leafi.bootstrap")):
+                bad.append(f"{f.name}: {name}")
+    assert bad == []
+
+
+def test_privacy_and_bootstrap_import_only_core():
+    """M5 design D1/D2: egress sits between core and every caller; bootstrap runs before any service exists."""
+    bad = []
+    for f in [*_files("privacy"), LEAFI / "bootstrap.py"]:
+        for name in _imports(f):
+            if name.startswith("leafi.") and not name.startswith(("leafi.core", "leafi.privacy")):
                 bad.append(f"{f.name}: {name}")
     assert bad == []
 

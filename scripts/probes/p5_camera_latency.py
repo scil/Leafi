@@ -235,6 +235,9 @@ async def main() -> None:
     from leafi.services import tts
 
     settings = Settings()
+    from leafi import bootstrap
+
+    bootstrap.install(settings)  # the socket guard before any service (M5 design D2)
     built = composition.build(settings, text_mode=False, voice_policy="primary")
     cam = built.devices.get("desk_cam")
     if cam is None:

@@ -97,17 +97,19 @@ async def evaluate(csv_path: Path, settings: Settings) -> None:
 
 
 async def main() -> None:
-    from leafi.core import netguard
+    from leafi import bootstrap
     from leafi.core.audio import read_wav
     from leafi.services import pronunciation, tts
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval", type=Path, help="parent-labelled retry CSV (expected, path, label)")
     args = ap.parse_args()
-    if os.environ.get("LEAFI_NO_NETWORK") == "1":
-        netguard.install()
+    no_network = os.environ.get("LEAFI_NO_NETWORK") == "1"
+    settings = Settings(_env_file=None, cache_dir=Path(tempfile.mkdtemp(prefix="p4-")), tts_voice_en_kokoro="af_heart",
+                        leafi_no_network=no_network)
+    bootstrap.install(settings)
+    if no_network:
         print("LEAFI_NO_NETWORK=1: non-loopback connects raise")
-    settings = Settings(_env_file=None, cache_dir=Path(tempfile.mkdtemp(prefix="p4-")), tts_voice_en_kokoro="af_heart")
     if args.eval:
         await evaluate(args.eval, settings)
         return

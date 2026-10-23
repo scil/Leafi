@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from leafi import bootstrap
 from leafi import devices as device_registry
 from leafi.core.config import Settings, env_lookup
 from leafi.core.hub import DevicesConfig, DeviceSpec, Hub, load_devices_config
@@ -44,7 +45,10 @@ def build(
     tts_backend: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> App:
-    """Build the Hub. `extra` maps capability → {name: adapter} for tests and scripted runs."""
+    """Build the Hub. `extra` maps capability → {name: adapter} for tests and scripted runs. Refuses unless
+    `leafi.bootstrap.install` ran first, so no entry point builds services without the socket guard (M5 D2)."""
+    if not bootstrap.installed():
+        raise RuntimeError("leafi.bootstrap.install(settings) must run before app.build (M5 design D2)")
     cfg = config or load_config(settings)
     warnings = list(cfg.warnings)
     slots: dict[str, dict[str, Any]] = {k: {} for k in _PORTS}

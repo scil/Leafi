@@ -38,6 +38,33 @@ async def test_a_new_name_is_enrolled_after_a_yes(settings):
     assert (o["display_name"], o["kind"]) == ("Cleo", "learner")
 
 
+async def test_a_new_learner_is_asked_for_a_school(settings):
+    from leafi.privacy import settings as privacy
+
+    store = Store(settings.db_path)
+    sid = await run(env(settings, ["I'm Cleo", "yes", "I go to Oakwood Primary", "/stop"]))
+    p = privacy.read(store, _owner(store, sid)["id"])
+    assert privacy.school_name(store, p) == "Oakwood Primary"
+    sid = await run(env(settings, ["I'm Dan", "yes", "no school", "/stop"]))
+    assert privacy.read(store, _owner(store, sid)["id"]).school == "none"
+    sid = await run(env(settings, ["I'm Eve", "yes", "I don't know", "/stop"]))
+    eve = _owner(store, sid)["id"]
+    assert privacy.read(store, eve).school is None and not privacy.read(store, eve).cloud_text_allowed
+
+
+def test_parse_school():
+    from leafi.core.ports import Utterance
+    from leafi.study.harness.identify import parse_school
+
+    def p(text):
+        return parse_school(Utterance(text=text, words=[], typed=False) if text is not None else None)
+
+    assert p("It's St. Mary's.") == ("school", "St. Mary's")
+    assert p("my school is 实验小学") == ("school", "实验小学")
+    assert p("No") == p("I don’t go to school") == p("homeschooled") == ("none", None)
+    assert p(None) is p("") is p("not sure") is p("yes") is None
+
+
 async def test_declined_deletes_the_guests_rows_and_keeps_the_counts_under_anonymous(settings):
     store = Store(settings.db_path)
     sid = await run(env(settings, ["don't remember me", None, "The fox ran home.", "It was late and dork.", "/stop"]))

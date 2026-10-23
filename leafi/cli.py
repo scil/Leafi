@@ -13,11 +13,10 @@ from leafi.core.config import Settings
 
 
 def _settings() -> Settings:
-    s = Settings()
-    if s.leafi_no_network:
-        from leafi.core import netguard
+    from leafi import bootstrap
 
-        netguard.install()
+    s = Settings()
+    bootstrap.install(s)  # the socket guard, before any service is built (M5 design D2)
     return s
 
 
@@ -142,6 +141,46 @@ def _forget_learner(args: argparse.Namespace, settings: Settings, store) -> int:
     return 0
 
 
+def cmd_privacy(args: argparse.Namespace) -> int:
+    """`privacy schools`: every learner's school answer, for the owner to confirm (a voice answer is a child's ASR
+    text). `privacy learner NAME school VALUE`: set it (a school name, or `none`); without `--yes` it only shows the
+    learner, the key and the value (design D10/D12)."""
+    from leafi.core import learner_store
+    from leafi.core.storage import Store
+    from leafi.privacy import settings as privacy
+
+    settings = _settings()
+    with Store(settings.db_path) as store:
+        if args.what == "schools":
+            for r in learner_store.enrolled(store):
+                p = privacy.read(store, r["id"])
+                if p.school is None:
+                    shown = "NOT ANSWERED: their own words stay off the cloud"
+                elif p.school == "none":
+                    shown = "no school"
+                else:
+                    shown = repr(privacy.school_name(store, p))
+                print(f"#{r['id']} {r['display_name']}: {shown}")
+            return 0
+        try:
+            lid, _ = learner_store.choose(store, args.name, enrol=False)
+        except learner_store.LearnerChoice as e:
+            print(e)
+            return 1
+        value = None if args.value.strip().casefold() == "none" else args.value.strip()
+        shown = "no school" if value is None else repr(value)
+        if not args.yes:
+            print(f"would set the school of learner #{lid} {args.name} to {shown}. Run again with --yes to do it.")
+            return 1
+        try:
+            p = privacy.set_school(store, lid, value)
+        except privacy.InvalidPrivacySetting as e:
+            print(e)
+            return 1
+        print(f"learner #{lid} {args.name}: school {shown} (privacy version {p.version})")
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     """A consistent copy of data/leafi.db through SQLite's backup API; never copy the file by hand (ADR-0019 §8).
     Works at any schema version, so it runs before `migrate`."""
@@ -167,6 +206,14 @@ def cmd_backup(args: argparse.Namespace) -> int:
         print(f"nothing to back up: {settings.db_path} does not exist")
         return 1
     print(f"backed up to {backup_file(settings.db_path, dest)}")
+    from leafi.privacy import secret
+
+    key = secret.key_path(settings.data_dir)
+    if key.exists():  # the surrogates of a restored database need the key they were made with (design D8)
+        import shutil
+
+        shutil.copyfile(key, Path(dest).with_suffix(".key"))
+        print(f"and its egress key to {Path(dest).with_suffix('.key')}")
     return 0
 
 
@@ -184,22 +231,23 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         if not path.exists():
             print(f"{path} does not exist; Leafi creates it at schema {storage.SCHEMA_VERSION} on first open")
             return 0
-        if not args.learner:
+        if not args.learner and storage.file_version(path) < 5:
             print("migrate needs --learner \"<name>\": the child whose sessions are already recorded")
             return 2
-        res = storage.migrate_file(path, args.learner, learner_settings={"anki.deck": settings.anki_deck})
+        res = storage.migrate_file(path, args.learner, learner_settings={"anki.deck": settings.anki_deck},
+                                   legacy_terms=settings.redact_list())
     except storage.DatabaseInUse as e:
         print(e)
         return 2
     except (storage.SchemaError, ValueError, FileNotFoundError) as e:
         print(f"not migrated: {e}")
         return 1
-    if res.learner_id is None:
+    if res.from_version == storage.SCHEMA_VERSION:
         print(f"{path.name} is already at schema {storage.SCHEMA_VERSION}")
         return 0
-    print(f"migrated {path.name} from schema {res.from_version} to {storage.SCHEMA_VERSION}; first learner "
-          f"#{res.learner_id} {args.learner.strip()}; rebuilt {len(res.rebuilt)} table(s), created "
-          f"{len(res.created)}; backup {res.backup}")
+    first = f"; first learner #{res.learner_id} {args.learner.strip()}" if res.learner_id is not None else ""
+    print(f"migrated {path.name} from schema {res.from_version} to {storage.SCHEMA_VERSION}{first}; rebuilt "
+          f"{len(res.rebuilt)} table(s), created {len(res.created)}; backup {res.backup}")
     return 0
 
 
@@ -398,6 +446,15 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--yes", action="store_true", help="confirm --learner (without it, only print what would go)")
     f.add_argument("--delete-anki-deck", action="store_true", help="with --learner: also delete their Anki deck")
     f.set_defaults(fn=cmd_forget)
+    pv = sub.add_parser("privacy", help="learners' privacy answers (ADR-0018 §3, §5)")
+    pvs = pv.add_subparsers(dest="what", required=True)
+    pvs.add_parser("schools", help="every learner's school answer, to confirm")
+    pl = pvs.add_parser("learner", help="set a learner's school: a name, or none")
+    pl.add_argument("name")
+    pl.add_argument("key", choices=["school"])
+    pl.add_argument("value", help='the school\'s name, or "none"')
+    pl.add_argument("--yes", action="store_true", help="confirm (without it, only print what would change)")
+    pv.set_defaults(fn=cmd_privacy)
     b = sub.add_parser("backup", help="consistent copy of data/leafi.db (SQLite backup API, ADR-0019)")
     b.add_argument("--to", type=Path, help="destination file (default data/backups/leafi-<UTC time>.db)")
     b.add_argument("--prune", action="store_true",

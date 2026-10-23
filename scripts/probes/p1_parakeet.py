@@ -84,6 +84,9 @@ async def kokoro_clips(sentences: list[str]) -> dict[str, np.ndarray]:
     from leafi.services import tts
 
     settings = Settings(_env_file=None, cache_dir=Path(tempfile.mkdtemp(prefix="p1-")))
+    from leafi import bootstrap
+
+    bootstrap.install(settings)  # the socket guard before any service (M5 design D2)
     service = tts.create(settings, en="kokoro", zh="kokoro")
     out = {}
     for s in sentences:

@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 
 from leafi.core import learner_store
 from leafi.core.ports import Utterance
+from leafi.privacy import settings as privacy
 from leafi.study import controls
 from leafi.study.harness import guests
 from leafi.study.harness import settings as hs
@@ -84,6 +85,46 @@ async def _confirm(s: Session, question: str) -> bool:
     return ctl is not None and ctl.kind == "yes"
 
 
+_SCHOOL_PREFIX = re.compile(r"^(?:i go to|i'm at|i am at|it's|it is|my school is|at)\s+", re.IGNORECASE)
+_NO_SCHOOL = re.compile(r"^(?:no|nope|no school|none|i don'?t go to (?:a )?school|home ?school(?:ed)?)$",
+                        re.IGNORECASE)
+_UNSURE = re.compile(r"^(?:i )?(?:don'?t|do not) know$|^not sure$", re.IGNORECASE)
+
+
+def parse_school(u: Utterance | None) -> tuple[str, str | None] | None:
+    """("school", name), ("none", None), or None when there is no usable answer (silence, "don't know", a control
+    word other than no)."""
+    if u is None or not u.text.strip():
+        return None
+    text = " ".join(u.text.strip(" .!?").replace("’", "'").split())
+    if _NO_SCHOOL.match(text):
+        return "none", None
+    if _UNSURE.match(text):
+        return None
+    ctl = controls.parse(text)
+    if ctl is not None:
+        return ("none", None) if ctl.kind == "no" else None
+    name = _SCHOOL_PREFIX.sub("", text)
+    if not name or len(name.split()) > 6:
+        return None
+    return "school", name
+
+
+async def ask_school(s: Session, learner_id: int) -> None:
+    """ADR-0018 §3: every learner has a school name or an explicit "no school" (design D10). One question; no
+    usable answer leaves it unset, which keeps this learner's own words off the cloud until the household sets it
+    (`python -m leafi privacy learner <name> school …`); `doctor` shows what was heard for the owner to confirm."""
+    await s.talk.say("Do you go to a school? Tell me its name, or say no school.")
+    answer = parse_school(await s.talk.listen(ASK_S))
+    s.checkpoint()
+    if answer is None:
+        return
+    try:
+        privacy.set_school(s.store, learner_id, answer[1])
+    except Exception:  # busy or refused: the learner stays unanswered, which fails closed
+        log.warning("school answer not stored", exc_info=True)
+
+
 async def identify(s: Session, *, keep_days: int, preset: str | None = None) -> int:
     """Returns the learner id the session now belongs to (possibly the guest)."""
     store = s.store
@@ -125,6 +166,7 @@ async def _identify(s: Session, keep_days: int) -> int:
             elif await _confirm(s, f"Shall I remember you as {name}?"):
                 lid = learner_store.create(store, name)
                 if adopt(s, lid):
+                    await ask_school(s, lid)
                     return lid
                 await talk.say("Let's try that again.")
         name = None

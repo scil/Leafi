@@ -7,6 +7,16 @@ import pytest
 from leafi.core.config import Settings, hardware_tests_enabled
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _bootstrap():
+    """Every Leafi process starts through `leafi.bootstrap`; the suite does too, in log-only mode (M5 design D2).
+    Tests of the guard's enforcing mode configure their own policy and restore this one."""
+    from leafi import bootstrap
+
+    bootstrap.install(Settings(_env_file=None, devices_file="does-not-exist.yml"), mode="log")
+    yield
+
+
 def pytest_collection_modifyitems(config, items):
     if hardware_tests_enabled():
         return
