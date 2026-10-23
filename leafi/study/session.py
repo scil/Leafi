@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from leafi.core import alerts
+from leafi.core import alerts, learner_store
 from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate
 from leafi.core.ports import Display, ListenerLost, Utterance
@@ -80,8 +80,11 @@ class SessionFlags:
 class StudySession:
     def __init__(self, *, store: Store, hub: Hub, settings, brain=None, anki_client: anki.AnkiClient | None = None,
                  listener=None, pron=None, page_tracker=None, ocr=None, catalog=None, control_source=None,
-                 word_info: WordInfo | None = None) -> None:
+                 word_info: WordInfo | None = None, learner_id: int | None = None) -> None:
         self.store = store
+        # Who is reading: chosen by the caller until ADR-0018 identification (plan M6.5); a session built by hand
+        # on a database with one learner (or none, in tests) runs as that learner.
+        self.learner_id = learner_id if learner_id is not None else learner_store.ensure_learner(store)
         self.word_info = word_info or NullWordInfo()  # ADR-0013 v2 WordInfo; Null = v1 crediting
         self.ocr = ocr
         self.catalog = catalog
@@ -305,7 +308,8 @@ class StudySession:
         return self.store.insert(
             "utterances", page_read_id=self.read_id, page_revision_id=self.rev.id if self.rev else None,
             session_id=self.session_id, text=u.text, kind=kind, created_at=now_iso(),
-            words=dumps([[w.text, w.start_s, w.end_s, w.conf] for w in u.words]))
+            words=dumps([[w.text, w.start_s, w.end_s, w.conf] for w in u.words]),
+            provenance_class="learner", source_learners=dumps([self.learner_id]))
 
     def _save_state(self) -> None:
         if self.read_id is not None and self.state is not None:
@@ -330,9 +334,9 @@ class StudySession:
         self._lease_lost = asyncio.get_running_loop().create_future()
         self._renew = asyncio.create_task(self._renew_loop())
         mode = "voice" if self.voice else "text"
-        self.session_id = self.store.insert("reading_sessions", started_at=now_iso(), mode=mode,
-                                            devices=dumps(sorted(set(self.hub.mouths) | set(self.hub.faces))),
-                                            lease_token=self.lease.token)
+        self.session_id = learner_store.insert(
+            self.store, "reading_sessions", self.learner_id, started_at=now_iso(), mode=mode,
+            devices=dumps(sorted(set(self.hub.mouths) | set(self.hub.faces))), lease_token=self.lease.token)
         self.guard = coach.AsyncGuard(self.session_id)
         self.request = PageRequest(page_number, page_text)
         try:
@@ -395,7 +399,7 @@ class StudySession:
                 return WRAP
         self.book_id = books.find_or_create(self.store, title, isbn, language=self.settings.study_language)
         self.store.execute("UPDATE reading_sessions SET book_id=? WHERE id=?", (self.book_id, self.session_id))
-        row = records.resumable_read(self.store, self.book_id)
+        row = records.resumable_read(self.store, self.learner_id, self.book_id)
         if row is not None:
             printed = self.store.one("SELECT printed_number FROM pages WHERE id=?", (row["page_id"],))
             await self.line("continue_offer", page=printed["printed_number"] or row["page_id"])
@@ -541,7 +545,8 @@ class StudySession:
             return READ
         try:
             await anki.reconcile(self.store, self.anki, self.settings.review_known_interval_days)
-            cards = await anki.due_cards(self.store, self.anki, self.settings.anki_deck, self.settings.review_max_cards)
+            cards = await anki.due_cards(self.store, self.anki, self.learner_id, self.settings.anki_deck,
+                                         self.settings.review_max_cards)
         except (anki.AnkiUnavailable, anki.AnkiError):
             return READ
         if not cards:
@@ -558,7 +563,7 @@ class StudySession:
                 kind = ctl.kind if ctl else None
                 if kind in ("good", "again"):
                     self._store_utterance(u, "answer")
-                    await anki.answer(self.store, self.anki, card, 3 if kind == "good" else 1,
+                    await anki.answer(self.store, self.anki, self.learner_id, card, 3 if kind == "good" else 1,
                                       self.settings.review_known_interval_days)
                     break
                 if kind == "stop":
@@ -751,7 +756,7 @@ class StudySession:
     async def practice(self, cands: list[int]) -> str | None:
         self.flags.transitions.append(PRACTICE)
         items = [(i, self.state.tokens[i].text) for i in cands]
-        plan, rest = coach.practice_plan(self.store, items)
+        plan, rest = coach.practice_plan(self.store, self.learner_id, items)
         for i, _ in rest:
             mid = self._miscue_at(i)
             if mid:
@@ -821,7 +826,7 @@ class StudySession:
             if attempt == 2:
                 if evidence == "acoustic" and score is not None and score < PRON_CONFIRM_BELOW:
                     miscues.set_status(self.store, mid, "confirmed", evidence="acoustic", score=score)
-                    item = knowledge.upsert_item(self.store, "pronunciation", word)
+                    item = knowledge.upsert_item(self.store, self.learner_id, "pronunciation", word)
                     knowledge.add_encounter(self.store, item, session_id=self.session_id, trigger="miscue",
                                             revision_id=self.rev.id, context_sentence=self._sentence_of_token(mid))
                 else:
@@ -877,7 +882,7 @@ class StudySession:
             if req is not None:
                 data = await coach.enrich(self.brain, req, self.guard, self.settings.brain_deadline_s)
         kind = "word" if target and " " not in target else "phrase"
-        item = knowledge.upsert_item(self.store, kind, target or sentence)
+        item = knowledge.upsert_item(self.store, self.learner_id, kind, target or sentence)
         if data:
             await self.say(phrases.safe_or(data["meaning_en"], "explain_unavailable"))
             if data.get("meaning_zh"):
@@ -909,12 +914,13 @@ class StudySession:
         if span is None:
             await self.line("correction_not_found", local_only=True, old=ctl.old)
             corrections.record_unlocated(self.store, revision_id=self.rev.id, old_text=ctl.old, new_text=ctl.text,
-                                         source=source, utterance_id=utterance_id)
+                                         source=source, learner_id=self.learner_id, utterance_id=utterance_id)
             await self.line("correction_saved")
             return
         res = corrections.apply_correction(self.store, page_id=self.page_id, revision_id=self.rev.id,
                                            char_start=span[0], char_end=span[1], new_text=ctl.text, source=source,
-                                           utterance_id=utterance_id, state=self.state, book_id=self.book_id)
+                                           learner_id=self.learner_id, utterance_id=utterance_id, state=self.state,
+                                           book_id=self.book_id)
         self.rev = pages.revision(self.store, res.revision_id)
         self.state = res.state
         self._save_state()
@@ -967,7 +973,7 @@ class StudySession:
                 await self.say(phrases.safe_or(q["answer"], "check_correct"))
                 if outcome == "incorrect":
                     key = coach.find_on_page(self.state, q["item_key"]) or q["item_key"]
-                    item = knowledge.upsert_item(self.store, "fact", key)
+                    item = knowledge.upsert_item(self.store, self.learner_id, "fact", key)
                     knowledge.add_encounter(self.store, item, session_id=self.session_id, trigger="check",
                                             revision_id=self.rev.id, context_sentence=window)
         await self.line("after_check")
@@ -1008,7 +1014,7 @@ class StudySession:
                 miscues.settle_open(self.store, self.read_id, "skipped")
                 self.state = settle(self.state, open_candidates(self.state))
             self._end_page_read()
-        knowledge.recompute_difficulties(self.store)
+        knowledge.recompute_difficulties(self.store, self.learner_id)
         if self.book_id is not None:
             lexicon.rebuild(self.store, self.book_id)
         summ = records.summary(self.store, self.session_id)

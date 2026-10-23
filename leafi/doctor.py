@@ -71,17 +71,21 @@ def sqlite_line(settings: Settings) -> str:
     from leafi.core import storage
 
     version = storage._library_version()
-    mode = "not created"
+    mode, schema = "not created", ""
     if settings.db_path.exists():
         try:
             c = sqlite3.connect(f"file:{settings.db_path.resolve().as_posix()}?mode=ro", uri=True)
             try:
                 mode = c.execute("PRAGMA journal_mode").fetchone()[0]
+                n = c.execute("PRAGMA user_version").fetchone()[0]
+                schema = f" schema={n}" + ("" if n == storage.SCHEMA_VERSION else
+                                           " (run python -m leafi migrate --learner \"<name>\", ADR-0018 §7.2)")
             finally:
                 c.close()
         except sqlite3.Error as e:
             mode = f"unreadable ({e})"
     v = ".".join(map(str, version))
+    mode += schema
     if storage.wal_safe(version):
         return f"{'sqlite':<22}{v:<16}{'ok':<16}leafi.db journal_mode={mode}"
     return (f"{'sqlite':<22}{v:<16}{'WAL off':<16}has the WAL-reset bug; leafi.db journal_mode={mode}; "

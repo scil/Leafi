@@ -10,6 +10,7 @@ from leafi.core.storage import Store
 from leafi.services.ocr.mock import MockOcr
 from leafi.study import books, corrections, lexicon, pages
 from leafi.study.page_tracker import PageTracker, frame_diff, purge_page_images, split_number
+from tests import seed
 from tests.fixtures.pages import PAGES, FakeEye, blank, render
 
 
@@ -88,7 +89,8 @@ async def test_verified_correction_survives_a_later_misread_and_feeds_the_lexico
     assert pages.current_text(store, found.page_id) == misread
     span = corrections.locate(misread, "though")
     corrections.apply_correction(store, page_id=found.page_id, revision_id=found.revision_id,
-                                 char_start=span[0], char_end=span[1], new_text="through", source="text")
+                                 char_start=span[0], char_end=span[1], new_text="through", source="text",
+                                 learner_id=seed.learner(store))
     assert "through" in lexicon.entries(store, book)
     eye.show(render(text, ocr_text=misread.replace("leaves", "leeves")))
     again = await tracker.find(book)

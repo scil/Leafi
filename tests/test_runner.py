@@ -44,7 +44,8 @@ def captured(monkeypatch, settings):
 
 
 def _args(**kw) -> argparse.Namespace:
-    base = dict(text=False, mock=True, voice_policy=None, mouth=None, book="Fixture", page_text=None, page=None)
+    base = dict(text=False, mock=True, voice_policy=None, mouth=None, book="Fixture", page_text=None, page=None,
+                learner="Ada")
     return argparse.Namespace(**{**base, **kw})
 
 

@@ -21,7 +21,7 @@ def _correct(store, page_id, rev, old="though", new="through", state=None):
     text = pages.current_text(store, page_id)
     span = corrections.locate(text, old, near=0)
     return corrections.apply_correction(store, page_id=page_id, revision_id=rev, char_start=span[0],
-                                        char_end=span[1], new_text=new, source="text", state=state)
+                                        char_end=span[1], new_text=new, source="text", learner_id=seed.learner(store), state=state)
 
 
 def test_correction_creates_a_revision_chain_with_edit_map_and_verified_span(store):
@@ -63,14 +63,15 @@ def test_overlapping_miscues_of_any_revision_are_invalidated_with_reason(store):
     book_id, page_id, rev1 = seed.book_page(store, TEXT)
     s = seed.session(store, book_id)
     read = seed.page_read(store, s, page_id, rev1)
-    cand = seed.miscue(store, read, rev1, TEXT, "though")
+    # settled rows first: at most one open candidate per token (migration 5's partial unique index)
     unsure = seed.miscue(store, read, rev1, TEXT, "though", status="unsure", reason="disagreed")
     withdrawn = seed.miscue(store, read, rev1, TEXT, "though", status="withdrawn", reason="practice")
+    cand = seed.miscue(store, read, rev1, TEXT, "though")
     other = seed.miscue(store, read, rev1, TEXT, "boy")
     # a first correction elsewhere shifts offsets (rev 2), then the second one hits rev-1 miscues via the chain
     span = corrections.locate(TEXT, "wind", near=0)
     corrections.apply_correction(store, page_id=page_id, revision_id=rev1, char_start=span[0], char_end=span[1],
-                                 new_text="cold wind", source="text")
+                                 new_text="cold wind", source="text", learner_id=seed.learner(store))
     rev2 = pages.current_revision(store, page_id).id
     res = _correct(store, page_id, rev2)
     assert sorted(res.invalidated) == sorted([cand, unsure])
@@ -165,6 +166,7 @@ def test_a_span_starting_at_an_insertion_point_follows_the_inserted_text(store):
     assert pages.map_span((0, 4), [[4, 4, 4, 8]]) == (0, 4)  # a span ending there stays before it
     span = corrections.locate("The big cat ran.", "big")
     res = corrections.apply_correction(store, page_id=page_id, revision_id=rev2, char_start=span[0],
-                                       char_end=span[1], new_text="small", source="text")
+                                       char_end=span[1], new_text="small", source="text",
+                                       learner_id=seed.learner(store))
     assert cat not in res.invalidated
     assert seed.status_of(store, cat) == ("candidate", None)

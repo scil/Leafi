@@ -1,0 +1,148 @@
+"""Learners and the learner-scoped writes (ADR-0018 §1, §3, §7.1). A core module: `leafi.study` and, later,
+`leafi.privacy` import it; it imports nothing from either.
+
+Every row of a direct-owner table is inserted through `insert`, which is a conditional insert: it writes only while
+the owner and every source learner of its text exist and are not being forgotten, so a write that races
+`forget --learner` is refused instead of leaving a copy behind (the fence of ADR-0018 §1).
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Iterable
+
+from leafi.core.storage import Store, dumps, loads, now_iso
+
+DIRECT = frozenset({"reading_sessions", "knowledge_items", "difficulties", "retrieval_events", "learner_notes",
+                    "book_notes", "review_answers", "anki_outbox", "consents", "encounters"})
+CLASSES = ("page", "system", "learner", "derived_from_learner", "parent")
+# (table, provenance-class column, source-learners column) for every stored text that can reach a payload (§3).
+PROVENANCE = (
+    ("utterances", "provenance_class", "source_learners"),
+    ("activities", "outcome_provenance_class", "outcome_source_learners"),
+    ("activities", "assessment_provenance_class", "assessment_source_learners"),
+    ("brain_calls", "payload_provenance_class", "payload_source_learners"),
+    ("brain_calls", "response_provenance_class", "response_source_learners"),
+    ("learner_notes", "provenance_class", "source_learners"),
+    ("book_notes", "provenance_class", "source_learners"),
+    ("encounters", "context_provenance_class", "context_source_learners"),
+    ("encounters", "explanation_provenance_class", "explanation_source_learners"),
+    ("anki_outbox", "card_provenance_class", "card_source_learners"),
+)
+
+
+class LearnerUnavailable(RuntimeError):
+    """The owner or a source learner does not exist or is being forgotten: the write was refused."""
+
+
+class LearnerChoice(LookupError):
+    """No learner could be chosen without the household saying which (the message lists them)."""
+
+
+def prov(cls: str, sources: Iterable[int] = ()) -> tuple[str, str]:
+    """A provenance pair (class, json source ids) for a writer's columns."""
+    if cls not in CLASSES:
+        raise ValueError(f"provenance class {cls!r}")
+    return cls, dumps(sorted(set(sources)))
+
+
+def stated_sources(cols: dict) -> set[int]:
+    """The learner ids a row's own `*source_learners` columns name: what the fence must check (codex M3 #3)."""
+    out: set[int] = set()
+    for name, value in cols.items():
+        if name.endswith("source_learners"):
+            out.update(int(i) for i in loads(value, []))
+    return out
+
+
+def insert(store: Store, table: str, learner_id: int, *, sources: Iterable[int] = (), **cols) -> int:
+    """Insert one row owned by `learner_id`; refused (LearnerUnavailable) unless the owner and every source learner
+    (`sources` and every id the row's provenance columns name) exist with `forgetting = 0`, checked in the same
+    statement as the insert."""
+    if table not in DIRECT:
+        raise ValueError(f"{table} is not a learner-owned table")
+    cols = {"learner_id": learner_id, **cols}
+    ids = sorted({learner_id, *sources, *stated_sources(cols)})
+    names = ", ".join(cols)
+    marks = ", ".join("?" for _ in cols)
+    idm = ", ".join("?" for _ in ids)
+    cur = store.execute(
+        f"INSERT INTO {table}({names}) SELECT {marks} WHERE "
+        f"(SELECT COUNT(*) FROM learners WHERE id IN ({idm}) AND forgetting = 0) = ?",
+        (*cols.values(), *ids, len(ids)))
+    if cur.rowcount != 1:
+        raise LearnerUnavailable(f"{table}: learner(s) {ids} missing or being forgotten")
+    return int(cur.lastrowid)
+
+
+# ---------------------------------------------------------------- learners
+
+
+def create(store: Store, display_name: str, *, kind: str = "learner", birth_year: int | None = None,
+           school_year: int | None = None, settings: dict | None = None) -> int:
+    name = display_name.strip()
+    if not name:
+        raise ValueError("a learner needs a name")
+    return store.insert("learners", kind=kind, display_name=name, birth_year=birth_year, school_year=school_year,
+                        settings=dumps(settings or {}), created_at=now_iso())
+
+
+def get(store: Store, learner_id: int) -> sqlite3.Row | None:
+    return store.one("SELECT * FROM learners WHERE id=?", (learner_id,))
+
+
+def enrolled(store: Store) -> list[sqlite3.Row]:
+    """Learners (not guests, not `anonymous`) that are not being forgotten, oldest first."""
+    return store.all("SELECT * FROM learners WHERE kind='learner' AND forgetting=0 ORDER BY id")
+
+
+def setting(store: Store, learner_id: int, key: str, default=None):
+    row = get(store, learner_id)
+    return loads(row["settings"], {}).get(key, default) if row else default
+
+
+def choose(store: Store, name: str | None, *, enrol: bool = True) -> tuple[int, bool]:
+    """The learner a v1 session runs as until identification arrives (plan M3 decision): `name` matches an
+    enrolled learner case-insensitively, else is enrolled when `enrol`; no name picks the only enrolled learner.
+    Returns (id, newly enrolled)."""
+    rows = enrolled(store)
+    if name is not None:
+        hits = [r for r in rows if r["display_name"].casefold() == name.strip().casefold()]
+        if len(hits) == 1:
+            return hits[0]["id"], False
+        if hits:
+            raise LearnerChoice(f"{len(hits)} learners are called {name!r}; ids {[r['id'] for r in hits]}")
+        if not enrol:
+            raise LearnerChoice(f"no learner called {name!r}; enrolled: {_names(rows)}")
+        return create(store, name), True
+    if len(rows) == 1:
+        return rows[0]["id"], False
+    if not rows:
+        raise LearnerChoice("no learner yet: start with --learner \"<name>\"")
+    raise LearnerChoice(f"say who is reading with --learner; enrolled: {_names(rows)}")
+
+
+def ensure_learner(store: Store) -> int:
+    """For tests and callers that build a session by hand: the only learner, enrolling "Learner" in an empty
+    database. The CLI never uses it; it calls `choose`."""
+    rows = enrolled(store)
+    if len(rows) == 1:
+        return rows[0]["id"]
+    if not rows:
+        return create(store, "Learner")
+    raise LearnerChoice(f"several learners; pass one: {_names(rows)}")
+
+
+def _names(rows: list[sqlite3.Row]) -> str:
+    return ", ".join(f"{r['display_name']} (#{r['id']})" for r in rows) or "none"
+
+
+def session_learner(store: Store, session_id: int) -> int | None:
+    row = store.one("SELECT learner_id FROM reading_sessions WHERE id=?", (session_id,))
+    return row["learner_id"] if row else None
+
+
+def read_learner(store: Store, page_read_id: int) -> int | None:
+    row = store.one("SELECT s.learner_id FROM page_reads pr JOIN reading_sessions s ON s.id = pr.session_id "
+                    "WHERE pr.id=?", (page_read_id,))
+    return row["learner_id"] if row else None

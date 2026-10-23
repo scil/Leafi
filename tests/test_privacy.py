@@ -168,7 +168,7 @@ def test_no_network_text_session_completes_with_the_cloud_backend_configured(tmp
     env = _env(tmp_path, ANTHROPIC_API_KEY="fake-key", BRAIN_BACKEND="claude", ANKI_URL="http://127.0.0.1:9",
                BRAIN_DEADLINE_S="5")
     r = subprocess.run([sys.executable, "-m", "leafi", "study", "--text", "--book", "Offline", "--page-text",
-                        str(page), "--page", "1"], input=script, capture_output=True, text=True, cwd=tmp_path,
+                        str(page), "--page", "1", "--learner", "Ada"], input=script, capture_output=True, text=True, cwd=tmp_path,
                        env=env, timeout=120, encoding="utf-8")
     assert r.returncode == 0, r.stderr[-2000:]
     assert "session 1 saved" in r.stdout

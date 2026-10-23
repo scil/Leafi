@@ -135,7 +135,9 @@ def check_outcome(answer: str | None, keyword_sets: list[list[str]], *, skipped:
 # ---------------------------------------------------------------- Practice plan
 
 
-def practice_plan(store: Store, candidates: list[tuple[int, str]]) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
-    """At most two candidates, ordered by Difficulty weight then position; the rest are not practised."""
-    ordered = knowledge.practice_order(store, candidates)
+def practice_plan(store: Store, learner_id: int, candidates: list[tuple[int, str]]
+                  ) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
+    """At most two candidates, ordered by the learner's Difficulty weight then position; the rest are not
+    practised."""
+    ordered = knowledge.practice_order(store, learner_id, candidates)
     return ordered[:MAX_PRACTICE], ordered[MAX_PRACTICE:]

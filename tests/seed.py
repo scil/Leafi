@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import datetime as dt
 
-from leafi.core.storage import Store, now_iso
+from leafi.core import learner_store
+from leafi.core.storage import Store, dumps, now_iso
 from leafi.core.text import tokenize
 from leafi.study import books, miscues, pages
+
+
+def learner(store: Store, name: str | None = None) -> int:
+    """A named learner, or the database's only one (enrolled on first use)."""
+    return learner_store.create(store, name) if name else learner_store.ensure_learner(store)
 
 
 def book_page(store: Store, text: str, *, title: str = "Fixture", source: str = "ocr", number: int | None = 1):
@@ -19,9 +25,17 @@ def book_page(store: Store, text: str, *, title: str = "Fixture", source: str = 
     return book_id, page_id, rev
 
 
-def session(store: Store, book_id: int, *, days_ago: float = 0.0) -> int:
+def session(store: Store, book_id: int | None, *, days_ago: float = 0.0, learner_id: int | None = None) -> int:
     started = (dt.datetime.now(dt.UTC) - dt.timedelta(days=days_ago)).isoformat()
-    return store.insert("reading_sessions", book_id=book_id, started_at=started, mode="text")
+    lid = learner_id if learner_id is not None else learner(store)
+    return learner_store.insert(store, "reading_sessions", lid, book_id=book_id, started_at=started, mode="text")
+
+
+def utterance(store: Store, session_id: int, text: str, *, kind: str = "reading",
+              page_read_id: int | None = None) -> int:
+    lid = learner_store.session_learner(store, session_id)
+    return store.insert("utterances", session_id=session_id, page_read_id=page_read_id, text=text, kind=kind,
+                        provenance_class="learner", source_learners=dumps([lid]), created_at=now_iso())
 
 
 def page_read(store: Store, session_id: int, page_id: int, rev: int) -> int:

@@ -82,9 +82,18 @@ def retokenize(state: ReadingState, old_text: str, new_text: str, edits: list[pa
     return new
 
 
+def _source_learner(source: str, learner_id: int | None) -> int | None:
+    """Who made a correction (ADR-0018 §3): required unless the parent made it."""
+    if source != "parent" and learner_id is None:
+        raise ValueError(f"a {source} correction needs the learner who made it")
+    return None if source == "parent" else learner_id
+
+
 def apply_correction(store: Store, *, page_id: int, revision_id: int, char_start: int, char_end: int,
-                     new_text: str, source: str, utterance_id: int | None = None,
+                     new_text: str, source: str, learner_id: int | None, utterance_id: int | None = None,
                      state: ReadingState | None = None, book_id: int | None = None) -> CorrectionResult:
+    """The new revision is shared book text at once (ADR-0018 §3); the row records which learner made it."""
+    by = _source_learner(source, learner_id)
     with store.transaction():
         cur = pages.current_revision(store, page_id)
         if cur is None or cur.id != revision_id:
@@ -93,7 +102,7 @@ def apply_correction(store: Store, *, page_id: int, revision_id: int, char_start
         old_seg = cur.text[char_start:char_end]
         corr_id = store.insert("corrections", page_revision_id=cur.id, char_start=char_start, char_end=char_end,
                                old_text=old_seg, new_text=new_text, source=source, utterance_id=utterance_id,
-                               created_at=now_iso())
+                               source_learner_id=by, created_at=now_iso())
         text = cur.text[:char_start] + new_text + cur.text[char_end:]
         edits = [[char_start, char_end, char_start, char_start + len(new_text)]]
         edited_new = (char_start, char_start + len(new_text))
@@ -118,7 +127,7 @@ def apply_correction(store: Store, *, page_id: int, revision_id: int, char_start
             if pages.overlaps(mapped, (char_start, char_end)):
                 miscues.set_status(store, m["id"], "invalidated", reason="page_text_corrected")
                 invalidated.append(m["id"])
-        knowledge.recompute_difficulties(store)
+        knowledge.recompute_difficulties(store, None)  # the page is shared: any learner's miscues may have moved
         if book_id is None:
             book_id = store.one("SELECT book_id FROM pages WHERE id=?", (page_id,))["book_id"]
         lexicon.add_correction(store, book_id, new_text)
@@ -126,8 +135,8 @@ def apply_correction(store: Store, *, page_id: int, revision_id: int, char_start
 
 
 def record_unlocated(store: Store, *, revision_id: int, old_text: str, new_text: str, source: str,
-                     utterance_id: int | None = None) -> int:
+                     learner_id: int | None, utterance_id: int | None = None) -> int:
     """A correction Leafi could not place: kept for the parent with `char_start = null`, no new revision."""
     return store.insert("corrections", page_revision_id=revision_id, char_start=None, char_end=None,
                         old_text=old_text, new_text=new_text, source=source, utterance_id=utterance_id,
-                        created_at=now_iso())
+                        source_learner_id=_source_learner(source, learner_id), created_at=now_iso())

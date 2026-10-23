@@ -84,6 +84,10 @@ def cmd_forget(args: argparse.Namespace) -> int:
 
     settings = _settings()
     with Store(settings.db_path) as store:
+        if args.learner is not None:
+            code = _forget_learner(args, settings, store)
+            if code:
+                return code
         if args.session is not None:
             forget_session(store, args.session)
             print(f"forgot session {args.session}")
@@ -100,17 +104,91 @@ def cmd_forget(args: argparse.Namespace) -> int:
     return 0
 
 
+def _forget_learner(args: argparse.Namespace, settings: Settings, store) -> int:
+    """ADR-0018 §1. Without `--yes` it only says what would go; the Anki deck is a separate confirmation."""
+    from leafi.core import learner_store
+    from leafi.study import records
+
+    row = learner_store.get(store, args.learner)
+    if row is None or row["kind"] == "anonymous":
+        print(f"no learner #{args.learner}")
+        return 1
+    sessions = store.one("SELECT COUNT(*) AS n FROM reading_sessions WHERE learner_id=?", (args.learner,))["n"]
+    if not args.yes:
+        print(f"would forget learner #{args.learner} {row['display_name']}: {sessions} session(s), their items, "
+              "notes, cards and every text derived from them; the name stays replaced in shared page text. "
+              "Run again with --yes to do it.")
+        return 1
+    try:
+        rep = records.forget_learner(store, args.learner, settings.data_dir, settings.anki_deck)
+    except records.LearnerBusy as e:
+        print(e)
+        return 1
+    print(f"forgot learner #{args.learner}: {rep.sessions} session(s), {rep.derived_removed} derived text(s)")
+    if rep.anki_notes:
+        print(f"{len(rep.anki_notes)} card(s) are already in Anki deck {rep.deck!r} (note ids "
+              f"{', '.join(map(str, rep.anki_notes[:20]))}{' …' if len(rep.anki_notes) > 20 else ''}); "
+              "remove them there")
+    if args.delete_anki_deck:
+        from leafi.study.anki import AnkiClient
+
+        try:
+            asyncio.run(AnkiClient(settings.anki_url).invoke("deleteDecks", decks=[rep.deck], cardsToo=True))
+            print(f"deleted Anki deck {rep.deck!r}")
+        except Exception as e:  # noqa: BLE001 - the forgetting itself is done; report and go on
+            print(f"Anki deck {rep.deck!r} not deleted ({type(e).__name__}); delete it in Anki")
+    elif rep.deck:
+        print(f"the Anki deck {rep.deck!r} is kept; run with --delete-anki-deck as well to delete it")
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
-    """A consistent copy of data/leafi.db through SQLite's backup API; never copy the file by hand (ADR-0019 §8)."""
+    """A consistent copy of data/leafi.db through SQLite's backup API; never copy the file by hand (ADR-0019 §8).
+    Works at any schema version, so it runs before `migrate`."""
     import datetime as dt
 
-    from leafi.core.storage import Store
+    from leafi.core.storage import backup_file
 
     settings = _settings()
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     dest = args.to or settings.data_dir / "backups" / f"leafi-{stamp}.db"
-    with Store(settings.db_path) as store:
-        print(f"backed up to {store.backup(dest)}")
+    if not settings.db_path.exists():
+        print(f"nothing to back up: {settings.db_path} does not exist")
+        return 1
+    print(f"backed up to {backup_file(settings.db_path, dest)}")
+    return 0
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """ADR-0018 §7.2: the one command that changes the schema of a file with data; every other process closed."""
+    from leafi.core import storage
+
+    settings = _settings()
+    path = settings.db_path
+    try:
+        if args.restore:
+            storage.restore_file(path, args.restore)
+            print(f"restored {path} from {args.restore}")
+            return 0
+        if not path.exists():
+            print(f"{path} does not exist; Leafi creates it at schema {storage.SCHEMA_VERSION} on first open")
+            return 0
+        if not args.learner:
+            print("migrate needs --learner \"<name>\": the child whose sessions are already recorded")
+            return 2
+        res = storage.migrate_file(path, args.learner, learner_settings={"anki.deck": settings.anki_deck})
+    except storage.DatabaseInUse as e:
+        print(e)
+        return 2
+    except (storage.SchemaError, ValueError, FileNotFoundError) as e:
+        print(f"not migrated: {e}")
+        return 1
+    if res.learner_id is None:
+        print(f"{path.name} is already at schema {storage.SCHEMA_VERSION}")
+        return 0
+    print(f"migrated {path.name} from schema {res.from_version} to {storage.SCHEMA_VERSION}; first learner "
+          f"#{res.learner_id} {args.learner.strip()}; rebuilt {len(res.rebuilt)} table(s), created "
+          f"{len(res.created)}; backup {res.backup}")
     return 0
 
 
@@ -293,18 +371,28 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--voice-policy", choices=["all", "primary", "none"])
     s.add_argument("--mouth", action="append", metavar="DEVICE",
                    help="speak only through this device (repeatable), e.g. --mouth pc keeps the camera silent")
+    s.add_argument("--learner", metavar="NAME",
+                   help="who is reading (a new name is enrolled); optional while only one learner is enrolled")
     s.set_defaults(fn=cmd_study)
     e = sub.add_parser("export", help="JSON summary of a session (no audio, no learner free text)")
     e.add_argument("--session", type=int, required=True)
     e.set_defaults(fn=cmd_export)
-    f = sub.add_parser("forget", help="parent deletion (ADR-0010 §9)")
+    f = sub.add_parser("forget", help="parent deletion (ADR-0010 §9, ADR-0018 §1)")
     g = f.add_mutually_exclusive_group(required=True)
     g.add_argument("--session", type=int)
     g.add_argument("--book", type=int)
+    g.add_argument("--learner", type=int, metavar="ID", help="a learner and everything derived from them")
+    f.add_argument("--yes", action="store_true", help="confirm --learner (without it, only print what would go)")
+    f.add_argument("--delete-anki-deck", action="store_true", help="with --learner: also delete their Anki deck")
     f.set_defaults(fn=cmd_forget)
     b = sub.add_parser("backup", help="consistent copy of data/leafi.db (SQLite backup API, ADR-0019)")
     b.add_argument("--to", type=Path, help="destination file (default data/backups/leafi-<UTC time>.db)")
     b.set_defaults(fn=cmd_backup)
+    m = sub.add_parser("migrate", help="bring data/leafi.db to the latest schema; every other Leafi process "
+                       "closed (ADR-0018 §7.2)")
+    m.add_argument("--learner", metavar="NAME", help="the first learner, who owns the sessions already recorded")
+    m.add_argument("--restore", type=Path, metavar="BACKUP", help="put a backup back in place instead")
+    m.set_defaults(fn=cmd_migrate)
     sub.add_parser("supervisor", help="keep every Leafi service running, recover the ones that stop answering, "
                    "send alerts (ADR-0016)").set_defaults(fn=cmd_supervisor)
     tm = sub.add_parser("timing", help="supervision timings after validation, derived times, conflicts (ADR-0016)")
@@ -328,4 +416,10 @@ def main(argv: list[str] | None = None) -> int:
     _file_log(Settings().data_dir / "logs" / "leafi.log")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    return int(args.fn(args) or 0)
+    from leafi.core.storage import DatabaseInUse, SchemaError
+
+    try:
+        return int(args.fn(args) or 0)
+    except (SchemaError, DatabaseInUse) as e:  # a file to migrate, or a migration running: say what to do
+        print(f"Leafi: {e}")
+        return 2

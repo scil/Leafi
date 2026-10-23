@@ -5,6 +5,7 @@ parent's `forget` commands.
 
 from __future__ import annotations
 
+from leafi.core import learner_store
 from leafi.core.storage import Store, dumps, now_iso
 from leafi.study import knowledge
 
@@ -26,13 +27,14 @@ def create(store: Store, *, observation_id: int | None, page_read_id: int, revis
            token_index: int, char_span: tuple[int, int], heard: str | None) -> int:
     return store.insert("miscues", observation_id=observation_id, page_read_id=page_read_id,
                         page_revision_id=revision_id, expected=expected, expected_token_index=token_index,
-                        expected_char_span=dumps(list(char_span)), heard=heard, status="candidate",
+                        expected_char_span=dumps(list(char_span)), heard=heard,
+                        origin="deletion" if heard is None else "substitution", status="candidate",
                         evidence="none", updated_at=now_iso())
 
 
 def set_status(store: Store, miscue_id: int, status: str, *, reason: str | None = None,
                evidence: str | None = None, score: float | None = None) -> None:
-    row = store.one("SELECT status FROM miscues WHERE id=?", (miscue_id,))
+    row = store.one("SELECT status, page_read_id FROM miscues WHERE id=?", (miscue_id,))
     if row is None:
         raise LookupError(f"miscue {miscue_id}")
     if status not in FORWARD[row["status"]]:
@@ -52,7 +54,7 @@ def set_status(store: Store, miscue_id: int, status: str, *, reason: str | None 
     with store.transaction():  # evidence and the Difficulties that depend on it change together (review 1 #17)
         store.execute(f"UPDATE miscues SET {sets} WHERE id=?", (*cols.values(), miscue_id))
         if status in ("confirmed", "unsure", "invalidated"):
-            knowledge.recompute_difficulties(store)
+            knowledge.recompute_difficulties(store, learner_store.read_learner(store, row["page_read_id"]))
 
 
 def open_for_read(store: Store, page_read_id: int) -> list[int]:

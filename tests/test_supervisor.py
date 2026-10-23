@@ -159,13 +159,18 @@ def test_each_service_has_its_own_budget_and_alert_key(store):
     assert store.one(STATE)[:] == (0, 0, "up")
 
 
-def test_migration_moves_the_camera_budget_into_service_state(tmp_path, monkeypatch):
+def test_migration_moves_the_camera_budget_into_service_state(tmp_path):
+    import sqlite3
+
     path = tmp_path / "old.db"
-    monkeypatch.setattr(storage, "MIGRATIONS", storage.MIGRATIONS[:3])
-    old = Store(path)
-    old.insert("watchdog_state", id=1, kills=2, gave_up=0, latch="down", updated_at="x")
+    old = sqlite3.connect(str(path), isolation_level=None)  # a version-3 file
+    for step in storage.LEGACY_STEPS[:3]:
+        for stmt in storage._split(step):
+            old.execute(stmt)
+    old.execute("PRAGMA user_version = 3")
+    old.execute("INSERT INTO watchdog_state(id, kills, gave_up, latch, updated_at) VALUES(1, 2, 0, 'down', 'x')")
     old.close()
-    monkeypatch.undo()
+    storage.migrate_file(path, "A")  # steps 4 and 5
     new = Store(path)
     assert new.one(STATE)[:] == (2, 0, "down")
     assert new.one("SELECT name FROM sqlite_master WHERE name = 'watchdog_state'") is None

@@ -48,12 +48,15 @@ from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 
-from leafi.core.storage import MIGRATIONS, Store, now_iso  # noqa: E402
+from leafi.core.storage import SCHEMA_VERSION, Store, now_iso  # noqa: E402
+from tests import seed  # noqa: E402
 
 LEAFI_TABLES = {
     "books", "pages", "page_revisions", "page_images", "corrections", "reading_sessions", "page_reads",
     "utterances", "observations", "miscues", "practices", "knowledge_items", "encounters", "difficulties",
-    "anki_outbox", "review_answers", "lexicon", "learner_profile",
+    "anki_outbox", "review_answers", "lexicon", "learner_profile", "learners", "household_terms", "cycles",
+    "activities", "brain_calls", "retrieval_events", "learner_notes", "learner_note_citations", "book_notes",
+    "consents", "egress_log", "alert_outbox", "service_state",
 }
 
 
@@ -61,7 +64,8 @@ def test_leafi_store_creates_schema_at_latest_version(tmp_path):
     store = Store(tmp_path / "leafi.db")
     names = {r["name"] for r in store.all("SELECT name FROM sqlite_master WHERE type='table'")}
     assert LEAFI_TABLES <= names
-    assert store.version == len(MIGRATIONS)
+    assert store.version == SCHEMA_VERSION
+    assert store.all("SELECT * FROM learners") == []  # a new file has no learner rows (ADR-0018 §7.2)
     Store(tmp_path / "leafi.db")  # reopening is idempotent
 
 
@@ -221,21 +225,19 @@ def test_open_reader_does_not_block_a_write_in_wal(tmp_path, fixed_library):
     store.close()
 
 
-def test_two_stores_migrating_one_old_file_run_each_step_once(tmp_path, fixed_library):
-    """migrate() reads user_version inside BEGIN IMMEDIATE, so a racing opener never reruns a step."""
+def test_two_stores_opening_one_empty_file_create_the_schema_once(tmp_path, fixed_library):
+    """The create reads user_version inside BEGIN IMMEDIATE, so a racing opener never runs it twice
+    (rerunning a CREATE TABLE would fail)."""
     import threading
 
     for i in range(8):
         path = tmp_path / f"race{i}.db"
-        old = sqlite3.connect(str(path), isolation_level=None)  # a version-1 file: steps 2.. still to run
-        old.execute("PRAGMA journal_mode = WAL")  # rerunning step 2 (ALTER … ADD COLUMN) would fail
-        for stmt in leafi_storage._split(MIGRATIONS[0]):
-            old.execute(stmt)
-        old.execute("PRAGMA user_version = 1")
+        old = sqlite3.connect(str(path), isolation_level=None)
+        old.execute("PRAGMA journal_mode = WAL")  # an empty file
         old.close()
         barrier, errors = threading.Barrier(2), []
 
-        def open_store():
+        def open_store(barrier=barrier, path=path, errors=errors):
             barrier.wait()
             try:
                 Store(path).close()
@@ -249,7 +251,7 @@ def test_two_stores_migrating_one_old_file_run_each_step_once(tmp_path, fixed_li
             t.join()
         assert errors == []
         with Store(path) as store:
-            assert store.version == len(MIGRATIONS)
+            assert store.version == SCHEMA_VERSION
 
 
 def test_forget_leaves_no_copy_of_the_deleted_text(tmp_path, fixed_library):
@@ -258,10 +260,10 @@ def test_forget_leaves_no_copy_of_the_deleted_text(tmp_path, fixed_library):
     path = tmp_path / "leafi.db"
     store = Store(path)
     canary = "CANARY-utterance-7f3a"
-    sid = store.insert("reading_sessions", started_at=now_iso(), mode="text")
-    store.insert("utterances", session_id=sid, text=canary, kind="reading", created_at=now_iso())
+    sid = seed.session(store, None)
+    seed.utterance(store, sid, canary)
     store.checkpoint()  # the row reaches the database file itself
-    store.insert("utterances", session_id=sid, text=canary + "-wal", kind="reading", created_at=now_iso())
+    seed.utterance(store, sid, canary + "-wal")
     forget_session(store, sid)
     data = path.read_bytes() + (Path(str(path) + "-wal").read_bytes() if Path(str(path) + "-wal").exists() else b"")
     assert canary.encode() not in data
@@ -298,8 +300,8 @@ def test_leafi_miscue_status_and_reason_enums_are_enforced(tmp_path):
 
     store = Store(tmp_path / "leafi.db")
     with pytest.raises(sqlite3.IntegrityError):
-        store.insert("knowledge_items", kind="flashcard", language="en", key="x", anki_item_key="k",
-                     created_at=now_iso(), updated_at=now_iso())
+        store.insert("knowledge_items", learner_id=seed.learner(store), kind="flashcard", language="en", key="x",
+                     anki_item_key="k", created_at=now_iso(), updated_at=now_iso())
 
 
 def test_close_stale_sessions(tmp_path):
@@ -308,7 +310,6 @@ def test_close_stale_sessions(tmp_path):
     from leafi.core.storage import dumps, loads
     from leafi.study import records
     from leafi.study.alignment import ReadingState, align
-    from tests import seed
 
     store = Store(tmp_path / "leafi.db")
     text = "The dog ran far."

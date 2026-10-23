@@ -65,13 +65,21 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
             log.warning("page camera off: ocr %s %s %s", settings.ocr_backend, state, detail)
         if settings.book_lookup != "off":
             catalog = catalog_service.REGISTRY.create(settings.book_lookup, settings)
+    from leafi.core import learner_store
     from leafi.services.wordinfo import LocalWordInfo
 
+    try:
+        learner_id, enrolled = learner_store.choose(store, getattr(args, "learner", None))
+    except learner_store.LearnerChoice as e:
+        print(f"Leafi: {e}")
+        return 2
+    if enrolled:
+        print(f"Leafi: enrolled a new learner, {args.learner.strip()} (#{learner_id})")
     lexicon = [r["word"] for r in store.all("SELECT DISTINCT word FROM lexicon")]
     session = StudySession(store=store, hub=built.hub, settings=settings, brain=brain,
                            anki_client=None if args.mock else AnkiClient(settings.anki_url), pron=pron,
                            page_tracker=tracker, ocr=ocr, catalog=catalog,
-                           word_info=LocalWordInfo(settings.models_dir, lexicon))
+                           word_info=LocalWordInfo(settings.models_dir, lexicon), learner_id=learner_id)
     page_text = args.page_text.read_text(encoding="utf-8") if args.page_text else None
     try:
         sid = await session.run(book_title=args.book, page_text=page_text, page_number=args.page)

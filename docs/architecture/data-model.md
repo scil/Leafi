@@ -1,8 +1,10 @@
 # Data model (meaning; the schema in `leafi/core/storage.py` is the fact)
 
-Store: SQLite `data/leafi.db`, created on first use, migrated by `PRAGMA user_version` steps in `storage.py`. The legacy habit store `data/sessions.db` stays separate (ADR-0011: consolidation is a future plan). Decisions behind the shape: ADR-0009 (observations vs judgements), ADR-0010 (page revisions).
+Store: SQLite `data/leafi.db`, schema version 5 (`storage.SCHEMA`). Opening has three states (ADR-0018 §7.2): an empty file is created at schema 5 with no learner rows; a file at 5 opens; a file with data below 5 refuses and names `python -m leafi migrate --learner "<name>"`, the only command that changes a schema. Every opener holds a shared lock on `data/leafi.db.users` (`portalocker`); the migration takes it exclusively. The legacy habit store `data/sessions.db` stays separate (ADR-0011: consolidation is a future plan). Decisions behind the shape: ADR-0009 (observations vs judgements), ADR-0010 (page revisions), ADR-0018 (learners, provenance).
 
 ## Entities
+
+The rows below give each entity's meaning as of schema 4; schema 5 is these plus the changes in [Migration 5](#migration-5-in-storagepy-since-2026-10-23).
 
 | Entity | Key fields | Lifecycle / meaning |
 |---|---|---|
@@ -25,9 +27,11 @@ Store: SQLite `data/leafi.db`, created on first use, migrated by `PRAGMA user_ve
 | `lexicon` | word, language, source (`book`/`correction`/`manual`), book_id?, weight, updated_at | Advisory in v1 (ADR-0011): candidates for OCR snap and future ASR bias. Rebuilt from revisions + corrections; manual rows survive. |
 | `learner_profile` | key, value (json), updated_at | Small facts the coach may use (the name the child gave Leafi, explanation language order). No identity, no images, no embeddings. `REDACT_TERMS` live in config, not here. |
 
-## Migration 5 (accepted; not yet in `storage.py`)
+## Migration 5 (in `storage.py` since 2026-10-23)
 
-ADR-0017, ADR-0018 and ADR-0013 v2 change the shape above in one migration (ADR-0018 §7.2: an empty file is created at the latest schema; a version-4 file with data is migrated by `python -m leafi migrate --learner "<name>"` in one transaction). The entity table above describes schema 4 until the migration lands; then the table is rewritten from `storage.py`.
+ADR-0017, ADR-0018 and ADR-0013 v2 change the shape above in one migration (ADR-0018 §7.2): `storage.migrate_file` takes the exclusive lock, backs the file up to `data/backups/leafi-v4-<time>.db`, and in one transaction rebuilds every table whose definition differs from `SCHEMA` (the `rebuild()` helper: create `new_<table>`, copy, drop, rename), creates the new tables, writes the first learner, runs `foreign_key_check` and sets version 5. Existing rows belong to the first learner; their texts become `learner` text of that learner, page-derived fields `page`. `tests/test_migration_5.py` asserts the migrated schema equals a fresh one.
+
+As built (plan M3, Decision log 2026-10-23): a table with several texts has one provenance pair per text group, named `<group>_provenance_class` / `<group>_source_learners` (`activities.outcome_*`, `activities.assessment_*`, `brain_calls.payload_*`, `brain_calls.response_*`, `encounters.context_*` for the context sentence, `encounters.explanation_*` for `explanation_en`, `explanation_zh` and `example`, `anki_outbox.card_*` for the card fields); a table with one text has `provenance_class` / `source_learners`. `household_terms` (term, kind `name`/`school`/`other`, former_learner_id) is new, so `forget --learner` can keep a name replaced after its learner row is gone. `page_reads.cycle_id`, `miscues.cycle_id` and `anki_outbox.front` / `back` / `sentence` stay nullable until M6 writes cycles and `add_cards`; the `anonymous` learner row is created by M6 with the first guest.
 
 | Entity | Change | Owner of the meaning |
 |---|---|---|
@@ -66,6 +70,6 @@ ADR-0017, ADR-0018 and ADR-0013 v2 change the shape above in one migration (ADR-
 | `page_images`, `cache/pages/` | 7 days |
 | learner audio | not stored (`AUDIO_KEEP_CLIPS=false`) |
 | `cache/tts/` | 90 days, content-addressed |
-| `utterances.text`, `observations`, `miscues`, `practices` | kept (learning history); the only deletions are `python -m leafi forget --session <id>` and `--book <id>` (ADR-0010 §9) |
+| `utterances.text`, `observations`, `miscues`, `practices` | kept (learning history); the only deletions are `python -m leafi forget --session <id>`, `--book <id>` (ADR-0010 §9) and `--learner <id> --yes` (ADR-0018 §1) |
 | `data/evals/` transcripts | opt-in (`EVAL_TRANSCRIPTS=true`), 30 days |
 | logs | no raw utterance text at INFO; DEBUG only when `LEAFI_DEBUG_TEXT=1` |

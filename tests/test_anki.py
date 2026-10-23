@@ -6,6 +6,7 @@ import pytest
 
 from leafi.core.storage import Store, loads
 from leafi.study import anki, knowledge
+from tests import seed
 from tests.fakes.anki import FakeAnki
 
 
@@ -15,7 +16,7 @@ def store(tmp_path):
 
 
 def _item(store, key="blew"):
-    item = knowledge.upsert_item(store, "word", key)
+    item = knowledge.upsert_item(store, seed.learner(store), "word", key)
     knowledge.add_encounter(store, item, session_id=None, trigger="explain", explanation_en="moved air",
                             explanation_zh="吹", example="The wind blew.")
     return item
@@ -32,7 +33,7 @@ async def test_push_creates_note_with_leafi_id_tag_and_acks(store):
     assert rep.acked == 1
     (nid, note), = fake.notes.items()
     key = store.one("SELECT anki_item_key FROM knowledge_items WHERE id=?", (item,))["anki_item_key"]
-    assert f"leafi-id::{key}" in note["tags"] and note["deck"] == "Leafi" and note["model"] == "问答题"
+    assert f"leafi-id::{key}" in note["tags"] and note["deck"] == "Leafi Learner #1" and note["model"] == "问答题"
     row = store.one("SELECT * FROM anki_outbox WHERE knowledge_item_id=?", (item,))
     assert row["state"] == "acked" and row["anki_note_id"] == nid and loads(row["card_ids"])
     assert "anki_note_id" not in store.one("SELECT * FROM knowledge_items").keys()
@@ -83,7 +84,7 @@ async def test_parent_edits_win_on_update(store):
 
 async def test_update_touches_unedited_fields(store):
     fake = FakeAnki()
-    item = knowledge.upsert_item(store, "word", "blew")
+    item = knowledge.upsert_item(store, seed.learner(store), "word", "blew")
     await anki.sync_outbox(store, _client(fake))
     nid = next(iter(fake.notes))
     knowledge.add_encounter(store, item, session_id=None, trigger="explain", explanation_en="moved air")
@@ -97,18 +98,18 @@ async def test_due_cards_and_answer_ack(store):
     await anki.sync_outbox(store, _client(fake))
     nid = next(iter(fake.notes))
     cid = fake.add_due_card("", note_id=nid)
-    due = await anki.due_cards(store, _client(fake))
+    due = await anki.due_cards(store, _client(fake), seed.learner(store))
     assert [(d.card_id, d.knowledge_item_id, d.front) for d in due] == [(cid, item, "blew")]
-    assert await anki.answer(store, _client(fake), due[0], 3) == "acked"
+    assert await anki.answer(store, _client(fake), seed.learner(store), due[0], 3) == "acked"
     assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "learning"
 
 
 async def test_sent_review_answer_is_never_replayed_and_reconciles(store):
     fake = FakeAnki()
     cid = fake.add_due_card("blew")
-    due = await anki.due_cards(store, _client(fake))
+    due = await anki.due_cards(store, _client(fake), seed.learner(store))
     fake.lose_next.add("answerCards")
-    assert await anki.answer(store, _client(fake), due[0], 1) == "sent"
+    assert await anki.answer(store, _client(fake), seed.learner(store), due[0], 1) == "sent"
     await anki.sync_outbox(store, _client(fake))  # nothing replays answers
     assert fake.actions().count("answerCards") == 1
     assert await anki.reconcile(store, _client(fake)) == []
@@ -118,9 +119,9 @@ async def test_sent_review_answer_is_never_replayed_and_reconciles(store):
 async def test_unreconciled_sent_answer_is_listed_for_the_parent(store):
     fake = FakeAnki()
     cid = fake.add_due_card("blew")
-    due = await anki.due_cards(store, _client(fake))
+    due = await anki.due_cards(store, _client(fake), seed.learner(store))
     fake.down = True
-    assert await anki.answer(store, _client(fake), due[0], 3) == "sent"
+    assert await anki.answer(store, _client(fake), seed.learner(store), due[0], 3) == "sent"
     fake.down = False
     unknown = await anki.reconcile(store, _client(fake))
     assert len(unknown) == 1
@@ -149,9 +150,9 @@ async def test_reconciled_review_applies_the_knowledge_status_transition(store):
     item = _item(store)
     await anki.sync_outbox(store, _client(fake))
     fake.add_due_card("", note_id=next(iter(fake.notes)))
-    (card,) = await anki.due_cards(store, _client(fake))
+    (card,) = await anki.due_cards(store, _client(fake), seed.learner(store))
     fake.lose_next.add("answerCards")
-    assert await anki.answer(store, _client(fake), card, 3) == "sent"
+    assert await anki.answer(store, _client(fake), seed.learner(store), card, 3) == "sent"
     assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "new"
     assert await anki.reconcile(store, _client(fake)) == []
     assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "learning"

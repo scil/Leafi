@@ -13,7 +13,7 @@ def test_rebuild_keeps_manual_rows_and_counts_book_and_correction_words(tmp_path
     lexicon.add_manual(store, "Hogwarts")
     span = corrections.locate("The wind blew though the trees.", "though")
     corrections.apply_correction(store, page_id=page_id, revision_id=rev, char_start=span[0], char_end=span[1],
-                                 new_text="through", source="voice")
+                                 new_text="through", source="voice", learner_id=seed.learner(store))
     lexicon.rebuild(store, book_id)
     rows = {(r["word"], r["source"]): r["weight"] for r in store.all("SELECT * FROM lexicon")}
     assert rows[("hogwarts", "manual")] == 1.0

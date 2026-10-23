@@ -18,12 +18,43 @@ from typing import Any
 
 import httpx
 
+from leafi.core import learner_store
 from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.study import knowledge
 from leafi.study.books import slug
 
 log = logging.getLogger("leafi.anki")
 MAX_ATTEMPTS = 5
+EASES = (1, 2, 3, 4)  # again, hard, good, easy (ADR-0017 §3.1)
+
+
+def _overlaps(a: str, b: str) -> bool:
+    """Anki's `deck:` search includes subdecks, so two learners' decks may be neither equal nor nested."""
+    a, b = a.casefold(), b.casefold()
+    return a == b or a.startswith(b + "::") or b.startswith(a + "::")
+
+
+def deck_for(store: Store, learner_id: int, base: str = "Leafi") -> str:
+    """Each learner's own deck (ADR-0018 §1), stored in the learner's `anki.deck` setting the first time it is
+    needed and never recomputed, so a rename or a namesake never moves or shares cards (codex M3 #1). Migration 5
+    gives the first learner the household's existing deck; later learners get a top-level `<base> <name> #<id>`,
+    unique by id and never a subdeck of another learner's."""
+    with store.transaction():
+        row = learner_store.get(store, learner_id)
+        if row is None:
+            raise LookupError(f"learner {learner_id}")
+        settings = loads(row["settings"], {})
+        if settings.get("anki.deck"):
+            return settings["anki.deck"]
+        taken = [loads(r["settings"], {}).get("anki.deck") for r in
+                 store.all("SELECT settings FROM learners WHERE id<>?", (learner_id,))]
+        deck = f"{base} {row['display_name']} #{learner_id}"
+        if any(t and _overlaps(deck, t) for t in taken):
+            raise AnkiError(f"deck {deck!r} would overlap another learner's deck; set anki.deck by hand")
+        settings["anki.deck"] = deck
+        store.execute("UPDATE learners SET settings=?, settings_version=settings_version+1 WHERE id=?",
+                      (dumps(settings), learner_id))
+    return deck
 
 
 class AnkiUnavailable(RuntimeError):
@@ -90,12 +121,14 @@ def _item_tags(store: Store, item_id: int, key: str) -> list[str]:
 
 
 async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", model: str = "问答题") -> SyncReport:
+    """Every learner's pending cards, each into that learner's deck (`deck` is the base name, `deck_for`)."""
     rep = SyncReport()
     rows = store.all("SELECT o.*, k.anki_item_key FROM anki_outbox o JOIN knowledge_items k ON "
                      "k.id = o.knowledge_item_id WHERE o.state IN ('pending','sent') ORDER BY o.id")
-    deck_ready = False
+    decks_ready: set[str] = set()
     for row in rows:
         oid, item_id, key = row["id"], row["knowledge_item_id"], row["anki_item_key"]
+        learner_deck = deck_for(store, row["learner_id"], deck)
         fields = knowledge.card_fields(store, item_id)
         store.execute("UPDATE anki_outbox SET state='sent', attempts=attempts+1, updated_at=?, "
                       "attempted_fields=COALESCE(attempted_fields, ?) WHERE id=?",
@@ -113,11 +146,11 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
                     acked = loads(attempted["attempted_fields"], {}) if attempted else {}
                     rep.deduped += 1
                 else:
-                    if not deck_ready:
-                        await client.invoke("createDeck", deck=deck)
-                        deck_ready = True
+                    if learner_deck not in decks_ready:
+                        await client.invoke("createDeck", deck=learner_deck)
+                        decks_ready.add(learner_deck)
                     note_id = await client.invoke("addNote", note={
-                        "deckName": deck, "modelName": model, "fields": fields,
+                        "deckName": learner_deck, "modelName": model, "fields": fields,
                         "tags": _item_tags(store, item_id, key), "options": {"allowDuplicate": False}})
                     acked = {f: field_hash(v) for f, v in fields.items()}
                 cards = await client.find_cards(f"nid:{note_id}")
@@ -178,25 +211,29 @@ class DueCard:
     interval: int
 
 
-async def due_cards(store: Store, client: AnkiClient, deck: str = "Leafi", limit: int = 5) -> list[DueCard]:
-    ids = (await client.find_cards(f'"deck:{deck}" is:due'))[:limit]
+async def due_cards(store: Store, client: AnkiClient, learner_id: int, deck: str = "Leafi",
+                    limit: int = 5) -> list[DueCard]:
+    """Due cards of the learner's own deck; a note maps to an item only when the item is this learner's."""
+    own = deck_for(store, learner_id, deck)
+    ids = (await client.find_cards(f'"deck:{own}" -"deck:{own}::*" is:due'))[:limit]  # a subdeck is not this learner's
     if not ids:
         return []
     out = []
     for c in await client.cards_info(ids):
-        r = store.one("SELECT knowledge_item_id FROM anki_outbox WHERE anki_note_id=? ORDER BY id DESC LIMIT 1",
-                      (c.get("note"),))
+        r = store.one("SELECT knowledge_item_id FROM anki_outbox WHERE anki_note_id=? AND learner_id=? "
+                      "ORDER BY id DESC LIMIT 1", (c.get("note"), learner_id))
         front = (c.get("fields", {}).get("正面", {}) or {}).get("value", "") or c.get("question", "")
         out.append(DueCard(c["cardId"], r["knowledge_item_id"] if r else None, front, int(c.get("interval", 0))))
     return out
 
 
-async def answer(store: Store, client: AnkiClient, card: DueCard, ease: int, known_days: int = 21) -> str:
+async def answer(store: Store, client: AnkiClient, learner_id: int, card: DueCard, ease: int,
+                 known_days: int = 21) -> str:
     """Write pending, set sent immediately before `answerCards`, acked on response. Never replayed."""
-    if ease not in (1, 3):
-        raise ValueError("v1 eases: 1 again, 3 good")
-    rid = store.insert("review_answers", knowledge_item_id=card.knowledge_item_id, card_id=card.card_id,
-                       ease=ease, state="pending", created_at=now_iso())
+    if ease not in EASES:
+        raise ValueError(f"ease {ease}: 1 again, 2 hard, 3 good, 4 easy")
+    rid = learner_store.insert(store, "review_answers", learner_id, knowledge_item_id=card.knowledge_item_id,
+                               card_id=card.card_id, ease=ease, state="pending", created_at=now_iso())
     store.execute("UPDATE review_answers SET state='sent', sent_at=? WHERE id=?", (now_iso(), rid))
     try:
         result = await client.invoke("answerCards", answers=[{"cardId": card.card_id, "ease": ease}])
@@ -218,14 +255,15 @@ def _update_status(store: Store, card: DueCard, ease: int, known_days: int) -> N
     if card.knowledge_item_id is None:
         return
     cur = store.one("SELECT status FROM knowledge_items WHERE id=?", (card.knowledge_item_id,))["status"]
+    passed = ease >= 3  # hard (2) is remembered with effort: it neither promotes nor lapses an item
     new = cur
     if cur == "new":
         new = "learning"
-    elif cur == "learning" and ease == 3 and card.interval >= known_days:
+    elif cur == "learning" and passed and card.interval >= known_days:
         new = "known"
     elif cur == "known" and ease == 1:
         new = "lapsed"
-    elif cur == "lapsed" and ease == 3:
+    elif cur == "lapsed" and passed:
         new = "learning"
     if new != cur:
         store.execute("UPDATE knowledge_items SET status=?, updated_at=? WHERE id=?",
