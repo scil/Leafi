@@ -1,0 +1,48 @@
+# M5 egress design — round 1 comparison
+
+Three independent reviewers on the same prompt (`prompts/m5-design.md`), none reading another: **CX** codex `gpt-6-astra` high (20 findings, 15 High; `2026-10-23-m5-design-codex.md`), **CL** a fresh Claude agent (18; 5 High; `…-claude.md`), **PR** code-plan-review by a fresh agent (5 most severe + 16; `…-code-plan-review.md`). Codex's verdict: "I would not implement this design unchanged"; all three call the two-seam architecture, D1, D4, D9 (403 not retried), D14's template test and the per-hop redirect grants sound.
+
+## Themes, who found them, and the direction of the fix (rev 2)
+
+| # | Theme | CX | CL | PR | Severity | Rev 2 direction |
+|---|---|---|---|---|---|---|
+| T1 | `egress_log` CHECKs reject `notify` and learner-less study sends; `household_terms.kind='term'` invalid | 17, 15 | 1, 2, 14 | G4.2 | High | migration 6 (owner) or reuse; `kind='name'`/`'other'` classified; thread learner/session context through `Notifier` and `Catalog` |
+| T2 | Rollout M5a–M5f leaves windows (guard denies before callers have grants; `REDACT_TERMS` removed before callers use `prepare`; canaries and docs last) | 20 | 3 | — | High | inactive primitives first; guard log-only until the commit that moves the callers; old redaction kept until every consumer uses `prepare`; canary tests and boundary docs in the enforcing commit |
+| T3 | CJK names not matched by whole-word rules; hyphenated and possessive forms | 12 | 4 | I2.3 | High | script-aware span matching (substring for CJK terms, word boundary for Latin), straight/curly/plural possessives, hyphen parts; canary in a zh line |
+| T4 | Surrogates collide (`mod N`), change with the payload, are not invertible; neutral names that are words; aliases separate identities | 11 | 7 | D10/G5.1 | High–Medium | allocate once per entity (alias joins its person), collision-checked, stored; exclude dictionary words; reverse only person surrogates sent in this request, case-sensitive whole-word; never reverse neutral tokens |
+| T5 | Token key `(host, H)` collides for identical bodies; retry slot usable by any same-H request; `claude.py`'s own retry loop → up to 4 transmissions | 5 | 8 | C2.1, H1.1 | High | opaque token id in request extensions (non-wire); claim on first submission and drop from lookup; only the claiming mediator retries; remove adapter retry loops in M5 |
+| T6 | Canonical HMAC: duplicate JSON keys, headers unbound, scheme/port missing | 4 | — | — | High | reject duplicate keys and non-canonical encodings; transmit the canonical serialisation checked; bind scheme, host, port; allow-list headers per destination |
+| T7 | Grants outlive the `with` (copied contexts in child tasks and threads); threads in sync code (HF worker pool, requests) do not inherit contextvars | 1, 8 | 11 | outside-catalog | High | revocable grant id in context checked against a shared active set, revoked in `finally`; grant opened inside the transport's `handle_request` (sync and async transports), not by an outer `with` |
+| T8 | Guard covers connect only: UDP `sendto`, existing sockets after the grant, loopback proxies (`trust_env`), entry points without `cli` | 2 | 18 | outside-catalog | High | patch datagram sends; refuse proxies (`trust_env` off, proxy env cleared); install in `leafi/__init__` for every entry point (exempt in the env-read test); audit hook monitors `socket.connect` / `sendto` too; subprocess sockets stated as not prevented |
+| T9 | `lan` by host string, every port; gateway on the same LAN host; public `GATUS_URL` becomes grant-free; `LEAFI_NO_NETWORK` used to refuse LAN | 3 | 10 | D3/I1.3 | High | `lan` entries `(resolved address, port)` per service, validated private; gateway ports protected on every local interface address and override `lan`; `LEAFI_NO_NETWORK` refuses `lan` too |
+| T10 | Provenance at the TTS call fails open (default `system`; `card.front`, identification names, the `Talk` protocol); TTS sidecars missing | 9 | 5 | — | High | provenance a required argument for dynamic text, static phrases only through a no-argument API; `line()` takes the most restrictive class of its kwargs; identification lines local until adoption; Anki card text restores its stored provenance (unknown → `learner`); sidecars on hits and misses |
+| T11 | edge-tts speaks surrogates; detector classes for TTS lines unstated | — | 6 | F1.1 | Medium | any line matching a list term or a detected entity goes to local TTS whatever its class (ADR §2: edge-tts never speaks a surrogate) |
+| T12 | Mediated edge-tts chunks before `prepare`: a multi-word term split across chunks | 10 | — | — | High | prepare the whole line, then chunk the prepared text; tokens per chunk of the prepared result |
+| T13 | Redirects: study requests get an `ops` token per hop; aiohttp WS handshake redirects; huggingface reads 3xx itself | 6, 8 | 11 | C3.2 | High | study redirects refused; ops hops keep purpose with a hop policy (origins, methods, max hops, one overall deadline); aiohttp `allow_redirects=False` on the handshake; HF 3xx passed back and the next request's host checked |
+| T14 | Presidio may `spacy.cli.download` (pip subprocess); an empty registry loads predefined recognizers (`tldextract`); a missing model silently weakens default-on | 13 | 9 | H1.1 | High | load spaCy from the path ourselves and pass a populated, restricted registry; `tldextract` suffix fetch disabled; test under `LEAFI_NO_NETWORK` with no subprocess; missing model while on → fail closed (owner) |
+| T15 | RapidOCR's `requests` downloader under a broad grant contradicts the ADR | 7 | 11 | — | High | provision RapidOCR's model files through the mediated downloader and point it at local paths (no broad grant) |
+| T16 | Typed confirmation: today's page is a checkbox + value hash, not typing; CLI path is `trusted_confirm` | 14 | 18 | — | High | implement typing (the value or a word) on the page and in the CLI, bound to learner id, operation and value; setting, version and `consents` row in one transaction (owner may accept the checkbox) |
+| T17 | Settings changes vs prepared tokens; `.env` read at process start; `cloud.text` in `SPEC` would bypass confirmation and consents; guests | 16 | 13 | J1.1 | High | revalidate sources, their settings and household versions immediately before each transmission (retries included); unknown source fails closed; privacy keys in `learner_store` with their own confirmed writer; `SPEC` rejects them; guests off by kind |
+| T18 | Key creation race; attempts stuck in `sending`; key not in backup | 19 | 16 | B1.2, B4.1 | Medium | temp file + exclusive link into place, exact length or fail closed; `finally` → `unknown` on cancel; startup marks stale `sending` rows; key in `leafi backup` |
+| T19 | Age coverage: enrolment never fills `alias_age_band`; "I am 10" in learner text; forgotten aliases | 12 | 18 | — | High | compute the band from `birth_year` at prepare; school / no-school at enrolment (backfill); ages in learner text (owner); aliases into `household_terms` at forget |
+| T20 | Ops contracts: Ollama `/api/tags` probe on a gateway port; Ollama endpoint `/api/chat` vs ADR's OpenAI-compatible one; D13 overriding per-language backends | 18 | 15 | — | Medium | fixed `ops` GET schemas for health probes; Ollama moves to `/v1/chat/completions` (ADR §2); privacy routing applied after the existing backend choice |
+| T21 | Two refusal shapes (aiohttp raises) | 5 | 17 | — | Low | `TtsService` catches `NetworkDenied` → Faces; never feed a synthetic 403 into edge-tts's own retry |
+| T22 | Console buttons of ADR §7.6 missing from the steps; `aiodns` resolver; HF offline flag read at import; `test_architecture` env-read rule | — | 12 | H5, H1.1, H1.3 | Low–Medium | add to M5e; pin aiohttp `ThreadedResolver`; set hub flags before any hub import (or run downloads in a child process); explicit test exemption |
+
+Overlap: T1, T3, T4, T5, T9, T14, T18 were found by all three; T2, T7, T8, T10, T13, T16, T17 by two; T6, T12, T15, T19, T20 by codex alone; T11 by CL and PR. No finding was judged a false positive on reading the code.
+
+## Owner decisions (2026-10-23)
+
+Asked (the owner chose against the recommendation on each; recorded as decided):
+
+1. `notify` names the learner by their **surrogate** (the parent maps it). The purpose CHECK has no value for a notification, so a minimal migration 6 adds `notify` to it (the table rebuild of ADR-0018 §7.2); `learner_id` stays required: sends before identification are attributed to the session's guest row (every session has one from its start) and catalog lookups outside a session to `anonymous`.
+2. Name detector on but the spaCy model missing: **degrade to list-only** replacement (`household_terms` and learner names) with a warning in the log and in `leafi doctor`.
+3. Confirmation of privacy changes: **keep today's checkbox + value hash** on the settings page; the ADR's "typed confirmation" is reworded to "explicit confirmation bound to the value". The CLI writer asks the same yes/no with the value shown.
+4. Exact ages: **structured profile only** (`birth_year` → age band at prepare); ages inside learner free text are sent as they are.
+
+Taken as the reviewers' recommendation, not asked:
+
+5. Household privacy keys reread at session start; the settings page restarts the running services after a change.
+6. CJK names matched by substring inside Chinese text (ADR §2 requires every listed name replaced).
+7. RapidOCR model files provisioned through the mediated downloader; no broad grant.
+8. Learner privacy keys and `household_terms` by CLI in M5; the settings page's learners section later.
