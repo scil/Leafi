@@ -74,6 +74,34 @@ Reading of the numbers:
 - **Unaligned utterances are unchanged**, as expected: `LOW_CONF` acts after acceptance.
 - **Caveat on hits**: speechocean762's errors are mostly mispronunciations; a lower hit count here may matter less for real misreadings (substituted words), which only the Storiza corpus or the owner's set can show.
 
+### 5.2 Why utterances are unaligned, and the acceptance levers (2026-10-23, `LOW_CONF` 0.9)
+
+`reading_eval.py --diagnose` classifies each unaligned utterance; Parakeet's output is now cached once (`data/evals/results/asr-speechocean762.json`, 653 s), so a lever run takes ~4 s and reproduces the ASR exactly (the cached baseline equals §5.1: 562 / 337 / 127).
+
+| Reason | utterances | of which every word was scored ≥ 7 |
+|---|---|---|
+| no anchor, ≥ 3 words heard (no run of matches with a content word, no 4(b)) | 518 | 204 |
+| over the ceiling (an anchor exists, internal cost > 7 per word) | 16 | 3 |
+| ASR heard nothing | 17 | 7 |
+| no anchor, 1–2 words heard | 11 | 6 |
+
+The no-anchor cases are the ASR, not the rules: Parakeet transcribed accented sentences as unrelated words ("K it goes sound for it" for KATE'S GOT SOME GREY; "Leaders can say it's a home tour" for LAYLA CAN SEE THE HOMETOWN; "Drunker sucks" for JOHN GOT THE SOCKS). A few are sentences of function words only (ALL WITH HIM heard "Oh, with him": `with` and `him` match but neither is a content word), which by design never anchor when spoken.
+
+One lever at a time (`--set-const`), everything else as in §5.1:
+
+| run | unaligned (all / children) | false alarms (all, children) | hits (all / children) |
+|---|---|---|---|
+| baseline | 562 / 306 | 337 (2.57 %), 2.91 % | 127 / 20 |
+| `CEILING_PER_WORD` 7 → 10 | 546 / 300 | 340 (2.60 %), 2.91 % | 132 / 20 |
+| ceiling off (1000) | 546 / 300 | 340 (2.60 %), 2.91 % | 132 / 20 |
+| `ANCHOR_MATCH_SHARE` (rule 4(b)) 0.5 → 0.34 | 530 / 291 | 343 (2.62 %), 2.95 % | 134 / 21 |
+| `LONE_ANCHOR_MAX_M` (rule 4(c)) 2 → 3 | 543 / 287 | 340 (2.60 %), 2.96 % | 127 / 20 |
+
+Reading of the numbers:
+- **No acceptance lever moves the unaligned share much**: the best (4(b) at one third) recovers 32 of 562 utterances (11.2 % → 10.6 %) for +7 hits and +6 false alarms. Raising the ceiling stops mattering at 10 (the same 16 utterances as switching it off).
+- **The unaligned share is an ASR limit on accented learner speech**, which looser acceptance would only turn into candidates on words the learner read correctly (204 of the 518 no-anchor sentences were scored correct throughout). The rules are doing what ADR-0013 intends: nothing is recorded when the transcript does not resemble the page.
+- **Recommendation: keep the defaults** (ceiling 7, share 0.5, lone anchor ≤ 2). The remaining lever for unaligned speech is the ASR itself (model, decoding, or the camera/headset path), measured on the owner's set, not the alignment rules.
+
 ## 6. Sources
 
 | id | tier | title / url | source-date | checked | supports |

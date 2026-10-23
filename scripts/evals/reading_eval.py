@@ -27,8 +27,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from leafi.core.config import Settings  # noqa: E402
-from leafi.study.evaluation import Tally, score_utterance  # noqa: E402
+from leafi.study.evaluation import Tally, diagnose_unaligned, score_utterance  # noqa: E402
 
+LEVERS = ("ANCHOR_CONF", "LOW_CONF", "RETRY_MIN_CONF", "TRIGGER_PER_WORD", "CEILING_PER_WORD", "PAGE_MARGIN",
+          "ANCHOR_MATCH_SHARE", "LONE_ANCHOR_MAX_M")
 ATTRIBUTION = ("speechocean762 (OpenSLR SLR101), CC BY 4.0, Zhang et al., Interspeech 2021; "
                "used unmodified for evaluation")
 
@@ -71,8 +73,28 @@ def _pct(xs: list[float], q: float) -> float | None:
     return round(xs[min(len(xs) - 1, int(q * len(xs)))], 3)
 
 
-def run(settings: Settings, max_age: int | None, limit: int | None) -> dict:
-    from leafi.services.asr import sherpa
+def _asr_cache(settings: Settings, root: Path, wavs: dict[str, Path], utts: list[str]) -> dict[str, list]:
+    """Parakeet's words and confidences per utterance, computed once and kept in
+    `data/evals/results/asr-speechocean762.json` (gitignored): alignment levers then rerun in seconds."""
+    path = Path(settings.data_dir) / "evals" / "results" / "asr-speechocean762.json"
+    key = str(settings.asr_model_dir)
+    cache = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if cache.get("model") != key:
+        cache = {"model": key, "utts": {}}
+    missing = [u for u in utts if u not in cache["utts"] and u in wavs]
+    if missing:
+        from leafi.services.asr import sherpa
+
+        asr = sherpa.create(settings)
+        for u in missing:
+            pcm, rate = _read_wav(wavs[u])
+            cache["utts"][u] = [[w.text, w.conf] for w in asr._run(pcm, rate, None)]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache), encoding="utf-8")
+    return cache["utts"]
+
+
+def run(settings: Settings, max_age: int | None, limit: int | None, diagnose: bool = False) -> dict:
     from leafi.services.wordinfo import LocalWordInfo
 
     root = Path(settings.data_dir) / "evals" / "speechocean762"
@@ -82,31 +104,44 @@ def run(settings: Settings, max_age: int | None, limit: int | None) -> dict:
     scores = json.loads(scores_path.read_text(encoding="utf-8"))
     wavs = {p.stem: p for p in root.rglob("*.WAV")} | {p.stem: p for p in root.rglob("*.wav")}
     ages, spk = _ages(root), _utt2spk(root)
-    asr = sherpa.create(settings)
+    picked = []
+    for utt in sorted(scores):
+        age = ages.get(spk.get(utt, ""))
+        if (max_age is not None and (age is None or age > max_age)) or utt not in wavs:
+            continue
+        picked.append(utt)
+        if limit and len(picked) >= limit:
+            break
+    t0 = time.perf_counter()
+    heard_all = _asr_cache(settings, root, wavs, picked)
+    t_asr = time.perf_counter() - t0
     info = LocalWordInfo(settings.models_dir)
     total, kids = Tally(), Tally()
-    n, t0 = 0, time.perf_counter()
-    for utt, rec in sorted(scores.items()):
-        age = ages.get(spk.get(utt, ""))
-        if max_age is not None and (age is None or age > max_age):
-            continue
-        if utt not in wavs:
-            continue
-        pcm, rate = _read_wav(wavs[utt])
-        heard = asr._run(pcm, rate, None)
-        words = [w.text for w in heard]
-        confs = [w.conf for w in heard]
+    reasons: Counter = Counter()
+    examples: dict[str, list] = {}
+    for utt in picked:
+        rec, age = scores[utt], ages.get(spk.get(utt, ""))
+        words = [w for w, _ in heard_all[utt]]
+        confs = [c for _, c in heard_all[utt]]
         labels = [_label(w["accuracy"]) for w in rec["words"]]
         t = score_utterance(rec["text"], labels, words, confs, info)
         total.add(t)
         if age is not None and age <= 12:
             kids.add(t)
-        n += 1
-        if limit and n >= limit:
-            break
-    return {"set": "speechocean762", "attribution": ATTRIBUTION, "max_age": max_age,
-            "seconds": round(time.perf_counter() - t0, 1), "word_info": info.versions,
-            "all": _summary(total), "children_le_12": _summary(kids)}
+        if diagnose and t.unaligned:
+            d = diagnose_unaligned(rec["text"], words, confs, info)
+            r = d["reason"] + ("" if all(lab == "correct" for lab in labels) else " (some words scored < 7)")
+            reasons[r] += 1
+            ex = examples.setdefault(d["reason"], [])
+            if len(ex) < 8:
+                ex.append({"utt": utt, "text": rec["text"], "heard": " ".join(words), **d})
+    out = {"set": "speechocean762", "attribution": ATTRIBUTION, "max_age": max_age,
+           "seconds": round(time.perf_counter() - t0, 1), "asr_seconds": round(t_asr, 1),
+           "word_info": info.versions, "all": _summary(total), "children_le_12": _summary(kids)}
+    if diagnose:
+        out["unaligned_reasons"] = dict(reasons.most_common())
+        out["unaligned_examples"] = examples
+    return out
 
 
 def _summary(t: Tally) -> dict:
@@ -135,14 +170,24 @@ def main() -> int:
     ap.add_argument("--set", choices=["speechocean762"], default="speechocean762")
     ap.add_argument("--max-age", type=int, default=None, help="only speakers up to this age")
     ap.add_argument("--limit", type=int, default=None, help="stop after N utterances")
+    ap.add_argument("--diagnose", action="store_true", help="classify why each unaligned utterance failed")
+    ap.add_argument("--set-const", action="append", default=[], metavar="NAME=VALUE",
+                    help="override one ADR-0013 threshold for this run only (a lever experiment; TD-28)")
     args = ap.parse_args()
-    settings = Settings()
-    out = run(settings, args.max_age, args.limit)
     from leafi.study import alignment
 
+    levers = {}
+    for item in args.set_const:
+        name, _, value = item.partition("=")
+        if name not in LEVERS:
+            raise SystemExit(f"--set-const: {name} is not one of {', '.join(LEVERS)}")
+        levers[name] = type(getattr(alignment, name))(value)
+        setattr(alignment, name, levers[name])
+    settings = Settings()
+    out = run(settings, args.max_age, args.limit, args.diagnose)
+    out["overrides"] = levers
     # the untuned thresholds this run used, so runs can be compared lever by lever (TD-28)
-    out["thresholds"] = {k: getattr(alignment, k) for k in (
-        "ANCHOR_CONF", "LOW_CONF", "RETRY_MIN_CONF", "TRIGGER_PER_WORD", "CEILING_PER_WORD", "PAGE_MARGIN")}
+    out["thresholds"] = {k: getattr(alignment, k) for k in LEVERS}
     print(json.dumps(out, indent=2))
     res = Path(settings.data_dir) / "evals" / "results"
     res.mkdir(parents=True, exist_ok=True)

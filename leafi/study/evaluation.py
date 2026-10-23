@@ -85,6 +85,49 @@ def score_utterance(text: str, labels: list[Label], words: list[str], confs: lis
     return t
 
 
+def diagnose_unaligned(text: str, words: list[str], confs: list[float | None], info: WordInfo) -> dict:
+    """Why `align` found no accepted path for this utterance (TD-28): `empty` (the ASR heard nothing),
+    `ceiling` (a pass has an anchor but its internal cost exceeds the per-word ceiling), `no_anchor` (no pass
+    has an anchor even without the ceiling), split by `short` (m ≤ 2) where rules (c) and (d) apply."""
+    from leafi.study import alignment as al
+
+    st = ReadingState.from_text(text)
+    w, c = al._heard(words, confs)
+    m = len(w)
+    if m == 0:
+        return {"reason": "empty", "m": 0}
+    pairs = al._pairs(w, st.tokens, info)
+    out = {"m": m}
+    anchor_any, ceiling_hit = False, False
+    saved = al.CEILING_PER_WORD
+    try:
+        for page in (False, True):
+            if page and m < 2:
+                continue
+            p = al.best_path(st, w, info, page=page, pairs=pairs)
+            if p is None:
+                continue
+            tag = "page" if page else "fast"
+            matched = [o for o in p.ops if o.op in ("align", "join") and o.cls in al.MATCHED]
+            out[f"{tag}_internal_per_word"] = round(p.internal / m, 1)
+            out[f"{tag}_matched"] = sum(o.k for o in matched)
+            al.CEILING_PER_WORD = 10**6
+            anchored = al._accepted(st, p, w, c, page, info, frozenset())
+            al.CEILING_PER_WORD = saved
+            anchor_any |= anchored
+            ceiling_hit |= anchored and m >= 3 and p.internal > saved * m
+    finally:
+        al.CEILING_PER_WORD = saved
+    if anchor_any and ceiling_hit:
+        reason = "ceiling"
+    elif anchor_any:
+        reason = "other"  # anchored and under the ceiling in some pass, yet not chosen (should not happen)
+    else:
+        reason = "no_anchor_short" if m <= 2 else "no_anchor"
+    out["reason"] = reason
+    return out
+
+
 def _token_confs(obs, words: list[str], confs: list[float | None]) -> dict[int, float | None]:
     """Walk the observations in path order, consuming heard words, to find each token's heard confidence."""
     out: dict[int, float | None] = {}

@@ -47,3 +47,16 @@ def test_tallies_add_and_rates():
     total.add(a)
     total.add(b)
     assert total.utterances == 2 and total.false_alarm_rate == 1 / 4
+
+
+def test_diagnose_names_why_an_utterance_is_unaligned():
+    from leafi.study.evaluation import diagnose_unaligned
+
+    assert diagnose_unaligned("The dog ran.", [], [], INFO)["reason"] == "empty"
+    # one function word matched among four: no run, no content word → no anchor
+    d = diagnose_unaligned("The dog ran far.", ["the", "dig", "red", "for"], [0.95] * 4, INFO)
+    assert d["reason"] == "no_anchor" and d["fast_matched"] == 1
+    # "the big dog" anchors, but five insertions (60 tenths over 8 words = 7.5) exceed the ceiling of 7
+    d = diagnose_unaligned("The big dog.", "the big dog xa xb xc xd xe".split(), [0.95] * 8, INFO)
+    assert d["reason"] == "ceiling" and d["fast_internal_per_word"] == 7.5
+    assert diagnose_unaligned("The dog ran.", ["cat"], [0.95], INFO)["reason"] == "no_anchor_short"
