@@ -1,0 +1,117 @@
+"""Session state shared by the loop, the menu, construction and negotiation (ADR-0017 §1-§3).
+
+`Facts` are what `allowed(s)` and the default policy's `when` words read; the activities compute them from the
+store and the devices (`facts_fn`), so the decision code stays pure and testable.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from leafi.core.ports import Utterance
+from leafi.core.storage import Store
+from leafi.study.harness.latch import Latch
+from leafi.study.harness.ledger import Ledger
+from leafi.study.harness.settings import LearnerSettings
+
+
+class Talk(Protocol):
+    async def say(self, text: str) -> None: ...
+    async def listen(self, timeout_s: float | None) -> Utterance | None: ...
+
+
+@dataclass(frozen=True)
+class Facts:
+    first_boundary: bool = True
+    anki_reachable: bool = False
+    anki_due: int = 0
+    reviews_goal_met: bool = False
+    has_book: bool = False
+    unread_current: bool = False          # the current page read has an unread range
+    can_acquire_next_page: bool = False
+    familiar_pages: bool = False
+    recall_due: tuple[int, ...] = ()      # item ids
+    open_candidates: tuple[int, ...] = ()  # miscue ids of the open cycle, by Difficulty weight then position
+    new_item_candidates: tuple[int, ...] = ()
+    read_sentences: bool = False          # the open cycle has read sentences
+    cardable_items: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class Spec:
+    """A proposed activity: selection fields from any sequencer, content fields only from the content owner."""
+
+    kind: str
+    params: dict = field(default_factory=dict)
+    content: dict | None = None
+    source: str = "default"  # brain | default | learner
+
+
+@dataclass(frozen=True)
+class Activity:
+    kind: str
+    params: dict
+    decided_by: str
+    content: dict | None = None
+    content_owner: str = "code"
+    override: str | None = None
+
+
+@dataclass(frozen=True)
+class Rejected:
+    reason: str
+
+
+@dataclass
+class Boundary:
+    """Per-boundary negotiation state; survives Reobserve, cleared when an activity starts (§2.1)."""
+
+    excluded: set[str] = field(default_factory=set)
+    wanted: str | None = None
+    current: Activity | None = None
+    reask: bool = False
+    offers: int = 0
+    silences: int = 0
+    override: str | None = None
+
+
+@dataclass
+class Session:
+    store: Store
+    latch: Latch
+    ledger: Ledger
+    settings: LearnerSettings
+    talk: Talk
+    session_id: int
+    learner_id: int
+    facts_fn: Callable[[Session], Facts] = lambda s: Facts()
+    arm: str = "default"
+    propensity: float | None = None
+    cycle_id: int | None = None
+    soft_deadline: float = float("inf")  # time.monotonic() clock
+    boundary: Boundary = field(default_factory=Boundary)
+    previous_boundary_was_wait: bool = False
+    generate: Callable[..., Any] | None = None  # M7: the Brain's `generate`; None = no Brain-owned content
+    routable_answer: bool = False                 # M7: an eligible `answer` backend exists
+
+    def facts(self) -> Facts:
+        return self.facts_fn(self)
+
+    def epoch(self) -> tuple:
+        return self.latch.epoch.key()
+
+    def checkpoint(self) -> None:
+        self.latch.checkpoint()
+
+    def take_skip(self) -> bool:
+        return self.latch.take_skip()
+
+    @property
+    def autonomy(self) -> int:
+        return int(self.settings["autonomy"])
+
+    def past_soft_deadline(self) -> bool:
+        return time.monotonic() >= self.soft_deadline
