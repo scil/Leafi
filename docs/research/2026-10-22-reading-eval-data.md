@@ -30,6 +30,8 @@ Checked: 2026-10-22. Method: `tiered-research` (T1 = the dataset's own site, its
 3. Storiza: re-check access in M10; no work until data exists.
 4. The owner's labelled set: after (2), on the PC headset, silent.
 
+## 4. (no section; numbering kept for links)
+
 ## 5. First results (2026-10-22, ADR-0013 v2 at 8bc2fe9)
 
 `python scripts/evals/reading_eval.py --set speechocean762`: all 5,000 utterances, Parakeet TDT 0.6B v2 int8 on CPU, `LocalWordInfo` without word lists (lemminflect's dictionary for `is_word`, espeak-ng phones with homographs, lemminflect lemmas + overrides-1); 646 s. Labels: ≥ 7 correct, 0–3 error, 4–6 excluded.
@@ -51,7 +53,7 @@ Reading of the numbers:
 - **Unaligned utterances (11–15 %) are not false alarms but lost tracking**: short sentences read with several substitutions fall under the acceptance rules or the ceiling. They also hide words from the false-alarm count, so the true rate under a looser acceptance would be higher.
 - **The miss rate (~80 %) mostly measures a different task**: a word scored 0–3 for pronunciation is often still recognised as the target word by an ASR whose language model expects it, so `align` sees a match. This set cannot say much about misreadings; the Storiza corpus or the owner's set must.
 
-## 4. Sources
+## 6. Sources
 
 | id | tier | title / url | source-date | checked | supports |
 |---|---|---|---|---|---|
