@@ -113,7 +113,8 @@ Costs are flat by class; a substitution cost graded by phone distance (prior-art
      substituted or deleted (≤ 3), tok unattempted|provisional|unread → OBSERVED (no miscue: the token becomes
                        committed if C(sentence(tok)), else provisional) when any of:
                          tok.function_word; class inflection with reading.inflections = observe (default);
-                         a substitution whose heard confidence < LOW_CONF (0.5, untuned); a self_correction mark
+                         a substitution whose heard confidence < LOW_CONF (0.9, owner decision 2026-10-22; was 0.5;
+                         chosen from the speechocean762 confidences, effect not yet measured, TD-28); a self_correction mark
                        otherwise → candidate, new miscue(status = candidate, origin = substitution | deletion,
                          heard = w or null, cycle_id = s.cycle), tok.miscue_id, tok.created_by = this utterance
      substituted or deleted, tok candidate|committed|settled → unchanged (one candidate per token; a settled token is

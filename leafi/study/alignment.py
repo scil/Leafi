@@ -27,7 +27,9 @@ Status = Literal["unattempted", "provisional", "committed", "candidate", "settle
 
 C_FUZZY, C_SUB, C_DEL0, C_DELX, C_INS, C_JUMP0, C_BOUND, C_PAGE_ENTRY, C_SKIP_SENT = 3, 10, 8, 3, 12, 4, 5, 15, 15
 PAGE_MARGIN, TRIGGER_PER_WORD, CEILING_PER_WORD = 10, 5, 7
-ANCHOR_CONF, LOW_CONF, RETRY_MIN_CONF = 0.8, 0.5, 0.5
+# LOW_CONF 0.9: owner decision 2026-10-22 from the speechocean762 run (false-alarm words median 0.82, correct
+# words 0.998); its effect on false alarms and hits is not yet measured (TD-28).
+ANCHOR_CONF, LOW_CONF, RETRY_MIN_CONF = 0.8, 0.9, 0.5
 FUZZY_SIM = 0.80
 LINE_SKIP_MIN = 4
 UNALIGNED_PROMPT_RUN, UNALIGNED_PROMPT_WORDS = 3, 6

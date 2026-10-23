@@ -15,8 +15,14 @@ def test_a_correct_reading_has_no_false_alarm():
 
 
 def test_an_asr_slip_on_a_correct_word_is_a_false_alarm():
-    t = score_utterance("The dog ran.", ["correct"] * 3, ["the", "dog", "red"], [0.9, 0.9, 0.8], INFO)
-    assert (t.false_alarms, t.false_alarms_content) == (1, 1) and t.conf_false == [0.8]
+    t = score_utterance("The dog ran.", ["correct"] * 3, ["the", "dog", "red"], [0.9, 0.9, 0.95], INFO)
+    assert (t.false_alarms, t.false_alarms_content) == (1, 1) and t.conf_false == [0.95]
+
+
+def test_a_slip_heard_below_low_conf_is_observed_not_a_false_alarm():
+    """LOW_CONF 0.9 (owner decision 2026-10-22): a substitution heard at 0.85 makes no candidate."""
+    t = score_utterance("The dog ran.", ["correct"] * 3, ["the", "dog", "red"], [0.9, 0.9, 0.85], INFO)
+    assert t.false_alarms == 0
 
 
 def test_a_labelled_error_caught_is_a_hit_and_one_missed_is_a_miss():

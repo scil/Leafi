@@ -165,6 +165,8 @@ Perceived-moment budgets and the output reserve measured per Mouth (PC and camer
 
 - 2026-10-22 Owner decision: the reading evaluation (M4.4) runs on public data first — speechocean762 now (Mandarin-L1 learners, half children, expert word scores, CC BY 4.0), the Storiza Corpus when it can be obtained — and the owner's recordings only as a later check on Leafi's own devices. speechocean762 is one sentence per utterance and mostly pronunciation errors, so it measures false alarms well and misses weakly, and it never exercises the page pass; those are what the owner's set adds.
 
+- 2026-10-22 Owner decision: `LOW_CONF` 0.5 → 0.9 now, evaluated later (TD-28). A substitution heard below 0.9 confidence is an observation, not a candidate. Chosen from the first speechocean762 run (false-alarm words median confidence 0.82, correct words 0.998); its cost in caught misreadings is unmeasured.
+
 ## Outcomes & retrospective
 
 (at completion)
