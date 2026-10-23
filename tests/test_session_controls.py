@@ -112,10 +112,13 @@ async def test_controls_in_check_are_dispatched_not_graded(settings):
     assert face.texts.count("That doesn't do anything right now.") == 2
 
 
-async def test_an_empty_typed_line_completes_a_near_complete_sentence(settings):
-    """Review 1 #13: Enter on an empty line is a typed line end (ADR-0013 completion (ii)), never alignment."""
+async def test_an_empty_typed_line_is_a_line_end_never_an_alignment(settings):
+    """Review 1 #13: Enter on an empty line is a typed line end (ADR-0013 completion (ii)), never alignment.
+    v2: it does not complete the sentence while a content word ("far") is still unattempted."""
     store, face, s, _ = await _run(settings, ["The dog ran", "", "/stop"])
-    assert store.one("SELECT tokens_unread FROM page_reads")["tokens_unread"] == 4  # "far" + "The cat sat"
+    assert store.one("SELECT COUNT(*) AS n FROM utterances WHERE text=''")["n"] == 0
+    assert "CHECK" not in s.flags.transitions
+    assert store.one("SELECT tokens_unread FROM page_reads")["tokens_unread"] == 1  # "far", by the stop
 
 
 async def test_empty_lines_never_trigger_reposition(settings):

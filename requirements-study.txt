@@ -4,6 +4,8 @@
 # Heavy model packages are only needed for S2/S3 hardware steps; text mode needs
 # rapidfuzz, pillow and the packages in requirements.txt.
 rapidfuzz==3.14.6        # alignment similarity (ADR-0013 sim)
+num2words==0.5.14        # numeral readings (ADR-0013 v2 norm; LGPL-2.1, used unmodified)
+lemminflect==0.2.3       # WordInfo.lemmas (ADR-0013 v2 inflection; plan M0.3), imported lazily
 pillow>=12.0             # page fixtures, frame-diff settle
 numpy>=2.0
 anthropic==0.120.2       # Brain (cloud, text only); pinned per TD-1

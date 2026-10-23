@@ -14,7 +14,7 @@ from rapidfuzz import fuzz
 
 from .ports import Utterance, Word
 
-TOKENIZER_VERSION = "1"
+TOKENIZER_VERSION = "2"  # v2: numeral readings through num2words (ADR-0013 → norm() v2); boundaries as v1
 
 _WORD_RE = re.compile(r"[0-9A-Za-zÀ-ÖØ-öø-ÿ]+(?:['’\-][0-9A-Za-zÀ-ÖØ-öø-ÿ]+)*")
 _SENT_END_RE = re.compile(r"^[\"'”’)\]]*[.?!]")
@@ -32,26 +32,49 @@ CONTRACTIONS = {
 _ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
          "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
          "nineteen"]
-_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+_TENS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+_ORDINALS = ["zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+             "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth",
+             "seventeenth", "eighteenth", "nineteenth", "twentieth", "thirtieth", "fortieth", "fiftieth",
+             "sixtieth", "seventieth", "eightieth", "ninetieth", "hundredth", "thousandth", "millionth"]
+# Words a `number join` may consist of (ADR-0013 rule 3); "and" only between two of them.
+NUMBER_WORDS = frozenset(_ONES + _TENS + _ORDINALS + ["hundred", "thousand", "million"])
+_ORDINAL_RE = re.compile(r"^(\d+)(st|nd|rd|th)$")
 
 
-def _number_word(n: int) -> str:
-    """0..999 as one hyphenless word ("twentyone"), matching how hyphenated page words normalise."""
-    if n < 20:
-        return _ONES[n]
-    if n < 100:
-        t, o = divmod(n, 10)
-        return _TENS[t] + (_ONES[o] if o else "")
-    h, rest = divmod(n, 100)
-    return _ONES[h] + "hundred" + (_number_word(rest) if rest else "")
+def canonical_number(text: str) -> str:
+    """ADR-0013 canonical form of a number reading: lowercase, no "and", commas, spaces or hyphens."""
+    w = text.lower().replace(",", " ").replace("-", " ").split()
+    return "".join(x for x in w if x != "and")
+
+
+def numeral_readings(word: str) -> frozenset[str]:
+    """Every reading `num2words` gives a numeral token, in canonical form; empty for a non-numeral."""
+    w = word.lower().replace(",", "")
+    m = _ORDINAL_RE.match(w)
+    if not (w.isdigit() or m):
+        return frozenset()
+    from num2words import num2words  # LGPL-2.1, imported only when a numeral occurs
+
+    if m:
+        return frozenset({canonical_number(num2words(int(m.group(1)), to="ordinal"))})
+    n = int(w)
+    out = {canonical_number(num2words(n))}
+    if len(w) == 4 and 1100 <= n <= 2099:
+        out.add(canonical_number(num2words(n, to="year")))
+    return frozenset(out)
 
 
 def norm(word: str) -> str:
-    """Lowercase, unify apostrophes, strip punctuation and hyphens, digits → words, contractions table."""
+    """Lowercase, unify apostrophes, strip punctuation and hyphens, numerals → their cardinal (or ordinal)
+    reading in canonical form, contractions table."""
     w = word.lower().replace("’", "'").strip(".,;:!?\"()[]{}“”‘'-—–…")
+    if w.isdigit() or _ORDINAL_RE.match(w):
+        from num2words import num2words
+
+        m = _ORDINAL_RE.match(w)
+        return canonical_number(num2words(int(m.group(1)), to="ordinal") if m else num2words(int(w)))
     w = w.replace("-", "")
-    if w.isdigit() and len(w) <= 3:
-        return _number_word(int(w))
     return CONTRACTIONS.get(w, w)
 
 

@@ -226,8 +226,11 @@ async def test_session_stops_when_the_microphone_dies_and_there_is_no_console(se
 class BlockingListener(ScriptedListener):
     """After the script it blocks forever (a learner who went quiet in voice mode would time out instead)."""
 
+    waiting = False
+
     async def next_utterance(self, timeout_s):
         if not self.script:
+            self.waiting = True
             await asyncio.sleep(3600)
         return await super().next_utterance(timeout_s)
 
@@ -240,19 +243,23 @@ async def test_a_lost_lease_stops_the_session_and_silences_the_mouths(settings, 
     face = RecordingFace()
     mouth = FakeMouth()
     hub = Hub(faces={"c": face}, mouths={"m": mouth}, synthesizer=FakeSynth(tmp_path), policy="all")
-    session = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(),
-                           listener=BlockingListener(["The cat sat on the hat by the door."]))
+    listener = BlockingListener(["The cat sat on the hat by the door."])
+    session = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(), listener=listener)
     task = asyncio.create_task(session.run(book_title="Fixture", page_text=PAGE, page_number=1))
-    for _ in range(100):  # until the reading line was processed and the session waits for input
+    stable, last = 0, -1
+    for _ in range(250):  # until the reading line was processed, its line spoken, and the session waits
         await asyncio.sleep(0.02)
-        if store.one("SELECT COUNT(*) AS n FROM utterances")["n"] >= 1:
+        done = session.state is not None and 1 in session.state.completed
+        stable = stable + 1 if (done and len(mouth.played) == last) else 0
+        last = len(mouth.played)
+        if listener.waiting and stable >= 5:
             break
     played_before = len(mouth.played)
     settings.lease_path.write_text(json.dumps({"pid": os.getpid(), "token": "another-launch",
                                                "expires": time.time() + 60}), encoding="utf-8")
     await asyncio.wait_for(task, 5)
     assert session.flags.lease_lost and session.flags.stopped
-    assert len(mouth.played) == played_before  # nothing played after the takeover
+    assert len(mouth.played) == played_before, face.texts  # nothing played after the takeover
     assert any("took over" in t for t in face.texts)  # the learner was told, on the Faces only
     summary = loads(store.one("SELECT summary FROM reading_sessions")["summary"])
     assert summary["lease_lost"] is True and summary["interrupted"] is False

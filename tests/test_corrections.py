@@ -33,7 +33,7 @@ def test_correction_creates_a_revision_chain_with_edit_map_and_verified_span(sto
     assert [r.source for r in chain] == ["ocr", "correction"]
     assert chain[1].edit_map == [[14, 20, 14, 21]]
     assert chain[1].spans_verified == [[14, 21]]
-    assert chain[1].tokenizer_version == "1"
+    assert chain[1].tokenizer_version == "2"  # ADR-0013 v2 norm
     corr = store.one("SELECT * FROM corrections WHERE id=?", (res.correction_id,))
     assert (corr["page_revision_id"], corr["char_start"], corr["char_end"]) == (rev1, 14, 20)
     assert (corr["old_text"], corr["new_text"]) == ("though", "through")

@@ -40,7 +40,9 @@ async def test_interrupted_session_is_closed_and_resumed_from_the_committed_curs
     reads = store.all("SELECT * FROM page_reads ORDER BY id")
     assert [r["attempt"] for r in reads] == [1, 2]
     st = ReadingState.from_json(PAGE, loads(reads[1]["reading_state"]))
-    assert st.statuses().split()[:13] == ["C"] * 13  # resumed at old ccur 13, then "brown fox." read
+    # ADR-0013 v2 → Opening a page read: the old ccur 13 moves down to its sentence start (9); "brown fox."
+    # then enters at 13 and rule 6 leaves "Mia saw a big" unread
+    assert st.statuses().split()[:15] == ["C"] * 9 + ["R"] * 4 + ["C"] * 2
     assert 1 in st.completed and 2 in st.completed
 
 

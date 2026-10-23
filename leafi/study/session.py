@@ -20,6 +20,7 @@ from leafi.core.hub import Hub, ListeningGate
 from leafi.core.ports import Display, ListenerLost, Utterance
 from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.core.text import typed_utterance, words
+from leafi.core.wordinfo import NullWordInfo, WordInfo
 from leafi.study import (
     anki,
     books,
@@ -36,10 +37,11 @@ from leafi.study import (
 from leafi.study.alignment import (
     CandidateCreated,
     CandidateWithdrawn,
+    FirstWordsPrompt,
     LineSkipped,
     ReadingState,
     SentenceReached,
-    Unanchored,
+    Unaligned,
     align,
     back,
     complete_sentence,
@@ -77,8 +79,10 @@ class SessionFlags:
 
 class StudySession:
     def __init__(self, *, store: Store, hub: Hub, settings, brain=None, anki_client: anki.AnkiClient | None = None,
-                 listener=None, pron=None, page_tracker=None, ocr=None, catalog=None, control_source=None) -> None:
+                 listener=None, pron=None, page_tracker=None, ocr=None, catalog=None, control_source=None,
+                 word_info: WordInfo | None = None) -> None:
         self.store = store
+        self.word_info = word_info or NullWordInfo()  # ADR-0013 v2 WordInfo; Null = v1 crediting
         self.ocr = ocr
         self.catalog = catalog
         self.hub = hub
@@ -115,8 +119,6 @@ class StudySession:
         self.state: ReadingState | None = None
         self.read_id: int | None = None
         self.seq = 0
-        self.unanchored = 0
-        self.reposition = False
         self.first_page = True
         self._announce_page = False
         self.request = PageRequest()
@@ -513,8 +515,6 @@ class StudySession:
         st.page_read_id, st.revision_id = self.read_id, self.rev.id
         self.state = st
         self.seq = 0
-        self.unanchored = 0
-        self.reposition = False
         self._save_state()
 
     async def _after_page_found(self) -> str:
@@ -685,20 +685,14 @@ class StudySession:
         self.seq += 1
         uid = self._store_utterance(u, "reading")
         ws = [w.text for w in u.words]
-        st, obs, events = align(self.state, ws, self.seq, whole_page=self.reposition)
-        if any(isinstance(e, Unanchored) for e in events):
-            if self.reposition:
-                return None
-            self.unanchored += 1
-            if self.unanchored < 2:
-                return None
-            st, obs, events = align(self.state, ws, self.seq, whole_page=True)
-            if any(isinstance(e, Unanchored) for e in events):
-                self.reposition = True
+        confs = None if u.typed else [w.conf for w in u.words]
+        st, obs, events = align(self.state, ws, self.seq, self.word_info, confs=confs)
+        if any(isinstance(e, Unaligned) for e in events):  # ADR-0013 v2: nothing changes but the counters
+            self.state = st
+            self._save_state()
+            if any(isinstance(e, FirstWordsPrompt) for e in events):
                 await self.line("reposition")
-                return None
-        self.unanchored = 0
-        self.reposition = False
+            return None
         self._persist(uid, obs, events, st)
         if any(isinstance(e, LineSkipped) for e in events):
             await self.line("line_skipped")
@@ -723,9 +717,10 @@ class StudySession:
 
     def _persist(self, uid: int, obs, events, st: ReadingState) -> None:
         with self.store.transaction():
+            # schema 4 has no `unaligned` observation kind (migration 5 adds it); those rows wait for it
             obs_ids = [self.store.insert("observations", utterance_id=uid, kind=o.kind, token_start=o.token_start,
                                          token_end=o.token_end, heard_text=o.heard, sim=o.sim,
-                                         created_at=now_iso()) for o in obs]
+                                         created_at=now_iso()) if o.kind != "unaligned" else None for o in obs]
             for e in events:
                 if isinstance(e, CandidateCreated):
                     tok = st.tokens[e.token_index]

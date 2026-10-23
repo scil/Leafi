@@ -88,13 +88,14 @@ async def test_a_physical_page_turn_settles_candidates_and_finds_the_new_page(se
     eye = FakeEye([render(PAGES[0], number=1)])
     tracker = PageTracker(store, eye, MockOcr(), settings, sleep=lambda s: asyncio.sleep(0), settle_frames=1)
     hub = Hub(faces={"f": RecordingFace()}, eyes={"desk": eye}, policy="none", study_eye="desk")
-    script = [_voice("Tom hid"), 0.05, lambda: eye.show(render(PAGES[1], number=2))] + [0.05] * 40 + [
+    # "had" is a function word in ADR-0013 v2 (observed, never a candidate), so the misreading is "rod"
+    script = [_voice("Tom had a rod"), 0.05, lambda: eye.show(render(PAGES[1], number=2))] + [0.05] * 40 + [
         "/stop"]
     s = StudySession(store=store, hub=hub, settings=settings, brain=MockBrain(unavailable=True),
                      listener=SlowVoice(script, voice=True), page_tracker=tracker, ocr=MockOcr())
     await asyncio.wait_for(s.run(book_title="Kite", page_number=1), 20)
     rows = {r["expected"]: (r["status"], r["unsure_reason"]) for r in store.all("SELECT * FROM miscues")}
-    assert rows == {"had": ("unsure", "skipped")}
+    assert rows == {"red": ("unsure", "skipped")}
     printed = [r["printed_number"] for r in store.all(
         "SELECT p.printed_number FROM page_reads pr JOIN pages p ON p.id = pr.page_id ORDER BY pr.id")]
     assert printed == [1, 2], (s.flags.transitions, hub.faces["f"].texts)
@@ -130,7 +131,9 @@ async def test_a_timed_out_listen_does_not_answer_the_next_listen(settings):
     listener = SlowVoice([_voice("The dog red"), 0.1, _voice("ran"), "/stop"], voice=True)
     s = StudySession(store=store, hub=Hub(faces={"f": RecordingFace()}, policy="none"), settings=settings,
                      brain=MockBrain(unavailable=True), listener=listener)
-    await asyncio.wait_for(s.run(book_title="B", page_text="The dog ran far.", page_number=1), 10)
+    # ADR-0013 v2: the pause completes the sentence only when no content word of it is still unattempted, so
+    # the page ends in function words
+    await asyncio.wait_for(s.run(book_title="B", page_text="The dog ran to it.", page_number=1), 10)
     rows = {r["expected"]: (r["status"], r["withdrawn_reason"] or r["unsure_reason"])
             for r in store.all("SELECT * FROM miscues")}
     assert rows == {"ran": ("withdrawn", "practice")}
