@@ -1,6 +1,7 @@
 ---
-status: proposed
-v1: accepted 2026-10-19, implemented in `leafi/study/alignment.py` (the code follows v1 until this v2 is accepted; ADR-0017 §8)
+status: accepted
+accepted: 2026-10-22 (owner; v2 rev 3 with the author's calls of the round-1 comparison and the plan's Decision log as they stand)
+v1: accepted 2026-10-19, implemented in `leafi/study/alignment.py` (the code follows v1 until plan M4 implements v2)
 date: 2026-10-19
 revised: 2026-10-22 (v2 rev 3: round-2 increment review; v2 rev 2: round-1 reviews, see Reviews; v2 rev 1: ADR-0017 §8.1–8.6 as pseudocode and the prior-art changes to alignment; v1 revised 2026-10-19 after codex round 4)
 supersedes: 0009, 0012
@@ -337,4 +338,4 @@ Status codes: U unattempted, P provisional, C committed, M candidate, S settled,
 
 ## Reviews
 
-v1: codex design reviews 1–5 (2026-10-19) under `../plans/active/reviews/`. v2 round 1 (2026-10-22): `code-plan-review` ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-code-plan-review.md)) and a fresh Claude session standing in for codex, whose quota had run out ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-claude.md)); comparison and resolutions: [round-1 comparison](../plans/active/reviews/2026-10-22-adr-0013-v2-round-1-comparison.md). Round 2 (2026-10-22), the increment on rev 2, by a fresh Claude session for codex at the owner's request ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-round-2-claude.md)): two High (a second hint on a candidate token; the candidate index keyed on a stale index), six Medium, ten Low; all resolved in rev 3 except its M5 (`miscues.observation_id` is already nullable in schema 4). No v2 code before the owner accepts it.
+v1: codex design reviews 1–5 (2026-10-19) under `../plans/active/reviews/`. v2 round 1 (2026-10-22): `code-plan-review` ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-code-plan-review.md)) and a fresh Claude session standing in for codex, whose quota had run out ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-claude.md)); comparison and resolutions: [round-1 comparison](../plans/active/reviews/2026-10-22-adr-0013-v2-round-1-comparison.md). Round 2 (2026-10-22), the increment on rev 2, by a fresh Claude session for codex at the owner's request ([record](../plans/active/reviews/2026-10-22-adr-0013-v2-round-2-claude.md)): two High (a second hint on a candidate token; the candidate index keyed on a stale index), six Medium, ten Low; all resolved in rev 3 except its M5 (`miscues.observation_id` is already nullable in schema 4). Accepted by the owner on 2026-10-22 without a codex round; plan M0's prototype timing and lemma-source choice may still change the DP or the inflection test, and any such change is a design change reviewed before code.
