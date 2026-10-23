@@ -24,11 +24,13 @@ class IllegalTransition(ValueError):
 
 
 def create(store: Store, *, observation_id: int | None, page_read_id: int, revision_id: int, expected: str,
-           token_index: int, char_span: tuple[int, int], heard: str | None) -> int:
+           token_index: int, char_span: tuple[int, int], heard: str | None, cycle_id: int | None = None,
+           origin: str | None = None) -> int:
+    """A candidate, owned by `cycle_id` when a harness `read_listen` created it (ADR-0017 §8.1)."""
     return store.insert("miscues", observation_id=observation_id, page_read_id=page_read_id,
-                        page_revision_id=revision_id, expected=expected, expected_token_index=token_index,
-                        expected_char_span=dumps(list(char_span)), heard=heard,
-                        origin="deletion" if heard is None else "substitution", status="candidate",
+                        page_revision_id=revision_id, cycle_id=cycle_id, expected=expected,
+                        expected_token_index=token_index, expected_char_span=dumps(list(char_span)), heard=heard,
+                        origin=origin or ("deletion" if heard is None else "substitution"), status="candidate",
                         evidence="none", updated_at=now_iso())
 
 

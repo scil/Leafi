@@ -136,8 +136,9 @@ class Inputs:
     async def listen(self, timeout_s: float | None) -> Utterance | None:
         """Next input, or None at `timeout_s` (None waits). Raises StaleInput after an Ear switch."""
         await self.hub.show(Display("listening", "listening"))
-        for name in self._sources:
-            self._request(name)
+        if self._recv.statistics().current_buffer_used == 0:  # an input already waiting answers first
+            for name in self._sources:
+                self._request(name)
         with anyio.move_on_after(math.inf if timeout_s is None else timeout_s):
             item = await self._recv.receive()
             if item is _TIMEOUT:
@@ -160,12 +161,15 @@ class Inputs:
             await self.hub.show(Display("say", text, lang))
             return
         self.speaking = True
-        if self.control_source is not None:
+        if self.control_source is not None and self._will_play():  # controls are read only while audio plays
             self._request("control" if "control" in self._sources else "main")
         try:
             await self.gate.speak(self.hub, text, lang, slow=slow, local_only=local_only)
         finally:
             self.speaking = False
+
+    def _will_play(self) -> bool:
+        return self.hub.policy != "none" and bool(self.hub.mouths) and self.hub.synthesizer is not None
 
     async def line(self, key: str, local_only: bool = False, **kw) -> None:
         await self.say(phrases.say(key, **kw), local_only=local_only)

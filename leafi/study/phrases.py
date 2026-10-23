@@ -52,6 +52,17 @@ LINES: dict[str, list[str]] = {
                       "your reading is saved."],
     "eye_offline": ["I can't see the camera right now. Say \"next page\" when you turn the page."],
     "playback_stop_hint": ["Tip: type /stop any time, even while I'm talking."],
+    # harness activities (ADR-0017 §3.1, §6.1)
+    "hint_offer": ["Want a hint?"],
+    "hint_word": ["It says \"{word}\"."],
+    "encourage": ["You kept going on a tricky bit - nice work.", "You fixed that one yourself. Good reading."],
+    "back_practice": ["Let's finish these words first, or say skip."],
+    "back_no_page": ["To read the last page again, turn back to it."],
+    "break_start": ["Short break - {seconds} seconds. Say skip to go on."],
+    "wait_start": ["I'll wait a moment. Say what you'd like to do."],
+    "read_aloud_intro": ["I'll read this one to you. Follow along."],
+    "cards_added": ["I made {count} card(s) for you."],
+    "review_prompt_eases": ["Remember this one? \"{front}\" (again / hard / good / easy)"],
 }
 
 _counters: dict[str, itertools.count] = {}

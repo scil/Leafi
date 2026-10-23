@@ -129,7 +129,14 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
     for row in rows:
         oid, item_id, key = row["id"], row["knowledge_item_id"], row["anki_item_key"]
         learner_deck = deck_for(store, row["learner_id"], deck)
-        fields = knowledge.card_fields(store, item_id)
+        stored = row["front"] is not None  # written by `add_cards` (ADR-0017 §7.2): push sends what was stored
+        fields = {"正面": row["front"], "背面": row["back"] or ""} if stored else knowledge.card_fields(store, item_id)
+        tags = _item_tags(store, item_id, key)
+        if stored:
+            from leafi.study import cards
+
+            if cards.check(store, row["learner_id"], item_id, fields, row["sentence"] or "")[0] == "flag":
+                tags.append("leafi-check")  # a flagged card goes with a tag the learner sees (§7.2)
         store.execute("UPDATE anki_outbox SET state='sent', attempts=attempts+1, updated_at=?, "
                       "attempted_fields=COALESCE(attempted_fields, ?) WHERE id=?",
                       (now_iso(), dumps({f: field_hash(v) for f, v in fields.items()}) if row["op"] == "add" else None,
@@ -151,7 +158,7 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
                         decks_ready.add(learner_deck)
                     note_id = await client.invoke("addNote", note={
                         "deckName": learner_deck, "modelName": model, "fields": fields,
-                        "tags": _item_tags(store, item_id, key), "options": {"allowDuplicate": False}})
+                        "tags": tags, "options": {"allowDuplicate": False}})
                     acked = {f: field_hash(v) for f, v in fields.items()}
                 cards = await client.find_cards(f"nid:{note_id}")
                 store.execute("UPDATE anki_outbox SET state='acked', anki_note_id=?, card_ids=?, "
