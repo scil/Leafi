@@ -53,7 +53,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 - What to build and in what order: `docs/plans/active/2026-10-22-ai-led-study.md` (Progress first, then Decision Log); the earlier `2026-10-19-leafi-book-study.md` holds S0–S3 and the owner-present hardware steps.
 - Why things are the way they are: `docs/adr/`; vocabulary: `GLOSSARY.md`; requirements and states: `docs/product.md`.
 - Where a fact lives: `docs/ownership-map.md`. A symptom: search `docs/engineering/code-locator.md`, do not read it whole.
-- Hardware bring-up and the human console: Obsidian vault `scil/Leafi/` (owner's); the console's buttons and cards live in `Leafi Console buttons · 控制台按钮.md`, call `scripts/win/*`, and are verified with `node <ai-skills>/skills/obsidian-console/scripts/check-console.js <vault>/_views/console-grid/view.js "<data note>" <vault>/.obsidian/plugins/obsidian-shellcommands/data.json`.
+- Hardware bring-up and the human console: Obsidian vault `scil/Leafi/` (owner's); the console's buttons and cards live in `Leafi Console buttons · 控制台按钮.md`; each button's 动作 is a key of `scripts/win/run_for_obsidian_console.ps1`, the project's one console entry point (add a case there, never a Shell commands entry), and the console is verified with `node <ai-skills>/skills/obsidian-console/scripts/check-console.js <vault>/_views/console-grid/view.js "<data note>" <vault>/.obsidian/plugins/obsidian-shellcommands/data.json scripts/win/run_for_obsidian_console.ps1`.
 
 ## Agent skills
 
