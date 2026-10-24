@@ -307,7 +307,7 @@ def _alert(args: argparse.Namespace, settings: Settings, store) -> int:
         alerts.insert(store, *args.insert)
     if args.drain:
         notifier = NotifierDevice(options={"telegram_bot_token": settings.telegram_bot_token,
-                                           "telegram_chat_id": settings.telegram_chat_id})
+                                           "telegram_chat_id": settings.telegram_chat_id}, settings=settings)
         print(f"delivered {asyncio.run(deliver(store, windows_toast, notifier))}")
     return 0
 

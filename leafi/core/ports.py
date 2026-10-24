@@ -145,14 +145,45 @@ class Presence(Protocol):
     def subscribe(self, fn: Callable[[PresenceEvent], None]) -> Callable[[], None]: ...
 
 
+@dataclass(frozen=True)
+class Provenance:
+    """Where a spoken or sent text came from (ADR-0018 §3): `system` (Leafi's own phrase), `page`, `parent`,
+    `learner` or `derived_from_learner`, and the learners it came from. The TTS service routes by it (M5 D13)."""
+
+    cls: str = "system"
+    sources: tuple[int, ...] = ()
+
+    @property
+    def learners_own(self) -> bool:
+        return self.cls in ("learner", "derived_from_learner")
+
+
+SYSTEM = Provenance()
+
+
+@dataclass(frozen=True)
+class Counts:
+    """The parent notification (M5 design D5): who read and how much, nothing else. The notifier renders it
+    through `leafi.privacy`, which names the learner by their surrogate only when they may be named."""
+
+    learner_id: int | None
+    session_id: int | None
+    pages: int = 0
+    words_read: int = 0
+    to_practise: int = 0
+    new_items: int = 0
+
+
 @runtime_checkable
 class Notifier(Protocol):
-    async def notify(self, title: str, body: str) -> None: ...  # text only (ADR-0011): no frame parameter
+    async def notify(self, counts: Counts) -> None: ...  # counts only (ADR-0011, M5 D5): no text, no frame
 
 
 @runtime_checkable
 class Synthesizer(Protocol):
     """Implemented by `leafi.services.tts`; injected into the Hub by the composition root."""
 
-    async def synth(self, text: str, lang: str, *, slow: bool = False, local_only: bool = False) -> AudioClip: ...
-    # local_only: the line embeds learner-originated text; never send it to a cloud backend (security.md).
+    async def synth(self, text: str, lang: str, *, slow: bool = False, provenance: Provenance = SYSTEM
+                    ) -> AudioClip: ...
+    # provenance: a learner's own words, or any line holding a protected name, never reach a cloud backend
+    # while PRIVACY_TTS_LEARNER_LINES=local (M5 D13).

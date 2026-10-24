@@ -253,13 +253,21 @@ class CheckRunner:
 
 # ---------------------------------------------------------------- heartbeat and dashboard
 
-async def heartbeat(client: httpx.AsyncClient, url: str) -> None:
-    """Dead man's switch: a bodyless GET; Healthchecks.io alerts the owner when these stop."""
+async def heartbeat(egress, url: str) -> None:
+    """Dead man's switch: a bodyless GET through `leafi.privacy.egress` (purpose `ops`); Healthchecks.io alerts
+    the owner when these stop."""
     if not url:
         return
+    from urllib.parse import urlsplit
+
+    from leafi.privacy.destinations import OPS
+    from leafi.privacy.egress import Outgoing, Refused
+
     try:
-        await client.get(url, timeout=5)
-    except httpx.HTTPError as e:
+        p = egress.prepare("healthchecks", OPS, Outgoing(method="GET", path=urlsplit(url).path or "/"))
+        async with egress.client("healthchecks", timeout=5) as c:
+            await c.send(p.request())
+    except (httpx.HTTPError, Refused) as e:
         log.debug("heartbeat failed: %s", type(e).__name__)
 
 

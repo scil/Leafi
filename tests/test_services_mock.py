@@ -106,29 +106,63 @@ class _EdgeRecorder:
         Path(path).write_bytes(b"\x00" * 600)
 
 
-async def test_edge_backend_redacts_before_sending(settings, monkeypatch):
+@pytest.fixture
+def edge_egress(settings, monkeypatch):
+    """edge-tts through a real Egress whose edge destination is loopback (nothing resolves or leaves); the
+    library itself is replaced by a recorder."""
     import edge_tts
+
+    from leafi.core import learner_store
+    from leafi.core.storage import Store
+    from leafi.privacy import destinations as dests
+    from leafi.privacy import egress as eg
+    from leafi.privacy import runtime, secret
 
     monkeypatch.setattr(edge_tts, "Communicate", _EdgeRecorder)
     _EdgeRecorder.texts = []
-    settings.redact_terms = "Zephyrine,Quillfield Academy"
+    secret._forget_cache()
+    store = Store(settings.db_path)
+    lid = learner_store.create(store, "Zephyrine")
+    store.execute("INSERT INTO household_terms(term, kind, created_at) VALUES('Quillfield Academy', 'school', 't')")
+    reg = dests.registry(settings)
+    reg["edge_tts"] = dests.Destination("edge_tts", "wss", frozenset({"127.0.0.1"}), 9, frozenset({"tts"}), "cloud")
+    e = eg.Egress(settings, registry=reg, env_file=None)
+    runtime.use(e)
+    with runtime.attributed(lid):
+        yield type("E", (), {"store": store, "learner": lid, "egress": e})
+    runtime.use(None)
+    store.close()
+
+
+async def test_a_line_with_a_protected_name_never_reaches_edge(settings, edge_egress):
+    cloud_only = tts.create(settings, en="edge", zh="edge")
+    with pytest.raises(tts.LocalOnlyUnavailable):  # stays local; no local backend → shown on Faces only
+        await cloud_only.synth("Good question, Zephyrine! Let me think about Quillfield Academy.", "en")
+    assert _EdgeRecorder.texts == []
+    clip = await cloud_only.synth("Good question! Let me think.", "en")
+    assert clip.codec == "mp3" and _EdgeRecorder.texts == ["Good question! Let me think."]
+    rows = edge_egress.store.all("SELECT destination, purpose, learner_id, status FROM egress_log")
+    assert [tuple(r) for r in rows] == [("edge_tts", "tts", edge_egress.learner, "sent")]
+
+
+async def test_with_cloud_learner_lines_edge_speaks_only_surrogates(settings, edge_egress):
     service = tts.create(settings, en="edge", zh="edge")
-    await service.synth("Good question! Let me think about \"Zephyrine\" at Quillfield Academy.", "en")
-    assert _EdgeRecorder.texts and all("zephyrine" not in t.lower() and "quillfield" not in t.lower()
-                                       for t in _EdgeRecorder.texts)
+    service.learner_lines = "cloud"  # PRIVACY_TTS_LEARNER_LINES=cloud: ADR-0018 lets edge speak surrogates
+    await service.synth("Good question, Zephyrine! Let me think about Quillfield Academy.", "en")
+    (said,) = _EdgeRecorder.texts
+    assert "Zephyrine" not in said and "Quillfield" not in said and "the school" in said
 
 
-async def test_local_only_lines_never_reach_a_cloud_backend(settings, monkeypatch):
-    import edge_tts
+async def test_a_learners_own_words_never_reach_a_cloud_backend(settings, edge_egress):
+    from leafi.core.ports import Provenance
 
-    monkeypatch.setattr(edge_tts, "Communicate", _EdgeRecorder)
-    _EdgeRecorder.texts = []
+    mine = Provenance("learner", (edge_egress.learner,))
     mixed = tts.create(settings, en="edge", zh="mock")
-    clip = await mixed.synth("Thanks! \"Zorblat\" it is.", "en", local_only=True)
+    clip = await mixed.synth("Thanks! \"Zorblat\" it is.", "en", provenance=mine)
     assert clip.codec == "wav" and _EdgeRecorder.texts == []  # spoken by the local backend
     cloud_only = tts.create(settings, en="edge", zh="edge")
     with pytest.raises(tts.LocalOnlyUnavailable):
-        await cloud_only.synth("Thanks! \"Zorblat\" it is.", "en", local_only=True)
+        await cloud_only.synth("Thanks! \"Zorblat\" it is.", "en", provenance=mine)
     assert _EdgeRecorder.texts == []
 
 

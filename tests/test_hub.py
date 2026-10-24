@@ -209,16 +209,19 @@ def test_import_is_pure():
     assert r.stdout.strip() == ""
 
 
-async def test_local_only_flag_reaches_the_synthesizer_and_failure_still_shows_text(tmp_path):
+async def test_provenance_reaches_the_synthesizer_and_failure_still_shows_text(tmp_path):
+    from leafi.core.ports import Provenance
+
     class Synth(FakeSynth):
-        async def synth(self, text, lang, *, slow=False, local_only=False):
-            self.calls.append((text, lang, local_only))
+        async def synth(self, text, lang, *, slow=False, provenance=None):
+            self.calls.append((text, lang, provenance))
             raise RuntimeError("no local backend")
 
     synth = Synth(tmp_path)
     hub = hub_with(tmp_path, {"cam": FakeMouth()}, synth=synth)
-    await hub.say("Thanks! Zorblat it is.", local_only=True)
-    assert synth.calls == [("Thanks! Zorblat it is.", "en", True)]
+    mine = Provenance("learner", (1,))
+    await hub.say("Thanks! Zorblat it is.", provenance=mine)
+    assert synth.calls == [("Thanks! Zorblat it is.", "en", mine)]
     assert hub.faces["f"].texts == ["Thanks! Zorblat it is."]
 
 
@@ -256,9 +259,9 @@ async def test_skip_during_synthesis_skips_that_clip(tmp_path):
     release = asyncio.Event()
 
     class SlowSynth(FakeSynth):
-        async def synth(self, text, lang, *, slow=False, local_only=False):
+        async def synth(self, text, lang, *, slow=False, provenance=None):
             await release.wait()
-            return await super().synth(text, lang, slow=slow, local_only=local_only)
+            return await super().synth(text, lang, slow=slow, provenance=provenance)
 
     mouth = FakeMouth()
     hub = hub_with(tmp_path, {"pc": mouth}, synth=SlowSynth(tmp_path))

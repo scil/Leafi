@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from leafi.core.ports import Utterance
+from leafi.core.ports import SYSTEM, Provenance, Utterance
 from leafi.core.storage import Store
 from leafi.study.harness.latch import Latch
 from leafi.study.harness.ledger import Ledger
@@ -19,7 +19,7 @@ from leafi.study.harness.settings import LearnerSettings
 
 
 class Talk(Protocol):
-    async def say(self, text: str) -> None: ...
+    async def say(self, text: str, *, provenance: Provenance = SYSTEM) -> None: ...  # M5 design D13
     async def listen(self, timeout_s: float | None) -> Utterance | None: ...
 
 

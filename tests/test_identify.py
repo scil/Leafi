@@ -104,6 +104,8 @@ def test_the_sweep_deletes_expired_guests_with_no_open_session(tmp_path):
     open_ = guests.new_guest(store)
     seed.session(store, book, learner_id=open_)  # still running
     guests.set_guest(store, open_, "declined")
+    assert guests.sweep(store) == []  # ended but still delivering: its egress is not over (M5 design D5)
+    store.execute("UPDATE reading_sessions SET post_done_at='2026-01-02T00:00:01+00:00' WHERE id=?", (s_old,))
     assert guests.sweep(store) == [old]
     assert store.one("SELECT learner_id FROM reading_sessions WHERE id=?", (s_old,))["learner_id"] == \
         guests.anonymous(store)

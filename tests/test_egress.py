@@ -212,7 +212,7 @@ async def test_a_redirect_is_not_followed_and_media_is_refused(world):
         w.egress.prepare("fake", "media", Outgoing(), learner_id=w.rocco)
     with pytest.raises(eg.Refused, match="no destination"):
         w.egress.prepare("nowhere", "generate", Outgoing(), learner_id=w.rocco)
-    with pytest.raises(ValueError, match="needs the learner"):
+    with pytest.raises(eg.Refused, match="needs the learner"):
         w.egress.prepare("fake", "generate", Outgoing())
 
 

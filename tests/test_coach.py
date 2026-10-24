@@ -68,7 +68,14 @@ async def test_claude_backend_without_key_is_unavailable(settings):
     assert await brain.run(coach.questions_request("The fox ran home.", [])) is None
 
 
-async def test_claude_backend_validates_and_retries_once(settings):
+async def test_claude_backend_validates_and_never_retries_itself(settings):
+    """M5c: one attempt per request from the backend (the mediator owns the one retry); an invalid reply is
+    dropped, not asked again."""
+    from leafi.core import learner_store
+    from leafi.core.storage import Store
+    from leafi.privacy import settings as privacy
+    from tests.egress_helpers import mock_egress
+
     class Msg:
         def __init__(self, text):
             self.content = [type("B", (), {"type": "text", "text": text})()]
@@ -85,15 +92,22 @@ async def test_claude_backend_validates_and_retries_once(settings):
             return Msg(self.replies.pop(0))
 
     settings.anthropic_api_key = "test-key"
+    with Store(settings.db_path) as store:
+        lid = learner_store.create(store, "Learner")
+        privacy.set_school(store, lid, None)
+    e = mock_egress(settings, lambda r: None)
     good = '{"line": "Nice!", "action": "encourage"}'
     client = Client(['{"line": "x", "action": "rm -rf"}', good])
-    brain = ClaudeBrain(settings, client)
-    out = await brain.run(BrainRequest(Intent.ENCOURAGE, "The fox ran home."))
-    assert out == {"line": "Nice!", "action": "encourage"} and len(client.calls) == 2
+    brain = ClaudeBrain(settings, client, egress=e)
+    assert await brain.run(BrainRequest(Intent.ENCOURAGE, "The fox ran home.", learner_id=lid)) is None
+    assert len(client.calls) == 1
+    assert await brain.run(BrainRequest(Intent.ENCOURAGE, "The fox ran home.", learner_id=lid)) == {
+        "line": "Nice!", "action": "encourage"}
     params = client.calls[0]
     assert params["model"] == "claude-opus-5-5"
     assert params["output_config"]["format"]["type"] == "json_schema"
     assert "<page>" in params["messages"][0]["content"]
+    assert "x-leafi-token" in params["extra_headers"]
 
 
 

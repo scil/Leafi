@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from .ports import Display, Eye, Face, Listener, Mouth, Notifier, Synthesizer
+from .ports import SYSTEM, Counts, Display, Eye, Face, Listener, Mouth, Notifier, Provenance, Synthesizer
 
 log = logging.getLogger("leafi.hub")
 
@@ -200,8 +200,10 @@ class Hub:
 
         await asyncio.gather(*(one(n, f) for n, f in self.faces.items()))
 
-    async def say(self, text: str, lang: str = "en", *, slow: bool = False, local_only: bool = False) -> float:
-        """Faces first, then TTS → Mouths per policy. Returns the max drain_s of the Mouths that played."""
+    async def say(self, text: str, lang: str = "en", *, slow: bool = False,
+                  provenance: Provenance = SYSTEM) -> float:
+        """Faces first, then TTS → Mouths per policy. Returns the max drain_s of the Mouths that played.
+        `provenance` reaches the Synthesizer, which routes a learner's own words off the cloud (M5 D13)."""
         generation = self._generation
         async with self._lock:
             if generation != self._generation:  # cleared by stop_speaking() while queued
@@ -215,7 +217,7 @@ class Hub:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self.say_timeout_s
             try:
-                clip = await asyncio.wait_for(self.synthesizer.synth(text, lang, slow=slow, local_only=local_only),
+                clip = await asyncio.wait_for(self.synthesizer.synth(text, lang, slow=slow, provenance=provenance),
                                               self.say_timeout_s)
             except Exception:
                 log.error("TTS failed; text shown on Faces only", exc_info=True)
@@ -291,10 +293,10 @@ class Hub:
     def playing(self) -> bool:
         return bool(self._playing)
 
-    async def notify(self, title: str, body: str) -> None:
+    async def notify(self, counts: Counts) -> None:
         for name, n in self.notifiers.items():
             try:
-                await n.notify(title, body)
+                await n.notify(counts)
             except Exception:
                 log.error("notifier %s failed", name, exc_info=True)
 
@@ -308,7 +310,7 @@ class ListeningGate:
         self._lock = asyncio.Lock()
 
     async def speak(self, hub: Hub, text: str, lang: str = "en", *, slow: bool = False,
-                    local_only: bool = False) -> None:
+                    provenance: Provenance = SYSTEM) -> None:
         # pause → speak → drain → resume is one serialised operation, so a queued line never plays while
         # listening has been reopened by the previous one (review 1 #9).
         async with self._lock:
@@ -316,7 +318,7 @@ class ListeningGate:
             self.is_open = False
             drain: float | None = None
             try:
-                drain = await hub.say(text, lang, slow=slow, local_only=local_only)
+                drain = await hub.say(text, lang, slow=slow, provenance=provenance)
             finally:
                 await self.listener.resume(after_s=hub.max_drain_s() if drain is None else drain)
                 self.is_open = True

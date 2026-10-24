@@ -19,7 +19,10 @@ import anyio
 
 from leafi.core import learner_store
 from leafi.core import lease as speech_lease
+from leafi.core.ports import Counts
 from leafi.core.storage import Store, dumps, now_iso
+from leafi.privacy import runtime
+from leafi.privacy.egress import owner as egress_owner
 from leafi.study import books, controls, knowledge, lexicon, records
 from leafi.study.harness import busy, guests, policy, rows
 from leafi.study.harness import settings as hs
@@ -212,7 +215,6 @@ def finalize(s: Session, w: World, env: Env) -> dict:
         knowledge.recompute_difficulties(store, s.learner_id)
     if w.book_id is not None:
         lexicon.rebuild(store, w.book_id)
-    summ["guest"] = guests.finalize_guest(store, s.session_id, env.settings.guest_keep_days)
     return summ
 
 
@@ -225,10 +227,9 @@ async def deliver(s: Session, w: World, env: Env, summ: dict) -> None:
     else:
         await io.line("idle" if s.latch.terminal == "idle_session" else "bye")
         summ["closing_line"] = "done"
-    try:  # the parent's notification: counts only (security.md egress table)
-        await env.hub.notify("Leafi: reading done",
-                             f"pages {summ.get('pages', 0)}, words read {summ.get('tokens_committed', 0)}, "
-                             f"words to practise {summ.get('candidates', 0)}, new items {summ.get('items_learned', 0)}")
+    try:  # the parent's notification: a name (as a surrogate) and counts (M5 design D5)
+        await env.hub.notify(Counts(s.learner_id, s.session_id, summ.get("pages", 0), summ.get("tokens_committed", 0),
+                                    summ.get("candidates", 0), summ.get("items_learned", 0)))
     except Exception:
         log.warning("notification failed", exc_info=True)
     summ["anki_synced"] = "skipped"
@@ -251,7 +252,7 @@ async def extract_notes(s: Session, w: World, env: Env, summ: dict) -> None:
 async def run_session(env: Env) -> int:
     store, cfg = env.store, env.settings
     lease = speech_lease.acquire(cfg.lease_path, cfg.lease_ttl_s)  # refused → LeaseHeld to the caller
-    inputs = None
+    inputs = attribution = None
     try:
         rows.recover(store)
         guests.normalise_orphans(store, cfg.guest_keep_days)
@@ -261,7 +262,8 @@ async def run_session(env: Env) -> int:
         mode = "voice" if getattr(listener, "is_voice", False) else "text"
         sid = learner_store.insert(store, "reading_sessions", guest, started_at=now_iso(), mode=mode,
                                    devices=dumps(sorted(set(env.hub.mouths) | set(env.hub.faces))),
-                                   lease_token=lease.token)
+                                   lease_token=lease.token, owner=egress_owner())
+        attribution = runtime.attribution.set(runtime.Attribution(guest, sid))  # moved to the learner at adoption
         latch = Latch()
         latch.epoch.session_id, latch.epoch.learner_id = sid, guest
         lst = hs.load(store, guest)
@@ -303,15 +305,21 @@ async def run_session(env: Env) -> int:
                     await step(s, w, env, summ if summ is not None else {"end": latch.terminal or "end"})
             except Exception:
                 log.exception("post-session step failed")  # one step's failure never skips the next
-        if summ is not None:
-            try:
-                store.execute("UPDATE reading_sessions SET summary=? WHERE id=?", (dumps(summ), sid))
-            except sqlite3.OperationalError:
-                log.warning("summary not written (store busy)")
+        # The session's egress is over: only now may the sweeper or `forget` act on it, and only now is the guest
+        # end-state applied (M5 design D5). A busy write leaves both to the next session's recovery.
+        try:
+            if summ is not None:
+                summ["guest"] = guests.finalize_guest(store, sid, cfg.guest_keep_days)
+            store.execute("UPDATE reading_sessions SET summary=COALESCE(?, summary), post_done_at=? WHERE id=?",
+                          (dumps(summ) if summ is not None else None, now_iso(), sid))
+        except sqlite3.OperationalError:
+            log.warning("summary not written (store busy)")
         return sid
     finally:
         if inputs is not None:
             await inputs.close()
+        if attribution is not None:
+            runtime.attribution.reset(attribution)
         lease.release()
 
 

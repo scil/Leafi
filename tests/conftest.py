@@ -9,12 +9,37 @@ from leafi.core.config import Settings, hardware_tests_enabled
 
 @pytest.fixture(autouse=True, scope="session")
 def _bootstrap():
-    """Every Leafi process starts through `leafi.bootstrap`; the suite does too, in log-only mode (M5 design D2).
-    Tests of the guard's enforcing mode configure their own policy and restore this one."""
+    """Every Leafi process starts through `leafi.bootstrap`; the suite does too, enforcing (M5 design D2), so a
+    test that sends anything unmediated to a cloud address fails instead of reaching it."""
     from leafi import bootstrap
 
-    bootstrap.install(Settings(_env_file=None, devices_file="does-not-exist.yml"), mode="log")
+    bootstrap.install(Settings(_env_file=None, devices_file="does-not-exist.yml"), mode="enforce")
     yield
+
+
+@pytest.fixture(autouse=True)
+def _offline_egress(monkeypatch):
+    """The process's Egress in a test puts nothing on the wire: its transport raises a connect error. A test that
+    needs a server installs its own Egress (`runtime.use`) with a loopback destination or an `inner` transport."""
+    import httpx2
+
+    from leafi.privacy import egress, runtime
+
+    class Offline(httpx2.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            raise httpx2.ConnectError("tests never reach the network")
+
+    async def test_net(host, port, ttl):  # no DNS lookup leaves the machine either
+        return ["192.0.2.1"]
+
+    def get(settings):
+        if runtime._egress is None:
+            runtime.use(egress.Egress(settings, env_file=None, inner=Offline(), resolve=test_net))
+        return runtime._egress
+
+    monkeypatch.setattr(runtime, "get", get)
+    yield
+    runtime.use(None)
 
 
 def pytest_collection_modifyitems(config, items):

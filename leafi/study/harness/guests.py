@@ -53,6 +53,8 @@ def discard(store: Store, guest_id: int) -> int:
                       "consents"):
             store.execute(f"DELETE FROM {table} WHERE learner_id=?", (guest_id,))
         store.execute("DELETE FROM knowledge_items WHERE learner_id=?", (guest_id,))
+        # the attempts stay on record (no body is ever stored), attributed to `anonymous` like the counts
+        store.execute("UPDATE egress_log SET learner_id=? WHERE learner_id=?", (anon, guest_id))
         store.execute("DELETE FROM learners WHERE id=? AND kind='guest'", (guest_id,))
     return len(sessions)
 
@@ -93,7 +95,7 @@ def sweep(store: Store, now: str | None = None) -> list[int]:
     gone = []
     for r in store.all("SELECT id FROM learners l WHERE kind='guest' AND forgetting=0 AND (guest_reason='declined' "
                        "OR guest_expires_at < ?) AND EXISTS(SELECT 1 FROM reading_sessions WHERE learner_id=l.id) "
-                       "AND NOT EXISTS(SELECT 1 FROM reading_sessions WHERE learner_id=l.id AND ended_at IS NULL)",
+                       "AND NOT EXISTS(SELECT 1 FROM reading_sessions WHERE learner_id=l.id AND post_done_at IS NULL)",
                        (now,)):
         if store.execute("UPDATE learners SET forgetting=1 WHERE id=? AND forgetting=0", (r["id"],)).rowcount:
             discard(store, r["id"])

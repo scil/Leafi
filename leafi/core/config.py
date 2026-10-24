@@ -157,6 +157,19 @@ def env_lookup(name: str, settings: Settings | None = None, env_file: Path | Non
     return None
 
 
+PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
+def clear_proxy_environment() -> list[str]:
+    """Remove the proxy variables (M5 design D2): egress clients ignore them, but a library honouring them would
+    send through a host egress never prepared. Returns the names removed."""
+    names = {p.upper() for p in PROXY_VARIABLES}
+    gone = [k for k in list(os.environ) if k.upper() in names]  # one key per name on Windows (case-insensitive)
+    for k in gone:
+        os.environ.pop(k, None)
+    return gone
+
+
 def process_environment() -> Mapping[str, str]:
     """The process environment, read-only, for the one reader that must see overrides as `Settings` does (the
     policy fingerprint of `leafi.privacy.versions`)."""

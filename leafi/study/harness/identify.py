@@ -10,7 +10,8 @@ import re
 from rapidfuzz import fuzz
 
 from leafi.core import learner_store
-from leafi.core.ports import Utterance
+from leafi.core.ports import Provenance, Utterance
+from leafi.privacy import runtime
 from leafi.privacy import settings as privacy
 from leafi.study import controls
 from leafi.study.harness import guests
@@ -63,11 +64,14 @@ def adopt(s: Session, learner_id: int) -> bool:
             if not moved:
                 return False
             if guest != learner_id:
+                # the guest's attempts so far belong to the learner now (M5 design D5); then the empty row goes
+                store.execute("UPDATE egress_log SET learner_id=? WHERE learner_id=?", (learner_id, guest))
                 store.execute("DELETE FROM learners WHERE id=? AND kind='guest' AND NOT EXISTS(SELECT 1 FROM "
                               "reading_sessions WHERE learner_id=?)", (guest, guest))
     except Exception:  # busy: "let's try that again"
         log.warning("adopt failed", exc_info=True)
         return False
+    runtime.attribute(learner_id, s.session_id)
     s.learner_id = learner_id
     s.settings = hs.load(store, learner_id)
     s.ledger.limits = s.settings.limits()
@@ -78,7 +82,8 @@ def adopt(s: Session, learner_id: int) -> bool:
 
 
 async def _confirm(s: Session, question: str) -> bool:
-    await s.talk.say(question)
+    # the question holds a name the learner said: `learner` text until adoption (M5 design D13)
+    await s.talk.say(question, provenance=Provenance("learner", (s.learner_id,)))
     u = await s.talk.listen(ASK_S)
     s.checkpoint()
     ctl = controls.parse(u.text) if u is not None else None
@@ -145,7 +150,8 @@ async def _identify(s: Session, keep_days: int) -> int:
     voice = bool(getattr(talk, "voice", False))
     if enrolled and not voice:
         picks = ", ".join(f"{i}. {r['display_name']}" for i, r in enumerate(enrolled, 1))
-        await talk.say(f"Hello! Who's reading today? {picks} - or type your name.")
+        await talk.say(f"Hello! Who's reading today? {picks} - or type your name.",
+                       provenance=Provenance("learner", tuple(r["id"] for r in enrolled)))
     else:
         await talk.say("Hello! Who's reading today?")
     name = parse_name(await talk.listen(ASK_S), enrolled)

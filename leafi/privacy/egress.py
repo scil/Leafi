@@ -27,6 +27,7 @@ synchronous transport and the `ops` download hops of D16 (doctor, the HF adapter
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
@@ -48,7 +49,7 @@ import psutil
 
 from leafi.core import netguard
 from leafi.core.config import Settings
-from leafi.core.storage import _FileLock, now_iso
+from leafi.core.storage import Store, _FileLock, now_iso
 from leafi.privacy import destinations as dests
 from leafi.privacy import pseudonym, versions
 from leafi.privacy import secret as keyfile
@@ -190,6 +191,15 @@ def _digest(key: bytes, dest: Destination, method: str, url: str, body: bytes) -
     return hmac.new(key, b"egress:" + head + b"\n" + body, hashlib.sha256).hexdigest()
 
 
+def owner() -> str:
+    """This process as `pid:start` (`egress_log.owner`, `reading_sessions.owner`)."""
+    return _owner()
+
+
+def owner_alive(value: str | None) -> bool:
+    return _owner_alive(value)
+
+
 def _owner() -> str:
     pid = os.getpid()
     try:
@@ -224,7 +234,8 @@ class Egress:
 
     def __init__(self, settings: Settings, *, registry: dict[str, Destination] | None = None,
                  env_file: Path | None = Path(".env"), budget: Callable[[Token], bool] | None = None,
-                 inner: httpx2.AsyncBaseTransport | None = None) -> None:
+                 inner: httpx2.AsyncBaseTransport | None = None, resolve=None) -> None:
+        self.resolve = resolve or _resolve  # async (host, port, ttl) -> addresses; tests resolve to TEST-NET
         self.settings = settings
         self.db_path = Path(settings.db_path)
         self.registry = registry if registry is not None else dests.registry(settings)
@@ -234,6 +245,7 @@ class Egress:
         self.tokens = TokenStore()
         self.owner = _owner()
         self._local = threading.local()
+        Store(self.db_path).close()  # the file exists at the current schema (or NeedsMigration is raised)
         self._lock = _FileLock(self.db_path, exclusive=False)  # never beside a migration
         self._inner = inner
         self.recover()
@@ -266,18 +278,25 @@ class Egress:
         self._lock.release()
 
     # ---- prepare
-    def prepare(self, destination: str, purpose: str, out: Outgoing, *, learner_id: int | None = None,
-                session_id: int | None = None, ttl_s: float | None = None) -> Prepared:
-        dest = self.registry.get(destination)
+    def prepare(self, destination: str | Destination, purpose: str, out: Outgoing, *,
+                learner_id: int | None = None, session_id: int | None = None,
+                ttl_s: float | None = None) -> Prepared:
+        dest = destination if isinstance(destination, Destination) else self.registry.get(destination)
         if dest is None:
             raise Refused(f"no destination {destination!r}")
         if purpose not in dest.purposes:
-            raise Refused(f"{destination} does not accept purpose {purpose!r}")
+            raise Refused(f"{dest.name} does not accept purpose {purpose!r}")
         if purpose == "media":
             raise Refused("media is refused until M9 (design D20)")
         study = purpose != dests.OPS
         if study and learner_id is None:
-            raise ValueError("a study purpose needs the learner the attempt is attributed to (design D5)")
+            from leafi.privacy import runtime
+
+            att = runtime.attribution.get()
+            if att is not None:
+                learner_id, session_id = att.learner_id, session_id if session_id is not None else att.session_id
+        if study and learner_id is None:
+            raise Refused("a study purpose needs the learner the attempt is attributed to (design D5)")
         if study and self.watch.stale():
             raise Refused("household privacy settings changed since this process started; restart it")
         texts = list(_texts(out))
@@ -343,6 +362,79 @@ class Egress:
             self._finish(gone, "failed")
         return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping)
 
+    def contains_protected(self, text: str) -> bool:
+        """Whether `text` holds a listed name (TTS routing, design D13): such a line is spoken locally."""
+        c = self._conn()
+        version = versions.protected_version(c)
+        cached = getattr(self, "_lists", None)
+        if cached is None or cached[0] != version:
+            lists = pseudonym.load_lists(c, self.settings.redact_list())
+            cached = self._lists = (version, lists.pattern())
+        return cached[1] is not None and cached[1].search(pseudonym.norm(text)) is not None
+
+    @contextlib.asynccontextmanager
+    async def library_call(self, prepared: Prepared):
+        """For a library that opens its own connection (edge-tts `library` mode, design D14): claims the token,
+        admits the transmission, and holds a grant to the destination's host for the duration of the call. The
+        library must send exactly `prepared.json`'s text, which the caller passes it."""
+        tok = self.tokens.claim(prepared.token_id)
+        if tok is None:
+            raise Refused("attempt token spent, expired or unknown")
+        status = "unknown"
+        try:
+            reason = await self.admit(tok)
+            if reason is not None:
+                status = "failed"
+                raise Refused(reason)
+            host = sorted(tok.destination.hosts)[0]
+            ttl = max(0.1, tok.expires - time.monotonic()) + READ_ALLOWANCE_S
+            addresses = await self.resolve(host, tok.destination.port, ttl)
+            with netguard.grant(host, addresses, tok.destination.port, ttl_s=ttl):
+                try:
+                    yield
+                except BaseException as e:
+                    status = "failed" if isinstance(e, Exception) else "unknown"
+                    raise
+            status = "sent"
+        finally:
+            self._finish(tok, status)
+
+    async def fetch(self, destination: str, path: str, target: Path) -> None:
+        """An `ops` download (doctor, design D16): `GET` the destination's `path` into `target`, following a
+        redirect only to a host the destination lists, at most its hop limit, each hop its own prepared request,
+        token and grant; credentials are never carried (none are sent)."""
+        dest = self.registry[destination]
+        hops = 0
+        out = Outgoing(method="GET", path=path, headers={})
+        while True:
+            p = self.prepare(dest, dests.OPS, out)
+            async with self.client_for(dest, timeout=httpx2.Timeout(60.0)) as c:
+                async with c.stream("GET", p.url, headers={TOKEN_HEADER: p.token_id}) as r:
+                    if r.status_code in (301, 302, 303, 307, 308) and "location" in r.headers:
+                        nxt = urlsplit(str(r.url.join(r.headers["location"])))
+                        allowed = dest.redirects.hosts | dest.hosts if dest.redirects else set()
+                        hops += 1
+                        if (nxt.hostname or "") not in allowed or nxt.scheme != "https" or (
+                                dest.redirects and hops > dest.redirects.max_hops):
+                            raise Refused(f"{destination}: redirect to {nxt.hostname!r} not allowed")
+                        dest = Destination(f"{destination}>{nxt.hostname}", "https", frozenset({nxt.hostname}),
+                                           nxt.port or 443, frozenset({dests.OPS}), "cloud",
+                                           redirects=self.registry[destination].redirects)
+                        out = Outgoing(method="GET", path=nxt.path or "/",
+                                       query=dict(_pairs(nxt.query)), headers={})
+                        continue
+                    if r.status_code == 403 and r.headers.get("content-type", "").startswith("application/json"):
+                        body = await r.aread()
+                        raise Refused(json.loads(body).get("refused", "refused"))
+                    r.raise_for_status()
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    part = target.with_name(target.name + ".part")
+                    with open(part, "wb") as f:  # noqa: ASYNC230 - doctor's own loop runs nothing else
+                        async for chunk in r.aiter_bytes(1 << 20):
+                            f.write(chunk)
+                    part.replace(target)
+                    return
+
     def detector(self):
         """The name detector for a learner's own words (design D11), loaded on first need (spaCy takes seconds);
         None when it is off or its model is missing (list-only, warned by `detector.load`)."""
@@ -355,7 +447,9 @@ class Egress:
     # ---- clients
     def client(self, destination: str, **kw) -> httpx2.AsyncClient:
         """An httpx2 client whose every request must carry a token prepared for `destination`."""
-        dest = self.registry[destination]
+        return self.client_for(self.registry[destination], **kw)
+
+    def client_for(self, dest: Destination, **kw) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(transport=MediatingTransport(self, dest, self._inner), trust_env=False,
                                   follow_redirects=False, **kw)
 
@@ -566,6 +660,9 @@ class MediatingTransport(httpx2.AsyncBaseTransport):
                 await asyncio.sleep(min(RETRY_WAIT_S, max(0.0, tok.expires - time.monotonic())))
                 continue
             if 300 <= resp.status_code < 400 and "location" in resp.headers:
+                if not tok.study and self.dest.redirects is not None:
+                    self.egress._finish(tok, "sent")  # an ops download hop: `Egress.fetch` checks the target
+                    return resp
                 await resp.aclose()
                 self.egress._finish(tok, "failed")
                 return refused(f"redirect from {self.dest.name} not followed", request)
@@ -578,7 +675,7 @@ class MediatingTransport(httpx2.AsyncBaseTransport):
         host = (request.url.host or "").lower()
         port = request.url.port or self.dest.port
         ttl = max(0.1, tok.expires - time.monotonic()) + READ_ALLOWANCE_S
-        addresses = await _resolve(host, port, ttl)
+        addresses = await self.egress.resolve(host, port, ttl)
         g, ctx = netguard.open_grant(host, addresses, port, ttl_s=ttl)
         try:
             resp = await self.inner.handle_async_request(request)
@@ -589,6 +686,12 @@ class MediatingTransport(httpx2.AsyncBaseTransport):
         netguard.leave(ctx)
         resp.stream = _GrantStream(resp.stream, lambda: netguard.revoke(g))
         return resp
+
+
+def _pairs(query: str) -> list[tuple[str, str]]:
+    from urllib.parse import parse_qsl
+
+    return parse_qsl(query, keep_blank_values=True)
 
 
 def _denial(exc: BaseException) -> netguard.NetworkDenied | None:

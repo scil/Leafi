@@ -13,7 +13,7 @@ import math
 import time
 
 from leafi.core import learner_store
-from leafi.core.ports import Display, Utterance
+from leafi.core.ports import Display, Provenance, Utterance
 from leafi.core.storage import dumps, loads, now_iso
 from leafi.core.text import words
 from leafi.study import cards, coach, controls, corrections, knowledge, miscues, pages
@@ -39,6 +39,7 @@ from leafi.study.harness.state import Activity
 from leafi.study.harness.world import PageRequest, World
 
 log = logging.getLogger("leafi.harness.activities")
+PAGE = Provenance("page")  # practice words and read-aloud sentences come from the page (M5 design D13)
 
 PRON_CONFIRM_BELOW = 0.5  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
 ANSWER_MIN_CONF = 0.8     # §3.4: a spoken answer counts only when every word is at least this confident
@@ -191,7 +192,7 @@ async def _correct(w: World, ctl: controls.Control, uid: int, typed: bool) -> No
     span = corrections.locate(w.rev.text, ctl.old, near, window) or corrections.locate(w.rev.text, ctl.old, near)
     source = "text" if typed else "voice"
     if span is None:
-        await w.inputs.line("correction_not_found", local_only=True, old=ctl.old)
+        await w.inputs.line("correction_not_found", provenance=Provenance("learner", (w.s.learner_id,)), old=ctl.old)
         corrections.record_unlocated(w.store, revision_id=w.rev.id, old_text=ctl.old, new_text=ctl.text,
                                      source=source, learner_id=w.s.learner_id, utterance_id=uid)
         await w.inputs.line("correction_saved")
@@ -204,7 +205,7 @@ async def _correct(w: World, ctl: controls.Control, uid: int, typed: bool) -> No
     w.save_state()
     w.s.latch.epoch.revision_id = res.revision_id
     w.s.latch.epoch.bump()  # a correction bumps the epoch (§1)
-    await w.inputs.line("correction_thanks", local_only=True, new=ctl.text)
+    await w.inputs.line("correction_thanks", provenance=Provenance("learner", (w.s.learner_id,)), new=ctl.text)
 
 
 async def _offer_hint(w: World) -> None:
@@ -382,12 +383,12 @@ async def practise_errors(w: World, act: Activity, aid: int) -> tuple[str, dict]
         evidence, score = "none", None
         if attempt < 2:
             await io.hub.show(Display("say", sentence))
-            await io.line("practice_intro", word=word)
-            await io.say(word, slow=True)
+            await io.line("practice_intro", provenance=PAGE, word=word)
+            await io.say(word, slow=True, provenance=PAGE)
         while attempt < 2:
-            await io.line("practice_retry" if attempt == 0 else "practice_again", word=word)
+            await io.line("practice_retry" if attempt == 0 else "practice_again", provenance=PAGE, word=word)
             if attempt:
-                await io.say(word, slow=True)
+                await io.say(word, slow=True, provenance=PAGE)
             u = await io.listen(cfg.practice_retry_s if io.voice else None)
             s.checkpoint()
             if u is None:
@@ -445,7 +446,8 @@ async def review_anki(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     for card in cards:
         if w.activity_over():
             break
-        await io.line("review_prompt_eases", front=card.front)
+        # a card's text may hold the learner's own words; its provenance is not known here: `learner` (M5 D13)
+        await io.line("review_prompt_eases", provenance=Provenance("learner", (s.learner_id,)), front=card.front)
         while True:
             u = await io.listen(cfg.study_idle_s)
             s.checkpoint()
@@ -489,7 +491,7 @@ async def read_aloud(w: World, act: Activity, aid: int) -> tuple[str, dict]:
             break
         text = coach.sentence_text(w.rev.text, st, sid)
         await io.hub.show(Display("say", text))
-        await io.say(text)
+        await io.say(text, provenance=PAGE)
         s.checkpoint()
         s.take_skip()  # a skip cut this sentence; the next one follows
         said += 1

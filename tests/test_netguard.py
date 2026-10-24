@@ -264,7 +264,7 @@ def test_bootstrap_policy_from_settings(tmp_path):
                  go2rtc_url="http://192.168.1.20:1984", frigate_url="http://127.0.0.1:15000",
                  gatus_url="https://status.example.test", leafi_no_network=False)
     p = bootstrap.build_policy(s)
-    assert p.mode == "log" and 11434 in p.gateway_ports
+    assert p.mode == "enforce" and 11434 in p.gateway_ports
     assert ("192.168.1.20", 1984) in p.lan
     assert not any(port == 443 for _, port in p.lan)  # a public status page is not lan
 
@@ -287,7 +287,22 @@ def test_the_cli_bootstraps_before_building(tmp_path):
                        env={"PYTHONPATH": str(Path.cwd()), "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", "")},
                        timeout=60)
     assert r.returncode == 0, r.stderr[-1500:]
-    assert r.stdout.strip() == "log"
+    assert r.stdout.strip() == "enforce"
+
+
+def test_bootstrap_sets_the_offline_environment_and_drops_proxies(tmp_path):
+    import subprocess
+    import sys
+
+    code = ("import os, leafi.bootstrap as b; from leafi.core.config import Settings; "
+            "b.install(Settings(_env_file=None)); "
+            "print(os.environ.get('HF_HUB_OFFLINE'), os.environ.get('DO_NOT_TRACK'), 'HTTPS_PROXY' in os.environ)")
+    env = {"PYTHONPATH": str(Path.cwd()), "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
+           "HTTPS_PROXY": "http://proxy.example.test:3128", "HF_HUB_OFFLINE": "0"}
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=tmp_path, env=env,
+                       timeout=60)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert r.stdout.split() == ["1", "1", "False"]
 
 
 def test_importing_leafi_installs_nothing(tmp_path):

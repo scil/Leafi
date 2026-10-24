@@ -65,8 +65,9 @@ class FakeSynth:
         self.fail = fail
         self.calls: list[tuple[str, str, bool]] = []
 
-    async def synth(self, text: str, lang: str, *, slow: bool = False, local_only: bool = False) -> AudioClip:
+    async def synth(self, text: str, lang: str, *, slow: bool = False, provenance=None) -> AudioClip:
         self.calls.append((text, lang, slow))
+        self.provenance = provenance
         if self.fail:
             raise RuntimeError("tts down")
         p = self.tmp / f"clip{len(self.calls)}.wav"

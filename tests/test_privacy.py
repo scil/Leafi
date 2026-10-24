@@ -1,6 +1,6 @@
-"""Egress policy (ADR-0011, security.md): (a) outbound recorder with canaries over a full harness session with
-the notifier and Anki client (no Brain call until M7; M5 rewrites this file for ADR-0018); (b) subprocess runs
-with LEAFI_NO_NETWORK=1."""
+"""Egress policy (ADR-0018 §2–§3, security.md): (a) canaries recorded beneath the mediator — the bytes egress
+actually puts on the wire — over a full harness session with the notifier and Anki, a Brain request carrying a
+learner's own words, and operational alerts; (b) subprocess runs with LEAFI_NO_NETWORK=1."""
 
 from __future__ import annotations
 
@@ -50,34 +50,36 @@ def _claude_reply(request: httpx.Request) -> dict:
             "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
 
 
-async def test_no_canary_leaves_in_any_outbound_body(settings, monkeypatch):
+def _wire(settings):
+    """Egress whose wire is recorded: every request here is exactly what would leave the machine."""
+    from tests.egress_helpers import mock_egress
+
     sent: list[httpx.Request] = []
-    fake_anki = FakeAnki()
 
     def route(request: httpx.Request) -> httpx.Response:
         sent.append(request)
-        host = urlsplit(str(request.url)).hostname
-        if host == "api.anthropic.com":
+        if urlsplit(str(request.url)).hostname == "api.anthropic.com":
             return httpx.Response(200, json=_claude_reply(request), request=request)
-        if host == "127.0.0.1":
-            resp = fake_anki.handle(request)
-            resp.request = request
-            return resp
-        return httpx.Response(200, json={}, request=request)
+        return httpx.Response(200, json={"ok": True}, request=request)
 
-    async def async_send(self, request, **kw):
-        return route(request)
+    return mock_egress(settings, route), sent
 
-    def sync_send(self, request, **kw):
-        return route(request)
 
-    monkeypatch.setattr(httpx.AsyncClient, "send", async_send)
-    monkeypatch.setattr(httpx.Client, "send", sync_send)
+def _no_canary(sent, canaries=CANARIES) -> None:
+    for r in sent:
+        blob = (str(r.url) + "\n" + r.content.decode("utf-8", "replace")).lower()
+        for c in canaries:
+            assert c.lower() not in blob, (c, str(r.url))
 
+
+async def test_no_canary_leaves_in_any_outbound_body(settings):
+    settings.bark_url = "https://api.day.app/KEY"  # egress's bark destination comes from BARK_URL
+    e, sent = _wire(settings)
+    fake_anki = FakeAnki()
     settings.anthropic_api_key = "test-key-not-real"
-    settings.redact_terms = f"{NAME},{SCHOOL},{LABEL}"
+    settings.redact_terms = f"{SCHOOL},{LABEL}"  # until M5d: the household's old list, read beside household_terms
     notifier = NotifierDevice("parent", {"bark_url": "https://api.day.app/KEY", "telegram_bot_token": "T",
-                                         "telegram_chat_id": "C"})
+                                         "telegram_chat_id": "C", "egress": e}, settings=settings)
     listener = ScriptedListener([
         None,                                        # no objection: reading starts
         _voice(f"This book belongs to {NAME}"),
@@ -92,20 +94,52 @@ async def test_no_canary_leaves_in_any_outbound_body(settings, monkeypatch):
               listeners={"voice": listener})
     from leafi.study.harness import loop
 
-    await loop.run_session(loop.Env(store=Store(settings.db_path), hub=hub, settings=settings, listener=listener,
-                                    anki=anki.AnkiClient(settings.anki_url), book_title="Canary book",
-                                    page_text=PAGE, page_number=1, learner=NAME))
+    store = Store(settings.db_path)
+    await loop.run_session(loop.Env(store=store, hub=hub, settings=settings, listener=listener,
+                                    anki=anki.AnkiClient(settings.anki_url,
+                                                         transport=httpx.MockTransport(fake_anki.handle)),
+                                    book_title="Canary book", page_text=PAGE, page_number=1, learner=NAME))
 
     hosts = {urlsplit(str(r.url)).hostname for r in sent}
-    assert "api.anthropic.com" not in hosts  # M6 runs with cloud text off; the Brain path returns with M5/M7
+    assert "api.anthropic.com" not in hosts  # the harness makes no Brain call until M7
     assert {"api.day.app", "api.telegram.org"} <= hosts, "the notifier path was not exercised"
     assert hosts <= ALLOWED_HOSTS, hosts
-    for r in sent:
-        if urlsplit(str(r.url)).hostname == "127.0.0.1":
-            continue  # AnkiConnect on loopback is inside the LAN boundary
-        blob = (str(r.url) + "\n" + r.content.decode("utf-8", "replace")).lower()
-        for c in CANARIES:
-            assert c.lower() not in blob, (c, str(r.url))
+    _no_canary(sent)
+    rows = [tuple(r) for r in store.all("SELECT destination, purpose, status FROM egress_log ORDER BY id")]
+    assert rows == [("bark", "notify", "sent"), ("telegram", "notify", "sent")]
+
+
+async def test_a_learners_own_words_leave_only_pseudonymised_and_only_when_allowed(settings):
+    """ADR-0018 §3: with `cloud.text` on and the school answered, a learner's words reach the Brain with every
+    listed name — the learner's, a sibling's in Chinese, a Latin name inside Chinese text, the school — replaced;
+    with `cloud.text` off they never leave."""
+    import pytest
+
+    from leafi.core import learner_store
+    from leafi.privacy import settings as privacy
+    from leafi.privacy.egress import Outgoing, Refused, Text
+
+    e, sent = _wire(settings)
+    store = Store(settings.db_path)
+    kid = learner_store.create(store, NAME)
+    learner_store.create(store, "小明")
+    privacy.set_school(store, kid, SCHOOL)
+    said = f"我叫{NAME}，我和小明在{SCHOOL}读书。 {NAME}'s favourite word is fox."
+
+    def brain_body() -> Outgoing:
+        return Outgoing(path="/v1/messages", json={"model": "m", "max_tokens": 5, "messages": [
+            {"role": "user", "content": Text(said, "learner", (kid,))}]})
+
+    p = e.prepare("anthropic", "generate", brain_body(), learner_id=kid)
+    async with e.client("anthropic") as c:
+        await c.send(p.request())
+    (req,) = sent
+    _no_canary(sent, [NAME, SCHOOL, "Quillfield", "小明"])
+    assert "the school" in req.content.decode() and "'s favourite word" in req.content.decode()
+    privacy.write(store, kid, "cloud.text", False)
+    with pytest.raises(Refused, match="may not leave"):
+        e.prepare("anthropic", "generate", brain_body(), learner_id=kid)
+    assert len(sent) == 1
 
 
 async def test_operational_alerts_leave_only_as_catalog_sentences(settings, monkeypatch):
@@ -117,13 +151,7 @@ async def test_operational_alerts_leave_only_as_catalog_sentences(settings, monk
     from leafi.core.ports import ListenerLost
     from leafi.ops.alerts import deliver
 
-    sent: list[httpx.Request] = []
-
-    async def async_send(self, request, **kw):
-        sent.append(request)
-        return httpx.Response(200, json={"ok": True}, request=request)
-
-    monkeypatch.setattr(httpx.AsyncClient, "send", async_send)
+    e, sent = _wire(settings)
 
     class DyingMic(ScriptedListener):
         async def next_utterance(self, timeout_s):
@@ -138,12 +166,15 @@ async def test_operational_alerts_leave_only_as_catalog_sentences(settings, monk
         listener=mic, book_title="Canary book", page_text=PAGE, page_number=1, learner="Ada")), 10)
     alerts.insert(store, f"keeper-{NAME}", "down", f"{SCHOOL} exploded")  # what keep.ps1 could be made to pass
 
-    notifier = NotifierDevice("ops", {"telegram_bot_token": "T", "telegram_chat_id": "C"})
+    notifier = NotifierDevice("ops", {"telegram_bot_token": "T", "telegram_chat_id": "C", "egress": e},
+                              settings=settings)
 
     async def no_toast(text):
         return None
 
+    before = len(sent)  # the session's own parent notification is not an alert
     assert await deliver(store, no_toast, notifier) == 2
+    sent = sent[before:]
     bodies = [parse_qs(r.content.decode())["text"][0] for r in sent]
     assert bodies == [alerts.render("study-mic", "event", "mic_lost"), alerts.UNKNOWN]
     for r in sent:
@@ -279,8 +310,10 @@ async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatc
     await asyncio.wait_for(loop.run_session(loop.Env(
         store=Store(settings.db_path), hub=hub, settings=settings, listener=console, book_title="Canary book",
         page_text=PAGE, page_number=1, learner="Ada")), 20)
-    assert any(t.startswith("Good question!") and "[name]" in t for t in spoken), spoken  # redacted, sent
     local = [text for text, _, _ in service.backends["zh"].calls]
+    # a line holding a protected name is spoken locally, never sent pseudonymised (M5 design D13)
+    assert any(t.startswith("Good question!") and NAME in t for t in local), local
+    assert spoken, "the edge path was not exercised"
     assert any(learner_word in t for t in local), local  # the correction line went to the local backend
     assert any(learner_word in t for t in face.texts)  # and is shown on Faces
     assert len(mouth.played) > 3

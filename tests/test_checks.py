@@ -141,18 +141,22 @@ async def test_a_check_that_raises_changes_nothing(tmp_path):
 # ---------------------------------------------------------------- heartbeat and dashboard pushes
 
 
-async def test_heartbeat_is_a_bodyless_get_and_skipped_without_a_url():
+async def test_heartbeat_is_a_bodyless_get_and_skipped_without_a_url(settings):
+    from tests.egress_helpers import mock_egress
+
     seen = []
 
     def handler(req):
         seen.append(req)
         return httpx.Response(200)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-        await checks.heartbeat(c, "")
-        assert seen == []
-        await checks.heartbeat(c, "https://hc-ping.com/1f2e3d4c-0000-4000-8000-123456789abc")
-    assert seen[0].method == "GET" and seen[0].content == b""
+    url = "https://hc-ping.com/1f2e3d4c-0000-4000-8000-123456789abc"
+    settings.heartbeat_url = url
+    e = mock_egress(settings, handler)
+    await checks.heartbeat(e, "")
+    assert seen == []
+    await checks.heartbeat(e, url)
+    assert seen[0].method == "GET" and seen[0].content == b"" and str(seen[0].url) == url
 
 
 async def test_dashboard_push_uses_the_external_endpoint_api_and_never_raises():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,7 +119,8 @@ def test_only_the_alert_deliverer_calls_notifier_send():
         rel = f.relative_to(ROOT).as_posix()
         if rel in {"leafi/ops/alerts.py", "leafi/devices/notifiers.py"}:
             continue
-        if ".send(" in f.read_text(encoding="utf-8") and "notif" in f.read_text(encoding="utf-8").lower():
+        # an httpx client's `.send(request)` (egress) is not the notifier's `.send(text)`
+        if re.search(r"\b(?:notifier|n|device)\w*\.send\(", f.read_text(encoding="utf-8")):
             bad.append(rel)
     assert bad == []
 

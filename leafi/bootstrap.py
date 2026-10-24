@@ -5,9 +5,11 @@ builds Leafi services; `leafi.app.build()` refuses to run without it, so a forgo
 instead of running unguarded. Importing `leafi` alone installs nothing, so the habit track (`agent/`, which
 imports `leafi.core.lease`) keeps its ADR-0011 behaviour.
 
-M5a: the guard runs in `log` mode (refusals logged, not raised; `LEAFI_NO_NETWORK` still enforcing exactly as
-before). M5c switches it to `enforce` together with every caller moving to `leafi.privacy.egress`, and sets the
-third-party environment of design D15 here.
+Since M5c the guard enforces: every caller sends through `leafi.privacy.egress`, and anything else that tries to
+reach a cloud address or a gateway port is refused (`NetworkDenied`). It also sets the third-party environment of
+design D15 before any library reads it: Hugging Face and Transformers offline and without telemetry or Xet,
+`DO_NOT_TRACK`, Ultralytics' sync off, and no proxy variables (a library honouring `HTTP(S)_PROXY` would send
+through a host egress never prepared).
 """
 
 from __future__ import annotations
@@ -21,7 +23,11 @@ from leafi.core.config import Settings, env_lookup
 
 log = logging.getLogger("leafi.bootstrap")
 
-MODE = "log"  # M5c: "enforce"
+MODE = "enforce"
+
+OFFLINE_ENVIRONMENT = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
+                       "HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_XET": "1", "DO_NOT_TRACK": "1",
+                       "YOLO_OFFLINE": "True"}
 
 _installed: netguard.Policy | None = None
 
@@ -30,9 +36,17 @@ def installed() -> bool:
     return _installed is not None
 
 
+def enforcing() -> bool:
+    return _installed is not None and _installed.mode == "enforce"
+
+
 def install(settings: Settings, *, mode: str = MODE) -> netguard.Policy:
     """Build the policy from the settings and install it; a second call replaces the policy (tests)."""
     global _installed
+    from leafi.core.config import clear_proxy_environment, export_for_libraries
+
+    export_for_libraries(OFFLINE_ENVIRONMENT, force=set(OFFLINE_ENVIRONMENT))
+    clear_proxy_environment()
     policy = build_policy(settings, mode=mode)
     netguard.configure(policy)
     _installed = policy

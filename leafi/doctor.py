@@ -12,7 +12,6 @@ import logging
 import shutil
 import tarfile
 import tempfile
-import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -185,13 +184,26 @@ def report(settings: Settings) -> str:
 # ---------------------------------------------------------------- downloads
 
 
+_SETTINGS: Settings | None = None  # set by `download`, for `_fetch`'s egress
+
+
 def _fetch(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
+    """One fixed file through `leafi.privacy.egress` (purpose `ops`, M5 design D16): the URL's host must be a
+    destination of the registry, and a redirect is followed only to a host that destination lists."""
+    import asyncio
+    from urllib.parse import urlsplit
+
+    from leafi.privacy import destinations, runtime
+
+    e = runtime.get(_SETTINGS or Settings())
+    u = urlsplit(url)
+    dest_rec = destinations.find(e.registry, u.hostname or "", u.port or 443)
+    if dest_rec is None:
+        raise RuntimeError(f"{u.hostname} is no egress destination (privacy/destinations.py)")
+    if u.query:
+        raise RuntimeError(f"{url}: a download URL with a query is not supported")
     print(f"  fetching {url}")
-    with urllib.request.urlopen(url, timeout=60) as r, open(tmp, "wb") as f:  # noqa: S310 - fixed https URLs
-        shutil.copyfileobj(r, f, 1 << 20)
-    tmp.replace(dest)
+    asyncio.run(e.fetch(dest_rec.name, u.path, dest))
 
 
 def download_asr(settings: Settings) -> str:
@@ -240,6 +252,11 @@ def download_pronunciation(settings: Settings) -> str:
     state, _ = op.status(settings)
     if state == "ok":
         return "present"
+    from leafi import bootstrap
+
+    if bootstrap.enforcing():  # huggingface_hub's own client is not mediated
+        return ("not downloaded: the mediated Hugging Face download is not built yet (M5 design D15); "
+                "these checkpoints cannot be fetched while the socket guard enforces")
     from huggingface_hub import snapshot_download  # lazy; installed with openpronounce
 
     cache = op.hf_dir(settings)
@@ -407,6 +424,8 @@ OPTIONAL_DOWNLOADS = [("yle", download_yle), ("speechocean762", download_speecho
 
 
 def download(settings: Settings, only: set[str] | None = None) -> list[tuple[str, str]]:
+    global _SETTINGS
+    _SETTINGS = settings
     out = []
     for label, fn in DOWNLOADS + OPTIONAL_DOWNLOADS:
         if (only and label not in only) or (not only and (label, fn) in OPTIONAL_DOWNLOADS):

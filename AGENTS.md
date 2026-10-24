@@ -6,7 +6,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 
 ## Boundaries
 
-- MUST NOT send images, audio, face labels, the learner's name or the learner's own words to any cloud service; every outbound call is in the egress table of `docs/architecture/quality-attributes/security.md` (ADR-0011), text only. The one opt-in: the habit track's parent snapshot when the owner sets `NOTIFY_WITH_SNAPSHOT=true`. Enforced by: `tests/test_privacy.py` (canary recorder + no-network run).
+- MUST NOT send anything from `leafi/` to a cloud service except through `leafi.privacy.egress`, under the egress table and privacy settings of `docs/architecture/quality-attributes/security.md` (ADR-0018). The habit track (`agent/`) keeps ADR-0011; its one opt-in is the parent snapshot when the owner sets `NOTIFY_WITH_SNAPSHOT=true`. Enforced by: `tests/test_privacy.py`, `tests/test_netguard.py`.
 - MUST NOT commit `.env`, `data/`, `cache/`, `models/`, `config/frigate/go2rtc_homekit.yml` (gitignored; keep it so). Enforced by: `.gitignore`.
 - MUST NOT replace `tools/go2rtc/go2rtc.exe` with a stock build; read `tools/go2rtc/PATCHES.md` first. Enforced by: advisory.
 - MUST NOT play audio on the camera speaker during tests or unasked (it is in a child's home); use `--mock` or `SPEAKER_BACKEND=local`. Enforced by: advisory.

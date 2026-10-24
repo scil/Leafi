@@ -165,12 +165,24 @@ def test_cards_to_remove_survive_a_forget_stopped_between_batches(store, setting
     assert records.forget_learner(store, ada, settings.data_dir).anki_notes == [700 + ada]
 
 
-def test_forget_learner_is_refused_during_a_running_session(store, settings):
+def test_forget_learner_is_refused_while_a_live_process_has_a_session_whose_egress_is_not_over(store, settings):
+    """M5 design D5: a session is busy until `post_done_at` (after delivery), not only until `ended_at`."""
+    from leafi.privacy.egress import owner
+
     ada = seed.learner(store, "Ada")
-    seed.session(store, None, learner_id=ada)  # ended_at NULL
-    with pytest.raises(records.LearnerBusy):
+    sid = seed.session(store, None, learner_id=ada)
+    store.execute("UPDATE reading_sessions SET ended_at=?, owner=? WHERE id=?", (now_iso(), owner(), sid))
+    with pytest.raises(records.LearnerBusy):  # ended, still delivering in this (live) process
         records.forget_learner(store, ada, settings.data_dir)
     assert learner_store.get(store, ada)["forgetting"] == 0
+
+
+def test_a_dead_processes_unfinished_session_does_not_block_forget(store, settings):
+    ada = seed.learner(store, "Ada")
+    sid = seed.session(store, None, learner_id=ada)
+    store.execute("UPDATE reading_sessions SET ended_at=?, owner='999999:1' WHERE id=?", (now_iso(), sid))
+    records.forget_learner(store, ada, settings.data_dir)
+    assert learner_store.get(store, ada) is None
 
 
 def test_a_derived_write_naming_the_learner_is_refused_while_forgetting_and_after(store, settings):

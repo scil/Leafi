@@ -118,19 +118,21 @@ async def test_a_failing_toast_does_not_block_telegram(store):
     assert tg.sent == [alerts.render("study-mic", "event", "mic_lost")]
 
 
-def _notifier(handler) -> NotifierDevice:
+def _notifier(settings, handler) -> NotifierDevice:
+    from tests.egress_helpers import mock_egress
+
     return NotifierDevice(options={"telegram_bot_token": "t", "telegram_chat_id": "c",
-                                   "transport": httpx.MockTransport(handler)})
+                                   "egress": mock_egress(settings, handler)}, settings=settings)
 
 
-async def test_notifier_send_raises_on_a_non_2xx_reply_and_succeeds_on_200():
+async def test_notifier_send_raises_on_a_non_2xx_reply_and_succeeds_on_200(settings):
     with pytest.raises(httpx.HTTPStatusError):
-        await _notifier(lambda req: httpx.Response(502)).send("x")
+        await _notifier(settings, lambda req: httpx.Response(502)).send("x")
     seen = []
 
     def ok(req):
         seen.append(req)
         return httpx.Response(200, json={"ok": True})
 
-    await _notifier(ok).send("hello")
+    await _notifier(settings, ok).send("hello")
     assert seen[0].url.host == "api.telegram.org" and b"hello" in seen[0].content

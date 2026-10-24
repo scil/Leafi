@@ -30,6 +30,7 @@ import httpx
 from leafi.core import alerts
 from leafi.core.storage import Store, checkpoint_file, now_iso
 from leafi.ops.timing import DEFAULTS, Timing
+from leafi.privacy import runtime
 
 log = logging.getLogger("leafi.supervisor")
 
@@ -206,6 +207,21 @@ async def http_probe(client: httpx.AsyncClient, url: str, limit_s: float = 3) ->
     try:
         return GOOD if (await client.get(url, timeout=limit_s)).status_code == 200 else BAD
     except httpx.HTTPError:
+        return BAD
+
+
+async def egress_probe(settings, destination: str, path: str, limit_s: float = 3) -> str:
+    """A health probe of a gateway port (Ollama's): a fixed `ops` GET through egress, which holds the grant the
+    socket guard requires there (M5 design D4)."""
+    from leafi.privacy.destinations import OPS
+    from leafi.privacy.egress import Outgoing, Refused
+
+    e = runtime.get(settings)
+    try:
+        p = e.prepare(destination, OPS, Outgoing(method="GET", path=path), ttl_s=limit_s)
+        async with e.client(destination, timeout=limit_s) as c:
+            return GOOD if (await c.send(p.request())).status_code == 200 else BAD
+    except (httpx.HTTPError, Refused):
         return BAD
 
 
@@ -502,7 +518,7 @@ def build(settings, client: httpx.AsyncClient, logs: Path, timing: Timing = DEFA
         async def observe_ollama() -> str:
             if not ollama.alive():
                 return BAD
-            return await http_probe(client, f"{settings.ollama_url.rstrip('/')}/api/tags")
+            return await egress_probe(settings, "ollama_probe", "/api/tags")
 
         services.append(Service("ollama", timing.grace["ollama"], observe_ollama, lambda: asyncio.to_thread(ollama.restart)))
     return services, children
@@ -525,7 +541,7 @@ async def run(settings) -> int:
     if problems:  # never exit over timing: keep.ps1 would crash-loop; the supervision-timing check alerts
         log.error("timing settings break %s; running with defaults for the settings involved", ", ".join(problems))
     notifier = NotifierDevice(options={"telegram_bot_token": settings.telegram_bot_token,
-                                       "telegram_chat_id": settings.telegram_chat_id})
+                                       "telegram_chat_id": settings.telegram_chat_id}, settings=settings)
     loop = asyncio.get_running_loop()
     rearms: asyncio.Queue[str] = asyncio.Queue()
 
@@ -564,7 +580,7 @@ async def run(settings) -> int:
 
         async def report(seen: dict[str, str]) -> None:
             """Heartbeat (dead man's switch) and the read-only dashboard; neither can fail the poll."""
-            await checks.heartbeat(client, settings.heartbeat_url)
+            await checks.heartbeat(runtime.get(settings), settings.heartbeat_url)
             await checks.push(client, settings.gatus_url, settings.gatus_token, "leafi", "supervisor", True, "")
             for name, obs in seen.items():
                 await checks.push(client, settings.gatus_url, settings.gatus_token, "services", name,

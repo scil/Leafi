@@ -260,10 +260,18 @@ def forget_learner(store: Store, learner_id: int, data_dir: Path, anki_base_deck
     if row is None:
         raise LookupError(f"no learner #{learner_id}")
     report.deck = deck_for(store, learner_id, anki_base_deck)
+    from leafi.privacy.egress import owner_alive
+
     with store.transaction():
+        # a session is busy until its egress is over (`post_done_at`, M5 design D5), unless its process is gone
+        for r in store.all("SELECT id, owner FROM reading_sessions WHERE learner_id=? AND post_done_at IS NULL",
+                           (learner_id,)):
+            if not owner_alive(r["owner"]):
+                store.execute("UPDATE reading_sessions SET post_done_at=COALESCE(ended_at, ?) WHERE id=?",
+                              (now_iso(), r["id"]))
         marked = store.execute(
             "UPDATE learners SET forgetting=1 WHERE id=? AND NOT EXISTS(SELECT 1 FROM reading_sessions WHERE "
-            "learner_id=? AND ended_at IS NULL)", (learner_id, learner_id)).rowcount
+            "learner_id=? AND post_done_at IS NULL)", (learner_id, learner_id)).rowcount
         if not marked:
             raise LearnerBusy(f"learner #{learner_id} has a session that has not ended; stop it first")
         # The names move into household_terms first, so shared text (corrections) keeps them replaced (§3).

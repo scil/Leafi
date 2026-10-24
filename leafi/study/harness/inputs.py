@@ -23,7 +23,7 @@ import anyio
 from leafi.core import alerts
 from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate
-from leafi.core.ports import Display, ListenerLost, Utterance
+from leafi.core.ports import SYSTEM, Display, ListenerLost, Provenance, Utterance
 from leafi.core.text import typed_utterance
 from leafi.study import controls, phrases
 from leafi.study.harness.latch import Latch
@@ -152,9 +152,11 @@ class Inputs:
     def lease_held(self) -> bool:
         return self.latch.terminal != "lease_lost"
 
-    async def say(self, text: str, lang: str = "en", *, slow: bool = False, local_only: bool = False) -> None:
-        """`local_only=True` for any line that embeds learner-originated text (security.md egress table). Controls
-        are read during playback; nothing is spoken after the lease is lost (Faces still show it)."""
+    async def say(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM) -> None:
+        """`provenance` says where the text came from (M5 design D13): a learner's own words, page text, or Leafi's
+        own phrase; the TTS service keeps a learner's words (and any line holding a protected name) off the
+        cloud. Controls are read during playback; nothing is spoken after the lease is lost (Faces still show
+        it)."""
         if not text:
             return
         if not self.lease_held():  # after `stop` the closing line is still spoken (deliver, §2); never after this
@@ -164,15 +166,16 @@ class Inputs:
         if self.control_source is not None and self._will_play():  # controls are read only while audio plays
             self._request("control" if "control" in self._sources else "main")
         try:
-            await self.gate.speak(self.hub, text, lang, slow=slow, local_only=local_only)
+            await self.gate.speak(self.hub, text, lang, slow=slow, provenance=provenance)
         finally:
             self.speaking = False
 
     def _will_play(self) -> bool:
         return self.hub.policy != "none" and bool(self.hub.mouths) and self.hub.synthesizer is not None
 
-    async def line(self, key: str, local_only: bool = False, **kw) -> None:
-        await self.say(phrases.say(key, **kw), local_only=local_only)
+    async def line(self, key: str, *, provenance: Provenance = SYSTEM, **kw) -> None:
+        """A phrase; `provenance` is that of the most restrictive value filled into it (`system` for counts)."""
+        await self.say(phrases.say(key, **kw), provenance=provenance)
 
     # ---- watchers
     async def _watch_page(self) -> None:

@@ -125,4 +125,8 @@ def recover(store: Store) -> list[int]:
             for c in store.all("SELECT id FROM cycles WHERE session_id=? AND status='open'", (sid,)):
                 close_cycle(store, c["id"], "interrupted")
     records.close_stale_sessions(store)  # also recomputes each learner's Difficulties
+    # With the speech lease held no other session runs, so every session without `post_done_at` is a dead
+    # process's: its egress is over (M5 design D5), and the guest sweep and `forget` may now act on it.
+    store.execute("UPDATE reading_sessions SET post_done_at=COALESCE(ended_at, ?) WHERE post_done_at IS NULL",
+                  (now_iso(),))
     return stale
