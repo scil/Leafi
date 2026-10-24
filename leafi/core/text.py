@@ -129,10 +129,11 @@ def ends_sentence(text: str) -> bool:
     return s == "" or s.endswith((".", "?", "!"))
 
 
-def typed_utterance(text: str, source: str = "console") -> Utterance:
-    """A typed Utterance: words without timestamps or confidence, no audio (B11)."""
+def typed_utterance(text: str, source: str = "console", t: float | None = None) -> Utterance:
+    """A typed Utterance: words without timestamps or confidence, no audio (B11). `t`: the monotonic time the line
+    was entered (M7 design D21), None when the source does not know it."""
     return Utterance(text=text, words=[Word(w) for w in words(text)], typed=True,
-                     line_end=ends_sentence(text), source=source)
+                     line_end=ends_sentence(text), source=source, ended_at=t)
 
 
 _PLACEHOLDER_MARKS = re.compile(r"[<>{}\[\]]")

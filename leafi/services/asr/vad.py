@@ -32,16 +32,24 @@ class SileroVad:
             sample_rate=sample_rate, num_threads=1)
         self._vad = sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=max_speech_s + 10)
         self.sample_rate = sample_rate
+        self._keep = int((max_speech_s + 10) * sample_rate)
         self._rest: bytes = b""
+        self._fed = 0  # samples given to feed() since the last reset: sherpa's `seg.start` counts from there too
+        self._marks: list[tuple[int, float]] = []  # (sample count after a chunk, that chunk's t)
 
     @property
     def speaking(self) -> bool:
         return bool(self._vad.is_speech_detected())
 
-    def feed(self, pcm: bytes) -> list[bytes]:
-        """Push int16 PCM; return the speech segments completed so far (int16 PCM each)."""
+    def feed(self, pcm: bytes, t: float | None = None) -> list[tuple[bytes, float | None]]:
+        """Push int16 PCM that arrived at `t`; return the segments completed so far as (int16 PCM, end_t)."""
         import numpy as np
 
+        self._fed += len(pcm) // 2
+        if t is not None:
+            self._marks.append((self._fed, t))
+            while len(self._marks) > 1 and self._marks[0][0] < self._fed - self._keep:
+                self._marks.pop(0)
         data = self._rest + pcm
         usable = len(data) - len(data) % (2 * WINDOW)
         self._rest = data[usable:]
@@ -51,21 +59,31 @@ class SileroVad:
                 self._vad.accept_waveform(x[i:i + WINDOW])
         return self._drain()
 
-    def flush(self) -> list[bytes]:
+    def flush(self) -> list[tuple[bytes, float | None]]:
         self._vad.flush()
         return self._drain()
 
     def reset(self) -> None:
+        """sherpa-onnx 1.13.8's `reset()` restarts `seg.start` at 0 (measured 2026-10-24), so the count does too."""
         self._vad.reset()
         self._rest = b""
+        self._fed, self._marks = 0, []
 
-    def _drain(self) -> list[bytes]:
+    def end_t(self, end_sample: int) -> float | None:
+        """The time of sample `end_sample`: the `t` of the chunk holding it, less the samples after it."""
+        for count, t in self._marks:
+            if count >= end_sample:
+                return t - (count - end_sample) / self.sample_rate
+        return None
+
+    def _drain(self) -> list[tuple[bytes, float | None]]:
         import numpy as np
 
         out = []
         while not self._vad.empty():
             seg = self._vad.front
-            out.append((np.clip(np.asarray(seg.samples, dtype="float32"), -1.0, 1.0) * 32767).astype("<i2").tobytes())
+            pcm = (np.clip(np.asarray(seg.samples, dtype="float32"), -1.0, 1.0) * 32767).astype("<i2").tobytes()
+            out.append((pcm, self.end_t(seg.start + len(seg.samples))))
             self._vad.pop()
         return out
 

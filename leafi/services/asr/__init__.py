@@ -27,11 +27,13 @@ class Recognizer(Protocol):
 
 
 class Vad(Protocol):
-    """Speech segmenter over int16 PCM (`services/asr/vad.py` wraps Silero through sherpa-onnx)."""
+    """Speech segmenter over int16 PCM (`services/asr/vad.py` wraps Silero through sherpa-onnx). Each segment
+    comes with `end_t`, the monotonic time of its last voiced sample mapped onto the fed chunks' `t` (M7 design
+    D21), or None when unknown."""
 
-    def feed(self, pcm: bytes) -> list[bytes]: ...
+    def feed(self, pcm: bytes, t: float | None = None) -> list[tuple[bytes, float | None]]: ...
 
-    def flush(self) -> list[bytes]: ...
+    def flush(self) -> list[tuple[bytes, float | None]]: ...
 
     def reset(self) -> None: ...
 
@@ -68,7 +70,8 @@ class VoiceListener:
         self._paused = False
         self._queue: asyncio.Queue[AudioChunk] | None = None
         self._pump_task: asyncio.Task | None = None
-        self._segments: list[bytes] = []
+        self._segments: list[tuple[bytes, float | None]] = []
+        self._pause_gen = 0  # bumped by pause(): speech cut by Leafi's line never closes after the resume
         self._recognising: asyncio.Future[Utterance] | None = None
         self.lost: BaseException | None = None
         self._lost_reported = False
@@ -108,6 +111,7 @@ class VoiceListener:
             while not self._queue.empty():
                 self._queue.get_nowait()
         self._segments.clear()
+        self._pause_gen += 1
         if self.vad is not None:
             self.vad.reset()
 
@@ -131,18 +135,19 @@ class VoiceListener:
         # so the speech is kept in `_recognising` and the next read delivers it.
         if self._recognising is None:
             q = self._ensure_pump()
-            pcm = await (self._segment_vad(q, timeout_s) if self.vad is not None
+            seg = await (self._segment_vad(q, timeout_s) if self.vad is not None
                          else self._segment_energy(q, timeout_s))
-            if pcm is None:
+            if seg is None:
                 return None
-            self._recognising = asyncio.ensure_future(self._recognise(pcm))
+            self._recognising = asyncio.ensure_future(self._recognise(*seg))
         u = await asyncio.shield(self._recognising)
         self._recognising = None
         return u
 
-    async def _recognise(self, pcm: bytes) -> Utterance:
+    async def _recognise(self, pcm: bytes, ended_at: float | None) -> Utterance:
         words = await self.recognizer.transcribe(pcm, 16000)
-        return Utterance(" ".join(w.text for w in words), words, typed=False, audio_ref=AudioRef(pcm), source="voice")
+        return Utterance(" ".join(w.text for w in words), words, typed=False, audio_ref=AudioRef(pcm), source="voice",
+                         ended_at=ended_at)  # set at segment close, before recognition (D21)
 
     async def _next_chunk(self, q: asyncio.Queue, remaining: float | None) -> AudioChunk | None:
         """One chunk, or None on the caller's deadline; raises ListenerLost once the pump has died dry."""
@@ -155,7 +160,7 @@ class VoiceListener:
                     continue  # let _raise_if_lost report it
                 return None
 
-    async def _segment_vad(self, q: asyncio.Queue, timeout_s: float | None) -> bytes | None:
+    async def _segment_vad(self, q: asyncio.Queue, timeout_s: float | None) -> tuple[bytes, float | None] | None:
         loop = asyncio.get_running_loop()
         deadline = None if timeout_s is None else loop.time() + timeout_s
         while True:
@@ -170,11 +175,14 @@ class VoiceListener:
             if not self._gate_open():
                 self.vad.reset()
                 continue
-            self._segments.extend(self.vad.feed(chunk.pcm))
+            self._segments.extend(self.vad.feed(chunk.pcm, chunk.t))
 
-    async def _segment_energy(self, q: asyncio.Queue, timeout_s: float | None) -> bytes | None:
+    async def _segment_energy(self, q: asyncio.Queue, timeout_s: float | None) -> tuple[bytes, float] | None:
+        """(pcm, ended_at): `ended_at` is the `t` of the last above-threshold chunk, not of the chunk that closed
+        the segment `pause_s` later (D21)."""
         speech: list[bytes] = []
-        silence_s = 0.0
+        silence_s, voiced_t = 0.0, 0.0
+        gen = self._pause_gen
         loop = asyncio.get_running_loop()
         deadline = None if timeout_s is None else loop.time() + timeout_s
         while True:
@@ -184,15 +192,17 @@ class VoiceListener:
             chunk = await self._next_chunk(q, remaining if not speech else None)
             if chunk is None:
                 return None
-            if not self._gate_open():
+            if not self._gate_open() or gen != self._pause_gen:  # Leafi spoke since this speech began
                 speech.clear()
-                continue
+                gen = self._pause_gen
+                if not self._gate_open():
+                    continue
             secs = len(chunk.pcm) / (2 * chunk.sample_rate)
             if rms(chunk.pcm) >= self.threshold:
                 speech.append(chunk.pcm)
-                silence_s = 0.0
+                silence_s, voiced_t = 0.0, chunk.t
             elif speech:
                 speech.append(chunk.pcm)
                 silence_s += secs
                 if silence_s >= self.pause_s:
-                    return b"".join(speech)
+                    return b"".join(speech), voiced_t

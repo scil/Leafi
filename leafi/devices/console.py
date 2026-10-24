@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+import time
 from collections.abc import Iterable
 from typing import TextIO
 
@@ -36,16 +37,16 @@ class ConsoleDevice:
     # ---- Listener
     async def next_utterance(self, timeout_s: float | None) -> Utterance | None:
         if self._script is not None:
-            line = self._script.pop(0) if self._script else _EOF
+            line, t = (self._script.pop(0) if self._script else _EOF), None  # a script: stamped on delivery
         else:
             q = self._ensure_reader()
             try:
-                line = await asyncio.wait_for(q.get(), timeout_s) if timeout_s else await q.get()
+                line, t = await asyncio.wait_for(q.get(), timeout_s) if timeout_s else await q.get()
             except TimeoutError:
                 return None
         if line is _EOF:
-            return typed_utterance("/stop", self.name)
-        return typed_utterance(str(line).rstrip("\r\n"), self.name)
+            return typed_utterance("/stop", self.name, t)
+        return typed_utterance(str(line).rstrip("\r\n"), self.name, t)
 
     async def pause(self) -> None:  # typed input cannot hear Leafi; nothing to discard
         return None
@@ -60,10 +61,15 @@ class ConsoleDevice:
             stream = self._stdin or sys.stdin
             q = self._queue
 
+            # On a terminal each line is stamped when Enter was pressed, not when a listen took it (D21). Piped
+            # input is read ahead all at once, so a stamp would date every line to the start: it stays None and
+            # Inputs stamps it on delivery, as M6 took it (a script answers each listen in turn).
+            tty = bool(getattr(stream, "isatty", lambda: False)())
+
             def run() -> None:
                 for raw in iter(stream.readline, ""):
-                    loop.call_soon_threadsafe(q.put_nowait, raw)
-                loop.call_soon_threadsafe(q.put_nowait, _EOF)
+                    loop.call_soon_threadsafe(q.put_nowait, (raw, time.monotonic() if tty else None))
+                loop.call_soon_threadsafe(q.put_nowait, (_EOF, None))
 
             self._thread = threading.Thread(target=run, name="console-stdin", daemon=True)
             self._thread.start()

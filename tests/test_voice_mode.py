@@ -24,16 +24,16 @@ class FakeVad:
         self.buf: list[bytes] = []
         self.resets = 0
 
-    def feed(self, pcm: bytes) -> list[bytes]:
+    def feed(self, pcm: bytes, t: float | None = None) -> list[tuple[bytes, float | None]]:
         self.buf.append(pcm)
         if len(self.buf) >= self.every:
             seg, self.buf = b"".join(self.buf), []
-            return [seg]
+            return [(seg, t)]
         return []
 
-    def flush(self) -> list[bytes]:
+    def flush(self) -> list[tuple[bytes, float | None]]:
         seg, self.buf = b"".join(self.buf), []
-        return [seg] if seg else []
+        return [(seg, None)] if seg else []
 
     def reset(self) -> None:
         self.resets += 1
