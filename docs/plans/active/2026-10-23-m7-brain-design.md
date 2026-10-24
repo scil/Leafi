@@ -1,14 +1,14 @@
 ---
 status: proposed
 date: 2026-10-23
-revision: 6.1
+revision: 8
 ---
 
 # M7 the Brain leads: implementation design
 
 Plan `2026-10-22-ai-led-study.md` → M7. ADR-0017 (accepted) owns the mechanisms: `observe`, the `decide` schema, `brain_call` with contexts, tiers, `route()`, `difficulty()`, the cascade with `degraded`, budget per transmission, output reserve, filler at 0.8 s (§4–§5); `generate` kinds, `judge`, answer scores (§3.1, §3.4); items, `item_status.apply`, mastery, recall spacing (§6.2); records, notes, arms, the replay set (§7.1, §9). ADR-0018 owns eligibility (§2), provenance (§3) and egress. This note decides only what those leave open. A decision that adds a mechanism, a name or a data shape the ADRs do not state is marked **[beyond ADR]** with its provenance (adopted / adapted / original).
 
-History: revision 2 answers round 1 (`reviews/2026-10-23-m7-design-round-1-comparison.md`, themes T1–T24, cited as T*n*) and the owner's decisions O1–O6 of 2026-10-23 (plan Decision log). Research added for T10: `docs/research/2026-10-23-item-status-evidence.md`. Revision 3 answers codex's increment review of revision 2 (`reviews/2026-10-23-m7-design-rev2-codex.md`, findings 1–14, cited as R*n*). Revision 4 answers round 3 (`reviews/2026-10-23-m7-design-rev3-claude.md`, the fallback for codex's aborted round, findings 1–12, cited as S*n*; S5's ADR contradiction is a false positive, its hand-run defect is fixed). Revision 5 answers round 4 (`reviews/2026-10-23-m7-design-rev4-claude.md`, findings 1–12, cited as "round 4 #n"): the two decisions every round came back to are restated once each as executable statements, **D21 input ownership** and **D22 the fenced writer**; every other decision refers to them. Revision 6 answers round 5 (`reviews/2026-10-23-m7-design-rev5-claude.md`, findings 1–14, cited as "round 5 #n") and reconciles this design with the practice design M7f (`2026-10-24-practice-planning-design.md` rev 3) and the owner's decisions of 2026-10-24 (`reviews/2026-10-24-m7-rev5-vs-m7f.md`, items A1–A5, C1, C3; the items B1–B4, C2, C4–C6 belong to the practice design's next revision). Revision 6.1 writes finding 7 of the confirming round (`reviews/2026-10-24-m7-design-rev6-claude.md`) into D22, the one finding that blocked M7a: on refusal, a Brain output naming the forgotten learner is dropped, never relabelled; the round's other findings wait for the steps they block (M7b: 1–6, 9, 10; M7c: 8; M7e: 16; M7f: 15; during M7a: 11, 12, 14).
+History: revision 2 answers round 1 (`reviews/2026-10-23-m7-design-round-1-comparison.md`, themes T1–T24, cited as T*n*) and the owner's decisions O1–O6 of 2026-10-23 (plan Decision log). Research added for T10: `docs/research/2026-10-23-item-status-evidence.md`. Revision 3 answers codex's increment review of revision 2 (`reviews/2026-10-23-m7-design-rev2-codex.md`, findings 1–14, cited as R*n*). Revision 4 answers round 3 (`reviews/2026-10-23-m7-design-rev3-claude.md`, the fallback for codex's aborted round, findings 1–12, cited as S*n*; S5's ADR contradiction is a false positive, its hand-run defect is fixed). Revision 5 answers round 4 (`reviews/2026-10-23-m7-design-rev4-claude.md`, findings 1–12, cited as "round 4 #n"): the two decisions every round came back to are restated once each as executable statements, **D21 input ownership** and **D22 the fenced writer**; every other decision refers to them. Revision 6 answers round 5 (`reviews/2026-10-23-m7-design-rev5-claude.md`, findings 1–14, cited as "round 5 #n") and reconciles this design with the practice design M7f (`2026-10-24-practice-planning-design.md` rev 3) and the owner's decisions of 2026-10-24 (`reviews/2026-10-24-m7-rev5-vs-m7f.md`, items A1–A5, C1, C3; the items B1–B4, C2, C4–C6 belong to the practice design's next revision). Revision 6.1 writes finding 7 of the confirming round (`reviews/2026-10-24-m7-design-rev6-claude.md`) into D22, the one finding that blocked M7a: on refusal, a Brain output naming the forgotten learner is dropped, never relabelled; the round's other findings wait for the steps they block (M7b: 1–6, 9, 10; M7c: 8; M7e: 16; M7f: 15; during M7a: 11, 12, 14). Revision 7 (2026-10-24, after M7a landed) answers the M7b and M7c findings: D21 keeps M6's `listen` contract and only filters (owner = the prompt id, no epoch; prompt kinds for setup and World; `Inputs.ask` at every prompt site; a plain `say` presents `None`; skips posted only by their owner; pages carrying their utterance, taken at a boundary by `controls_only`'s exit and by the offer listen; `Switched` by time; device-side `ended_at` incl. the VAD path); D2's writers that hard-coded provenance (round 6 #8) in D15; `forget --brain-records` defined once in D19 (round 6 #16). M7a as built settled 11 (the AST rule), 12 (`failed`) and 14 (the legacy fields stay inputs; the tiers are `brain_tiers()`).
 
 Inputs: ADR-0017 §2–§9 and Confirmation; ADR-0018 §2, §3, §4.3, §7.4; M5 design as built (`leafi/privacy/egress.py`); M2 prototype `scripts/prototypes/harness/comb1.py` (Combination 1); libraries research §2. **The practice design M7f** owns `practise_errors`' Brain content (`practice.planner`, the plan, the Brain-led loop, `practice_turn`, interests, migration 8) and is built on this design's call layer after M7e (A4); it adopts pydantic-graph and pydantic-ai **inside `practise_errors` only**, the session loop and every other call staying Combination 1 as below (A5, owner 2026-10-24).
 
@@ -144,6 +144,8 @@ Worked example on the PC Mouth under O1's `decide` route (`fast → standard →
 
 **References are bound, not just existing (T9).** The observation renders ids, never bare keys: candidates as `m<miscue_id>`, items as `i<item_id>` with their key, sentences as `s<page_read_id>.<sentence_index>` of the open cycle's page reads at the current revision. A reference is valid only when it was rendered in **this** observation, belongs to this learner, and (for sentences) to a page read of the open cycle at its current revision; duplicates are dropped; a range `{from, to}` must name existing sentences of the current page read. An item cited by a question must have its key (after `norm`) in that question's text or answers or cited sentences. Provenance: reference binding *original*; answerability *adopted* from research N20 (ADR-0017 §3.1), with the every-set rule *original*.
 
+**Writers of Brain-owned content take its provenance (round 6 #8).** `knowledge.add_encounter` (explanations) and `add_cards` (card fronts and backs) write `prov("derived_from_learner", [learner_id])` today, fixed to the session's learner. In M7c both take the `Provenance` of the content they store: for Brain-written content the call's `of_output` (D2), which names every learner whose text the backend saw (and `PARENT_SOURCE` when parent text went in); for `code`-built content what it was built from. So a card back written from another learner's note names that learner, is fenced by D22, and goes with `forget --learner` of that learner. `test_card_checks` / `test_anki_single_path` with Brain-owned content and `test_forget_race` (an encounter, a card) check it.
+
 **Quiz answerability (T9).** Per question: `evidence` non-empty, every cited sentence read in this cycle; `type` ∈ CROWD's five. For `completion`, `recall` and `wh-`: `answers` is a non-empty list of keyword sets, each non-empty, each with at least one non-function word (`WordInfo`), and **every** set must be supported: all its keywords occur, after `norm`, in the cited sentences; a question with any unsupported set is dropped. For `open-ended` and `distancing`: `answers` must be empty; the learner's answer is acknowledged, scored `unavailable` and writes no retrieval event or encounter (ADR-0017 §3.4's `unavailable`). A quiz left with no question is `Rejected`. This checks support, not the question's meaning: a question about the wrong character can pass (the measured check of D20 covers model behaviour).
 
 **D16 Answer scores and `judge` [ADR §3.4].** `scoring.py` is pure: `item_said` and `cloze_word` use ADR-0013's pair classes through `WordInfo`; a spoken answer counts only when every word's confidence ≥ `ANSWER_MIN_CONF` (0.8); `item_used` is one `judge` call (`yes | no | cannot_tell`, few-shot examples fixed in `prompts.py`, five per class, invented sentences, no learner data; *adopted*, prior-art SS20/SS21). No eligible `judge` backend, a timeout or `cannot_tell` → `unavailable`.
@@ -203,7 +205,7 @@ decision_records(id, learner_id → learners, session_id → reading_sessions, a
 - **`provenance_class` and `source_learners` are computed over every stored leaf, withheld ones included** (S3), not over what was sent: the row stores the raw leaves so replay can re-filter them, so a note of A withheld from B's cloud call (A's `cloud.text` off) still names A, and `forget --learner A` deletes the row. This is deliberately not D2's output rule, which describes what a backend saw.
 - One row per `decide` call, for enrolled learners only (guests write none), inserted through D22's fenced `learner_store.insert` (`decision_records` joins `DIRECT` and `PROVENANCE`); a refusal drops the record (D22: a decision record holds a Brain output, so it is never relabelled), and the decision itself runs (S7).
 - **Deletion (S7):** the order is D22's (A's own rows by `learner_id` and by `session_id`, then other learners' rows citing A through `_purge_derived`, which lists this table). Text derived from S that later sessions' observations quoted (a note citing S, shown in a later observation) stays in those later rows, as it already does in `brain_calls`; `forget --session` removes the session's own records, not every quotation of them (stated in `security.md`'s known limits). `test_forget` covers both orders and the foreign keys.
-- **Retention: kept until a parent or admin deletes them** (A2, owner 2026-10-24; replaces rev 5's 30 days and its pruning), like `brain_calls`. Deletion: `forget --learner` and `forget --session` as above, and `python -m leafi forget --brain-records --learner N [--before DATE] [--yes]`, which deletes the `brain_calls` and `decision_records` rows whose `source_learners` name N (and, with `--before`, older than DATE) and keeps the reading history; it is a plain DELETE over the two tables, exempt from D22's write rule like the other forget functions. The evaluation transcripts' "opt-in, 30 days" becomes "opt-in, until deleted" by the same decision (the M7f design changes that row, P7).
+- **Retention: kept until a parent or admin deletes them** (A2, owner 2026-10-24; replaces rev 5's 30 days and its pruning), like `brain_calls`. Deletion: `forget --learner` and `forget --session` as above, and `python -m leafi forget --brain-records --learner N [--before DATE] [--yes]` — **defined here once** (round 6 #16; M7e builds it, M7f uses it): it deletes the `brain_calls` rows whose `payload_source_learners` or `response_source_learners` name N, and those of N's own sessions (by `session_id`, which covers rows naming no source), the `decision_records` rows whose `source_learners` name N or whose `learner_id` is N, and N's evaluation-transcript files under `data/evals/` (and, with `--before`, only what is older than DATE); it keeps the reading history; plain DELETEs over the registry, exempt from D22's write rule like the other forget functions. The evaluation transcripts' "opt-in, 30 days" becomes "opt-in, until deleted" by the same decision (the M7f design changes that row, P7).
 - **Documents (R9):** ADR-0018 §4.3's retention table and `security.md` §4.3 gain a row "decision records: default on (`EVAL_DECISIONS`, owner decision 2026-10-23), until deleted by a parent or admin (owner decision 2026-10-24), local", in the M7e commit that first writes the table; `forget --brain-records` lands in the same commit.
 - `scripts/evals/replay_decisions.py` exports a set to JSONL for reading and replays it: each `ModelRequest` is rebuilt from the stored leaves and sent through `brain_call`'s filter and `prepare` **under the current settings**, so a learner whose `cloud.text` is now off has their words withheld or substituted as in a live session. No destination reads the table; the only way out is the replay script through egress.
 - Provenance: *original* (ADR-0017 §9 names the set and `data/evals/decisions/`; the table moves it into the database for the fence, a departure recorded in ADR-0017's `revised` note).
@@ -216,19 +218,30 @@ Four rounds found instances of two decisions (input ownership: T7 → R5 → S2 
 
 **D21 Input ownership (one statement) [beyond ADR, *original*].** The rule: **an input belongs to the prompt that was current when the learner finished it; a prompt is current from the moment Leafi starts presenting it** (the first word of its line, or its Face text when nothing is spoken), not from the moment Leafi starts listening (round 5 #1). A spoken utterance is finished when its last speech chunk was captured; a typed line when the console read it from the keyboard (round 5 #3). Who requested the read, and when the item reached the stream, do not matter.
 
+**Rev 7 (round 6 #1–6, #9, #10): `listen` returns exactly what M6's callers receive today** — an `Utterance`, or
+`None` at a timeout. A skip still posts to the skip queue and comes back as its utterance; a page turn comes back as
+its `/page …` utterance with the control's number and `--text` path intact. D21 only **filters** what reaches a
+`listen`: the 14 call sites keep their code, and every `if s.take_skip()` after a listen keeps working.
+
 ```
 clock      = time.monotonic, one clock for Inputs, the Listeners and the console (injected in tests; it is
              already the clock of AudioChunk.t, VoiceListener and asyncio's loop.time())
-Owner      = (prompt_id, epoch)
+Owner      = prompt_id                       # rev 7 (round 6 #3): no epoch; epoch staleness stays with Switched
+                                             #   and the existing epoch checks where a result is used
 prompt_id  = ("act", activity_id, step)      every spoken question of an activity has its own step
-           | ("page", page_read_id)           read_listen: one prompt for the whole page read
+           | ("page", page_read_id)           read_listen: one prompt for the whole page read (incl. _offer_hint)
            | ("offer", turn, n)               each offer or question of negotiate (§2.1)
            | ("wait", turn)                   a Brain wait at a boundary
+           | ("setup", name)                  identify (_confirm, ask_school, _identify), identify_book,
+                                              continue_offer (round 6 #4)
+           | ("world", name)                  World's prompts: ask_page_text, _from_request (round 6 #4)
              a follow-up within the same item reuses its parent's prompt_id
-Item       = Utterance(u, owner) | Skip(owner) | Page(owner) | Timeout(owner) | Switched(epoch)
-u.ended_at = voice: the `t` of the segment's last speech chunk (AudioChunk.t), set by the Listener before
-             `_recognise`; typed: the console thread's clock() at `readline` (ConsoleDevice queues (line, t)
-             and `typed_utterance(text, t)` carries it); never the time the item is popped
+           | None                             no prompt current (session start): its items go to the next listen
+Item       = Utterance(u, owner) | Skip(u, owner) | Page(u, owner) | Timeout(owner) | Switched(at)
+u.ended_at = voice: the `t` of the chunk that closed the segment (VAD and energy segmenters both report it:
+             `Vad.feed` returns (pcm, end_t), round 6 #10), set before `_recognise`; typed: the console thread's
+             clock() at `readline` (ConsoleDevice queues (line, t), `typed_utterance(text, t)` carries it);
+             a source that sets none (scripted test sources) is stamped clock() when its line is produced
 
 Inputs state:
   owners:   list[(since, Owner)]  # timeline; pruning drops entries older than 60 s EXCEPT the newest entry at or
@@ -238,50 +251,92 @@ Inputs state:
   stream:   the existing `_send/_recv` memory stream of Items
 
 present(o): if owners.last != o: owners.append((clock(), o))
-  # called by say(…, owner=o) BEFORE its line plays, by Face-only prompts when shown, and by listen() and
-  # controls_only() on entry (a no-op when o is already current)
-owner_at(t) = the Owner of the last entry with since <= t
+  # called by `Inputs.ask(o, text, …)` — present, then say — at every prompt site (round 6 #4: negotiate's
+  # offers, each activity's questions and lead-ins such as `page_ready`, `practice_retry`, `review_prompt_eases`,
+  # identify, identify_book, continue_offer, World's prompts); by Face-only prompts when shown; and by listen()
+  # and controls_only() on entry (a no-op when o is already current). `Talk` gains `ask`.
+  # A plain say() (feedback, praise, a closing line) presents None, so a line typed while it plays goes to the
+  # next listen, as in M6; the filler (D12) is the exception: it keeps the wait's owner.
+owner_at(t) = the Owner of the last entry with since <= t (None before the first present)
+matches(item, o) = item.owner == o or item.owner is None
 
-request(src): if not inflight[src]: inflight[src] = True; start a read on src, remembering t_req = clock()
+request(src): if not inflight[src]: inflight[src] = True; start a read on src
 
-reader(src): loop: wait for a request; u = await src.next_utterance(None); inflight[src] = False
-  if u is None:           send(Timeout(owner_at(t_req)))                 # the asker's silence, nobody else's
-  elif control(u) is stop: terminate("stop")                              # controls act at once
-  elif control(u) is skip:
-      if speaking: cut the current line                                   # as today (incl. the filler, D12)
-      else: post_skip(); send(Skip(owner_at(u.ended_at)))                 # round 5 #2: wakes the listener
-  elif control(u) is page: send(Page(owner_at(u.ended_at)))               # "/page", "next page"
-  else:                    send(Utterance(u, owner_at(u.ended_at)))
-page_watcher: only while page_open: on a settled turn: send(Page(owner_at(clock())))
-ear_lost:     E = bump epoch; send(Switched(E))
+reader(src): loop: wait for a request; t_req = clock(); u = await src.next_utterance(None); inflight[src] = False
+  if u is None:            send(Timeout(owner_at(t_req)))                # the asker's silence, nobody else's
+  elif control(u) is stop:  terminate("stop")                             # controls act at once
+  elif control(u) is skip and speaking: cut the current line              # as today (incl. the filler, D12)
+  elif control(u) is skip:  send(Skip(u, owner_at(u.ended_at)))          # posted only when its owner takes it
+  elif control(u) is page:  send(Page(u, owner_at(u.ended_at)))          # the utterance keeps n and --text
+  elif src is not main:     drop                                          # rev 8 (round 7 #9): as M6, only the
+                                                                          #   main source's timeout is a Timeout
+  else:                     send(Utterance(u, owner_at(u.ended_at)))
+  (and `u is None` from a non-main source is dropped too, rev 8)
+page_watcher: only while page_open: on a settled turn: send(Page(typed_utterance("/page", "eye"), owner_at(clock())))
+ear_lost (rev 8, round 7 #1): synchronously, before any await: switched_at = clock(); bump epoch;
+              send(Switched(at = switched_at)); notice = "mic_lost"   # spoken by the main flow's next ask/say,
+                                                                       # under the current owner, never here
 
-ACCEPTS_PAGE = {read_listen, practise_errors}        # per kind (round 5 #4); M7f adds its listening steps
-
-listen(o, timeout_s, kind):
-  present(o); deadline = clock() + timeout_s
+listen(o, timeout_s, accepts_page = False):     # accepts_page: read_listen, practise_errors, acquire_page,
+  present(o); deadline = clock() + timeout_s    #   _from_request (a prompt-level flag, round 6 #1)
   loop:
     for src in wanted_sources(): request(src)   # every iteration: a source freed by a stale read is asked again
     item = await stream.receive() until deadline, else return None
-    if item is Switched: if o.epoch < item.epoch: raise StaleInput
-                         else: continue          # already handled: the caller was built after the switch (round 5 #5)
-    if item.owner != o: log("stale", item); continue
+    if item is Switched: if activity_started_at < item.at: raise StaleInput   # rev 8: the running ACTIVITY
+                         else: continue                             #   began before the switch, not the prompt
+    if (item is Page or item is Skip) and item.owner is an ended ("wait" | "offer") prompt:
+        boundary_inbox.append(item); continue                       # rev 8 (round 7 #4): late, routed, not lost
+    if not matches(item, o): log("stale", item); continue           # its skip is never posted (round 6 #5)
     if item is Timeout: return None
-    if item is Skip: take_skip(); return SKIP    # consumes the queued skip once
-    if item is Page: if kind in ACCEPTS_PAGE: return PAGE
+    if item is Skip: post_skip(); return item.u                     # M6's contract: queued, and returned
+    if item is Page: if accepts_page: return item.u                 # M6's contract: the /page utterance
                      else: log("page ignored"); continue
     return item.u
 
 controls_only(o):                                # around every Brain wait
   present(o)
   in its own task group: loop: for src in wanted_sources(): request(src); await a delivery or exit
-  on exit: nothing is consumed; items stay in the stream, stamped, for the next listen() to filter
+  on exit (rev 8, round 7 #4, #5): take every Skip and Page owned by o from the stream and the boundary inbox,
+    and RETURN them (never post a skip): the caller states what they mean —
+      at a boundary (decide, construction): a Page → the pending page request (`s.request_page`, a hook the
+        World provides) and Reobserve; a Skip → dropped (logged): the learner has heard no offer yet, M6's rule
+        "a skip before an offer excludes nothing";
+      inside an activity (judge, an answer turn, generate inside construct): a Skip → skips the current item;
+        a Page → the activity's page-turn handling (`page_turned` where the kind allows it)
+    every other item stays in the stream for the next listen() to filter
+  a plain say() inside controls_only() or listen() keeps the current owner (round 7, question 3)
 
-boundary pages: a Page owned by a ("wait", turn) or ("offer", turn, n) prompt (typed during a Brain wait or an
-  offer) is consumed by the boundary: it sets the pending page request and returns Reobserve (§2.1), so the
-  next activity is chosen for the new page instead of being cut by it
+negotiate's offer listen: listen(("offer", turn, n), ask_s, accepts_page = True); a Page it returns is handled
+  like controls_only's (pending page, Reobserve), so a page typed during an offer never cuts the next activity
 
 wanted_sources() = {control source} ∪ ({main} if text mode or (voice mode and no Mouth playing))   # ADR-0011
 ```
+
+`_offer_hint` (round 6 #4; rev 8, round 7 #2) asks under the page prompt with `accepts_page = True` and consumes
+only "yes" and "no"; any other reply is **returned to `read_listen`'s loop**, which dispatches it as it dispatches
+every utterance (`take_skip`, `controls.parse`, then `_reading_utterance`), so a control is never aligned as
+reading and a posted skip is never followed by a discarded utterance.
+
+**Rev 8 details (round 7 #3, #8, #9).**
+- `u.ended_at` is the end of the **last voiced audio**, not the chunk that closed the segment (which comes 0.6 s,
+  Silero, to 1.2 s, energy, later): the energy segmenter stamps the `t` of its last above-threshold chunk; `Vad.feed`
+  returns `(pcm, end_t)` with `end_t` the segment's last voiced sample mapped onto the chunks' `t`. `pause()` clears
+  `_segment_energy`'s speech buffer, so speech cut by Leafi's question never closes after the resume as B's.
+- Prompt ids also for `_pause` (`("act", aid, "pause")`, `accepts_page = True`, so a page still ends a `wait` as in
+  M6), `_from_request`'s uncertain-page confirm (`("world", "confirm_page")`), negotiate's rationale and "I can't …"
+  lines (asked under the current offer's prompt), and in-activity Brain waits (`controls_only(("act", aid, step))`
+  with the step whose answer is being judged, so consequence 1's late voice belongs to it); `identify_book`'s
+  re-asks listen with `accepts_page = True` as M6 did.
+- `listen` has 15 call sites (activities 5, identify 4, loop 3, negotiate 1, world 2), each listed in M7b with its
+  prompt id and `accepts_page`.
+- **Tests ported in M7b:** `test_controls.py`'s direct `Inputs.listen(t)` calls (new signature); the Eye page test
+  (`accepts_page = True`); `harness_helpers.ScriptedTalk` gains `ask(owner, …)`; the microphone test keeps its
+  meaning under rev 8's synchronous `Switched`.
+
+**Round 7 #6, #7 (M7c, M7e).** `knowledge.card_fields` / `cards.stored_text` return, with the fields, the join of the
+chosen encounter's explanation and context provenance, and `add_cards` stores that (a `code`-built card copying a
+Brain explanation keeps its sources). `forget --brain-records` refuses (`LearnerBusy`) while N has an unended
+session, and selects evaluation transcripts by their recorded source learners, not their owner.
 
 Consequences, each a test through the real `Inputs` with scripted console and voice sources (`test_inputs_ownership`):
 1. **Late voice across items.** The learner speaks during A's `judge` (last chunk at t1, owner A); the transcription lands while B is listening → owner A ≠ B → dropped; B's `request` runs again on the next iteration, so B's own answer is read (no hang).
@@ -290,9 +345,11 @@ Consequences, each a test through the real `Inputs` with scripted console and vo
 4. **Line typed before B's question started (round 5 #3).** The console thread stamped it at `readline`, before `present(B)` → owner A → dropped; it is not given to B even if no read was in flight.
 5. **Follow-up.** A's "tell me more" listens with A's prompt id → A's late addition is returned to it.
 6. **Stop** typed or spoken (outside a playing line, where the gate pauses the voice Listener) during a Brain wait → `terminate("stop")` inside `reader`, whoever the owner is.
-7. **Skip (round 5 #2).** "skip" during a `read_listen` listen, text or voice → a `Skip` owned by the page prompt wakes the listen, which returns `SKIP` after consuming the queued skip once; a skip during a Brain wait at a boundary is owned by the wait, dropped by the next activity's listen, and stays in the queue for `negotiate`'s `take_skip` (M6's rule: it belongs to the current negotiation).
-8. **Ear lost during a wait (round 5 #5)** → `Switched(E)`; the boundary re-observes under E; the next activity's listen (epoch E) drops the item instead of raising; a listen built before the switch (epoch < E) raises `StaleInput` as today.
-9. **Page typed during `decide` (round 5 #4)** → owned by the wait prompt → consumed by the boundary (pending page, `Reobserve`), not by the `practise_errors` that follows; a page turn during `practise_errors` ends it `page_turned` as today.
+7. **Skip (round 5 #2, round 6 #5).** "skip" during a `read_listen` listen, text or voice → a `Skip` owned by the page prompt wakes the listen, which posts it and returns the utterance (M6's contract, so `if s.take_skip()` after the listen sees it); a skip during a Brain wait is owned by the wait and posted by `controls_only`'s exit for the negotiation (which drains skips before its next offer); a stale skip of an earlier prompt is never posted, so it cannot skip the wrong thing later.
+8. **Ear lost during a wait (round 5 #5, round 6 #9)** → "mic lost" is said once by the handler; `Switched(at)`; the next activity's listen began after it, so it drops the item; a listen whose prompt began before it raises `StaleInput` as today.
+9. **Page typed during `decide` (round 5 #4, round 6 #2)** → owned by the wait prompt → taken by `controls_only`'s exit and handled by the boundary (pending page, `Reobserve`), also at the announce band where `negotiate` never listens; the `practise_errors` that follows is not cut by it. A `/page 5 --text p5.txt` typed in reply to `ask_page_text` reaches `acquire_page` with its path (round 6 #1).
+12. **Epoch bumps inside one prompt (round 6 #3).** A `/fix` or `back` during `read_listen` bumps the epoch; a second line the learner had already typed for the same page prompt is still delivered (ownership is the prompt id, not the epoch).
+13. **Scripted sources (round 6 #10).** A scripted line is stamped when produced; existing M6 tests whose scripted lines are read during an unowned `say` keep passing because an item owned by `None` goes to the next listen.
 10. **Long listen (round 5 #6):** a 5-minute text-mode `practise_errors` listen still owns its input after the 60 s pruning.
 11. **Two answers for one prompt** → both returned, in order.
 
