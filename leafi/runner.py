@@ -65,8 +65,10 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
         if settings.book_lookup != "off":
             catalog = catalog_service.REGISTRY.create(settings.book_lookup, settings)
     from leafi.core import learner_store
+    from leafi.privacy import runtime
     from leafi.services.wordinfo import LocalWordInfo
 
+    runtime.get(settings).start_detector()  # loads in a thread while the session starts (M7 design D8)
     lexicon = [r["word"] for r in store.all("SELECT DISTINCT word FROM lexicon")]
     page_text = args.page_text.read_text(encoding="utf-8") if args.page_text else None
     # The Brain arrives with M7 (plan): until then every session runs the default policy, and code owns content.

@@ -73,7 +73,7 @@ async def test_egress_runs_the_detector_on_a_learners_words_only(settings):
     privacy.set_school(store, rocco, None)
     fake = dests.Destination("fake", "http", frozenset({"127.0.0.1"}), 9, frozenset({"generate"}), "cloud")
     e = eg.Egress(settings, registry={"fake": fake}, env_file=None)
-    e._detector = Fake(("Sophie", "[name]"))
+    e._detector, e.detector_state = Fake(("Sophie", "[name]")), "ready"  # M7 D8: a loaded detector
     try:
         p = e.prepare("fake", "generate", eg.Outgoing(json={
             "said": eg.Text("I read with Sophie", "learner", (rocco,)),

@@ -42,7 +42,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import quote, urlencode, urlsplit
 
 import httpx2
@@ -118,10 +118,23 @@ class Token:
     transmissions: int
     model: str | None = None   # the model `prepare` checked against the body (M7 design D1)
     locality: str = "cloud"    # `destinations.effective()` for that model
+    budget: Budget | None = None  # the caller's ledger, asked before and charged after each reservation (M7 D7)
+    reserved: int = 0          # transmissions reserved so far
 
     @property
     def study(self) -> bool:
         return self.purpose != dests.OPS
+
+
+class Budget(Protocol):
+    """A caller's allowance for one request (M7 design D7). `can_cover` is pure and runs inside the reservation
+    transaction, so a refusal reserves nothing; `charge` runs once, after that transaction committed, before the
+    transmission: what is charged is what was reserved (reservation accounting). `first` tells the first
+    transmission from the mediator's one retry."""
+
+    def can_cover(self, first: bool) -> bool: ...
+
+    def charge(self, first: bool) -> None: ...
 
 
 @dataclass
@@ -133,6 +146,7 @@ class Prepared:
     json: Any  # the prepared JSON value (Text replaced), for an SDK that builds the body itself
     headers: dict[str, str]
     mapping: Mapping
+    attempt_id: int | None = None  # the `egress_log` row: a cancelled caller reads its transmissions there (M7 D5)
 
     def request(self) -> httpx2.Request:
         """The request for an httpx2 adapter: exactly the prepared bytes, the token header attached."""
@@ -250,6 +264,9 @@ class Egress:
         self.key = keyfile.load(settings.data_dir)
         self.watch = versions.PolicyWatch(self.key, env_file)
         self.budget = budget
+        self.detector_state = "unloaded"  # unloaded | loading | ready | off | failed
+        self._detector = None
+        self._det_lock, self._det_done = threading.Lock(), threading.Event()
         self.tokens = TokenStore()
         self.owner = _owner()
         self._local = threading.local()
@@ -323,7 +340,8 @@ class Egress:
     # ---- prepare
     def prepare(self, destination: str | Destination, purpose: str, out: Outgoing, *,
                 learner_id: int | None = None, session_id: int | None = None,
-                ttl_s: float | None = None, model: str | None = None) -> Prepared:
+                ttl_s: float | None = None, model: str | None = None,
+                budget: Budget | None = None) -> Prepared:
         dest = destination if isinstance(destination, Destination) else self.registry.get(destination)
         if dest is None:
             raise Refused(f"no destination {destination!r}")
@@ -408,10 +426,10 @@ class Egress:
              now_iso(), now_iso()))
         tok = Token(secrets.token_urlsafe(18), dest, purpose, learner_id, session_id, int(cur.lastrowid),
                     out.method.upper(), url, body, body_value, digest, snap, self.watch.loaded,
-                    time.monotonic() + ttl, 2 if purpose in dests.TEXT_PURPOSES else 1, model, locality)
+                    time.monotonic() + ttl, 2 if purpose in dests.TEXT_PURPOSES else 1, model, locality, budget)
         for gone in self.tokens.add(tok):
             self._finish(gone, "failed")
-        return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping)
+        return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping, tok.attempt_id)
 
     def contains_protected(self, text: str) -> bool:
         """Whether `text` holds a listed name (TTS routing, design D13): such a line is spoken locally."""
@@ -486,13 +504,50 @@ class Egress:
                     part.replace(target)
                     return
 
-    def detector(self):
-        """The name detector for a learner's own words (design D11), loaded on first need (spaCy takes seconds);
-        None when it is off or its model is missing (list-only, warned by `detector.load`)."""
-        if not hasattr(self, "_detector"):
-            from leafi.privacy import detector
+    # ---- the name detector (design D11; M7 design D8: loaded off the event loop, four states plus `failed`)
+    def start_detector(self) -> None:
+        """Begin loading the detector in a worker thread (spaCy takes seconds). Called at process start by every
+        process that may prepare learner text, so a study session normally finds it `ready`; a no-op once begun."""
+        from leafi.privacy import detector
 
-            self._detector = detector.load(self.settings)
+        with self._det_lock:
+            if self.detector_state != "unloaded":
+                return
+            if detector.state(self.settings) != "on":  # off, or its model missing: nothing heavy to load
+                self._detector, self.detector_state = detector.load(self.settings), "off"
+                self._det_done.set()
+                return
+            self.detector_state = "loading"
+        threading.Thread(target=self._load_detector, name="leafi-detector", daemon=True).start()
+
+    def _load_detector(self) -> None:
+        from leafi.privacy import detector
+
+        try:
+            det, state = detector.load(self.settings), None
+        except Exception:  # noqa: BLE001 - a broken model is reported, and replacement falls back to the lists
+            log.warning("name detector failed to load; list-only replacement", exc_info=True)
+            det, state = None, "failed"
+        with self._det_lock:
+            self._detector = det
+            self.detector_state = state or ("ready" if det is not None else "off")
+        self._det_done.set()
+
+    def detector(self):
+        """The name detector for a learner's own words, or None (off, model missing, or `failed`: list-only,
+        warned). Inside a study session (an attribution is set) it never loads on the event loop: while it is
+        `unloaded` or `loading` the leaf is refused (`detector not ready`) and the call falls back like any
+        refusal. Outside a session it loads, or waits for the load, as M5 did."""
+        from leafi.privacy import runtime
+
+        if self.detector_state == "unloaded":
+            self.start_detector()  # settles `off` at once; a model on disk starts loading
+        if self.detector_state in ("ready", "off", "failed"):
+            return self._detector
+        if runtime.attribution.get() is not None:
+            raise Refused("detector not ready: learner text waits until the name detector has loaded")
+        self.start_detector()
+        self._det_done.wait()
         return self._detector
 
     # ---- clients
@@ -513,26 +568,35 @@ class Egress:
             log.warning("egress_log %s not updated to %s", tok.attempt_id, status, exc_info=True)
 
     async def admit(self, tok: Token) -> str | None:
-        """Immediately before a transmission: the policy, the versions, the budget, then the reservation — the
-        version check and the reservation in one write transaction (U11), retried while busy until the expiry."""
-        if tok.study and self.watch.current() != tok.fingerprint:
-            return "household privacy settings changed"
-        if self.budget is not None and not self.budget(tok):
-            return "over budget"
+        """Immediately before a transmission: inside each attempt of one write transaction (U11; M7 design D7),
+        retried while busy until the expiry — the household fingerprint, the versions, the budget's `can_cover`,
+        the reservation; after the commit, one charge. A busy attempt rolls back and repeats every check, so a
+        change during the wait is seen and nothing is charged twice; a refusal charges nothing."""
+        first = tok.reserved == 0
         while True:
             c = self._conn()
             try:
                 c.execute("BEGIN IMMEDIATE")
                 try:
-                    if tok.snapshot is not None:
+                    reason = None
+                    if tok.study and self.watch.current() != tok.fingerprint:
+                        reason = "household privacy settings changed"
+                    elif tok.snapshot is not None:
                         now = versions.snapshot(c, [s.learner_id for s in tok.snapshot.sources])
                         reason = versions.stale(tok.snapshot, now)
-                        if reason is not None:
-                            c.execute("ROLLBACK")
-                            return reason
+                    if reason is None and tok.budget is not None and not tok.budget.can_cover(first):
+                        reason = "over budget"
+                    if reason is None and tok.budget is None and self.budget is not None and not self.budget(tok):
+                        reason = "over budget"  # the process-wide hook (tests); a token's own budget wins
+                    if reason is not None:
+                        c.execute("ROLLBACK")
+                        return reason
                     c.execute("UPDATE egress_log SET transmitted_attempts = transmitted_attempts + 1, updated_at=? "
                               "WHERE id=?", (now_iso(), tok.attempt_id))
                     c.execute("COMMIT")
+                    tok.reserved += 1
+                    if tok.budget is not None:
+                        tok.budget.charge(first)  # synchronous: nothing can cut it after the commit
                     return None
                 except BaseException:
                     if c.in_transaction:

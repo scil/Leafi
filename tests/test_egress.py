@@ -398,3 +398,99 @@ def test_recovery_marks_a_dead_processes_attempts_unknown(world):
                     "'sending', 1, '999999:1', 't', 't')", (w.rocco,))
     assert w.egress.recover() == 1
     assert _log(w)[-1][3:] == ("unknown", 1)
+
+
+class _Ledger:
+    """A caller's budget (M7 design D7): one unit per transmission; records what was charged."""
+
+    def __init__(self, units: int) -> None:
+        self.units, self.charged = units, []
+
+    def can_cover(self, first: bool) -> bool:
+        return self.units >= 1
+
+    def charge(self, first: bool) -> None:
+        self.units -= 1
+        self.charged.append(first)
+
+
+async def test_a_budget_that_cannot_cover_reserves_and_charges_nothing(world):
+    w = world
+    ledger = _Ledger(0)
+    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=_brain_body(w, "hi")),
+                         learner_id=w.rocco, budget=ledger)
+    r = await _send(w, "fake", p)
+    assert r.status_code == 403 and "over budget" in r.text
+    assert ledger.charged == [] and w.server.requests == [] and _log(w)[-1][3:] == ("failed", 0)
+
+
+async def test_each_reserved_transmission_is_charged_once_including_the_retry(world):
+    w = world
+    w.server.replies += [(503, {"error": "x"}, {}), (200, _MESSAGE("ok"), {})]
+    ledger = _Ledger(5)
+    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=_brain_body(w, "hi")),
+                         learner_id=w.rocco, budget=ledger)
+    assert p.attempt_id == w.store.one("SELECT MAX(id) FROM egress_log")[0]
+    assert (await _send(w, "fake", p)).status_code == 200
+    assert ledger.charged == [True, False] and _log(w)[-1][3:] == ("sent", 2)
+
+
+async def test_a_busy_reservation_charges_once_and_a_change_during_the_wait_is_seen(world):
+    import sqlite3
+
+    w = world
+    ledger = _Ledger(5)
+    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=_brain_body(w, "hi")),
+                         learner_id=w.rocco, budget=ledger)
+    blocker = sqlite3.connect(str(w.settings.db_path), isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+
+    async def release():
+        await asyncio.sleep(0.4)
+        blocker.execute("COMMIT")
+
+    task = asyncio.create_task(release())
+    assert (await _send(w, "fake", p)).status_code == 200
+    await task
+    assert ledger.charged == [True]  # several busy attempts, one charge
+    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=_brain_body(w, "hi")),
+                         learner_id=w.rocco, budget=ledger)
+    # The blocker itself bumps the learner's privacy version inside its transaction: the change commits exactly
+    # when the lock goes, so the attempt that finally gets the lock must see it (R3, round 5 #10).
+    settings = json.loads(w.store.one("SELECT settings FROM learners WHERE id=?", (w.rocco,))[0])
+    settings["privacy.version"] = int(settings.get("privacy.version", 0)) + 1
+    blocker.execute("BEGIN IMMEDIATE")
+    blocker.execute("UPDATE learners SET settings=? WHERE id=?", (json.dumps(settings), w.rocco))
+    task = asyncio.create_task(release())
+    r = await _send(w, "fake", p)
+    await task
+    assert r.status_code == 403 and "privacy settings of learner" in r.json()["refused"]
+    assert ledger.charged == [True] and len(w.server.requests) == 1  # nothing charged or sent for the stale one
+    blocker.close()
+
+
+async def test_the_detector_settles_off_at_once_and_never_loads_on_the_loop_in_a_session(world, monkeypatch):
+    import threading
+
+    from leafi.privacy import detector, runtime
+
+    w = world
+    assert w.egress.detector() is None and w.egress.detector_state == "off"  # no model here: nothing to load
+    e = eg.Egress(w.settings, registry=w.egress.registry, env_file=None)
+    gate = threading.Event()
+    monkeypatch.setattr(detector, "state", lambda s: "on")
+    monkeypatch.setattr(detector, "load", lambda s: gate.wait(5) and "DET")
+    e.start_detector()
+    assert e.detector_state == "loading"
+    body = Outgoing(json={"m": Text("Rocco here", "learner", (w.rocco,))})
+    with runtime.attributed(w.rocco), pytest.raises(eg.Refused, match="detector not ready"):
+        e.prepare("fake", "generate", body, learner_id=w.rocco)
+    gate.set()
+    assert e.detector() == "DET" and e.detector_state == "ready"  # outside a session: waits for the load
+    broken = eg.Egress(w.settings, registry=w.egress.registry, env_file=None)
+    monkeypatch.setattr(detector, "load", lambda s: (_ for _ in ()).throw(OSError("bad model")))
+    broken.start_detector()
+    broken._det_done.wait(5)
+    assert broken.detector_state == "failed" and broken.detector() is None  # list-only, like a missing model
+    e.close()
+    broken.close()
