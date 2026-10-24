@@ -39,6 +39,15 @@ class Provenance:
 SYSTEM = Provenance()
 
 
+@dataclass(frozen=True)
+class Leaf:
+    """One piece of text with its provenance, as the Brain port carries it (M7 design D3/D5); a backend turns it
+    into `leafi.privacy.egress.Text` when it prepares the request."""
+
+    value: str
+    prov: Provenance = SYSTEM
+
+
 def of_output(sent: Iterable[Provenance]) -> Provenance:
     """The provenance of a Brain output from the provenance of every leaf actually sent to that backend: never
     weaker than `derived_from_learner` when any sent leaf came from a learner (a model output quoting a learner is

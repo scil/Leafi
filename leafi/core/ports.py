@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
-from .provenance import SYSTEM, Provenance  # noqa: F401  (re-exported; defined there since M7 design D2)
+from .provenance import SYSTEM, Leaf, Provenance  # noqa: F401  (re-exported; defined there since M7 design D2)
 
 # ---------------------------------------------------------------- value types
 
@@ -175,3 +175,77 @@ class Synthesizer(Protocol):
                     ) -> AudioClip: ...
     # provenance: a learner's own words, or any line holding a protected name, never reach a cloud backend
     # while PRIVACY_TTS_LEARNER_LINES=local (M5 D13).
+
+
+# ---------------------------------------------------------------- the Brain (ADR-0017 §5; M7 design D5)
+
+
+@dataclass(frozen=True)
+class Section:
+    """A tagged part of a request (`page`, `memory`, `cycle`, `menu`, `last_activity`, `session`, `turn`, …)."""
+
+    name: str
+    leaves: tuple[Leaf, ...]
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One message. A single-turn purpose sends one user Turn; a multi-turn one (M7f's practice) the conversation,
+    each assistant Turn with the output provenance of what produced it. No tool calls."""
+
+    role: Literal["user", "assistant"]
+    sections: tuple[Section, ...]
+    provenance: Provenance | None = None
+
+
+@dataclass
+class CallAttempt:
+    """Filled by the backend right after egress prepared the request, so a cancelled call still has its record."""
+
+    sent: dict | None = None
+    egress_attempt_id: int | None = None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelRequest:
+    purpose: str
+    model: str
+    system: str
+    turns: tuple[Turn, ...]
+    schema: dict
+    max_tokens: int
+    effort: str
+    thinking: Literal["adaptive", "off"]
+    timeout_s: float
+    learner_id: int | None
+    session_id: int | None
+    budget: object | None  # a `leafi.privacy.egress.Budget`
+    attempt: CallAttempt
+
+
+@dataclass
+class CallRecord:
+    outcome: str  # ok | invalid | refused | over_budget | timeout | failed | cancelled
+    value: dict | None = None
+    sent: dict | None = None
+    received: str | None = None
+    model: str | None = None
+    provider: str | None = None
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tokens_cached: int = 0
+    latency_ms: int = 0
+    transmissions: int = 0
+    stop_reason: str | None = None
+    detail: str = ""  # a rejection code or the refusal reason; never model text
+
+
+@runtime_checkable
+class BrainBackend(Protocol):
+    name: str
+    locality_destination: str  # the egress destination it sends to (D1 resolves its locality per model)
+
+    async def call(self, req: ModelRequest) -> CallRecord: ...  # never None; a cancellation propagates
+
+    async def reset(self) -> None: ...  # close the mediated client and build a new one (after a cut call)
