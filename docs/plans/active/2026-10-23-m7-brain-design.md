@@ -1,7 +1,7 @@
 ---
 status: proposed
 date: 2026-10-23
-revision: 8
+revision: 9
 ---
 
 # M7 the Brain leads: implementation design
@@ -221,7 +221,7 @@ Four rounds found instances of two decisions (input ownership: T7 → R5 → S2 
 **Rev 7 (round 6 #1–6, #9, #10): `listen` returns exactly what M6's callers receive today** — an `Utterance`, or
 `None` at a timeout. A skip still posts to the skip queue and comes back as its utterance; a page turn comes back as
 its `/page …` utterance with the control's number and `--text` path intact. D21 only **filters** what reaches a
-`listen`: the 14 call sites keep their code, and every `if s.take_skip()` after a listen keeps working.
+`listen`: the 15 call sites keep their code, and every `if s.take_skip()` after a listen keeps working.
 
 ```
 clock      = time.monotonic, one clock for Inputs, the Listeners and the console (injected in tests; it is
@@ -268,24 +268,32 @@ reader(src): loop: wait for a request; t_req = clock(); u = await src.next_utter
   elif control(u) is skip and speaking: cut the current line              # as today (incl. the filler, D12)
   elif control(u) is skip:  send(Skip(u, owner_at(u.ended_at)))          # posted only when its owner takes it
   elif control(u) is page:  send(Page(u, owner_at(u.ended_at)))          # the utterance keeps n and --text
-  elif src is not main:     drop                                          # rev 8 (round 7 #9): as M6, only the
-                                                                          #   main source's timeout is a Timeout
-  else:                     send(Utterance(u, owner_at(u.ended_at)))
-  (and `u is None` from a non-main source is dropped too, rev 8)
+  else:                     send(Utterance(u, owner_at(u.ended_at)))      # from ANY source, as M6 (rev 9 #1)
+  (rev 9, round 8 #1: only `u is None` from a non-main source is dropped — as M6, only the main source's timeout
+   is a Timeout; every utterance from the console is delivered in voice mode too)
+  (round 8 #4: the `speaking` cut applies only when owner_at(u.ended_at) is the current owner; a skip of an
+   earlier prompt arriving during a line is routed as a late Skip below, never cuts the line)
 page_watcher: only while page_open: on a settled turn: send(Page(typed_utterance("/page", "eye"), owner_at(clock())))
-ear_lost (rev 8, round 7 #1): synchronously, before any await: switched_at = clock(); bump epoch;
-              send(Switched(at = switched_at)); notice = "mic_lost"   # spoken by the main flow's next ask/say,
-                                                                       # under the current owner, never here
+ear_lost (rev 8/9, round 7 #1, round 8 #1): synchronously, before any await: switched_at = clock(); bump epoch;
+              the console becomes `main` (M6's `_console_is_main`), so its timeouts count and wanted_sources stays
+              right; send(Switched(at = switched_at)); notice = "mic_lost"  # spoken by the main flow's next
+              ask/say under the current owner (the filler never speaks it), never here
+run_activity sets `activity_started_at = clock()` before the activity and clears it to None after (rev 9 #2)
 
 listen(o, timeout_s, accepts_page = False):     # accepts_page: read_listen, practise_errors, acquire_page,
   present(o); deadline = clock() + timeout_s    #   _from_request (a prompt-level flag, round 6 #1)
   loop:
     for src in wanted_sources(): request(src)   # every iteration: a source freed by a stale read is asked again
     item = await stream.receive() until deadline, else return None
-    if item is Switched: if activity_started_at < item.at: raise StaleInput   # rev 8: the running ACTIVITY
-                         else: continue                             #   began before the switch, not the prompt
-    if (item is Page or item is Skip) and item.owner is an ended ("wait" | "offer") prompt:
-        boundary_inbox.append(item); continue                       # rev 8 (round 7 #4): late, routed, not lost
+    if item is Switched:                                            # rev 9 (round 8 #2)
+        if o is a ("setup", …) prompt: raise StaleInput             #   identify restarts on it, as M6
+        if activity_started_at is not None and activity_started_at < item.at: raise StaleInput  # the activity
+        continue                                                    #   began before it; else absorbed: no
+                                                                    #   activity runs (a boundary) or it began
+                                                                    #   after — the epoch bump makes the
+                                                                    #   boundary's freshness check Reobserve
+    if (item is Page or item is Skip) and item.owner is an ended prompt (not o, not current):
+        late.append(item); continue                                 # rev 8/9 (round 7 #4, round 8 #3): routed
     if not matches(item, o): log("stale", item); continue           # its skip is never posted (round 6 #5)
     if item is Timeout: return None
     if item is Skip: post_skip(); return item.u                     # M6's contract: queued, and returned
@@ -305,6 +313,15 @@ controls_only(o):                                # around every Brain wait
         a Page → the activity's page-turn handling (`page_turned` where the kind allows it)
     every other item stays in the stream for the next listen() to filter
   a plain say() inside controls_only() or listen() keeps the current owner (round 7, question 3)
+
+late items (rev 9, round 8 #3): `Inputs.late` holds Pages and Skips whose prompt had ended when they arrived; it is
+  drained BY KIND, not by owner:
+    at every boundary iteration (negotiate's loop, before each offer): every late Page → `s.request_page`
+      (the pending page) and Reobserve; every late Skip → dropped (logged: no offer was heard);
+    while an activity runs: a late Page of one of that activity's ended `("act", aid, *)` prompts → that
+      activity's page handling (`read_listen`, `practise_errors`: `page_turned`; every other kind: the page is
+      remembered as `w.pending` and the activity continues — the next boundary opens it); a late Skip → dropped
+      (it belonged to a question already past)
 
 negotiate's offer listen: listen(("offer", turn, n), ask_s, accepts_page = True); a Page it returns is handled
   like controls_only's (pending page, Reobserve), so a page typed during an offer never cuts the next activity
@@ -328,7 +345,12 @@ reading and a posted skip is never followed by a discarded utterance.
   with the step whose answer is being judged, so consequence 1's late voice belongs to it); `identify_book`'s
   re-asks listen with `accepts_page = True` as M6 did.
 - `listen` has 15 call sites (activities 5, identify 4, loop 3, negotiate 1, world 2), each listed in M7b with its
-  prompt id and `accepts_page`.
+  prompt id and `accepts_page`, which is `True` wherever M6 let a typed `/page` end the listen (round 8 #6:
+  `confirm_title`, `continue_offer`, identify's four listens, `review_anki`), so no site changes its page behaviour.
+- `_offer_hint` treats yes/no-like replies ("yes please", "no thank you", "not now", "please") as answers through
+  `negotiate.parse_choice`'s vocabulary, not as reading (round 8 #5).
+- `pause()` clears the energy segmenter's buffer through a pause-generation counter the segmenter checks; the VAD's
+  `end_t` mapping is kept across `vad.reset()` (round 8 #7).
 - **Tests ported in M7b:** `test_controls.py`'s direct `Inputs.listen(t)` calls (new signature); the Eye page test
   (`accepts_page = True`); `harness_helpers.ScriptedTalk` gains `ask(owner, …)`; the microphone test keeps its
   meaning under rev 8's synchronous `Switched`.
@@ -346,7 +368,7 @@ Consequences, each a test through the real `Inputs` with scripted console and vo
 5. **Follow-up.** A's "tell me more" listens with A's prompt id → A's late addition is returned to it.
 6. **Stop** typed or spoken (outside a playing line, where the gate pauses the voice Listener) during a Brain wait → `terminate("stop")` inside `reader`, whoever the owner is.
 7. **Skip (round 5 #2, round 6 #5).** "skip" during a `read_listen` listen, text or voice → a `Skip` owned by the page prompt wakes the listen, which posts it and returns the utterance (M6's contract, so `if s.take_skip()` after the listen sees it); a skip during a Brain wait is owned by the wait and posted by `controls_only`'s exit for the negotiation (which drains skips before its next offer); a stale skip of an earlier prompt is never posted, so it cannot skip the wrong thing later.
-8. **Ear lost during a wait (round 5 #5, round 6 #9)** → "mic lost" is said once by the handler; `Switched(at)`; the next activity's listen began after it, so it drops the item; a listen whose prompt began before it raises `StaleInput` as today.
+8. **Ear lost (rev 9)** → `Switched(at)` sent synchronously, the console made `main`, "mic lost" queued for the main flow's next line. Inside an activity that began before it → `StaleInput`, the activity ends `aborted_stale`, the continuation reads on the console (M6's test kept). At a boundary (the `decide` wait, an offer, the first boundary, `identify_book`) → absorbed; the epoch bump makes the boundary re-observe. During `identify` → `StaleInput`, which `identify` already handles.
 9. **Page typed during `decide` (round 5 #4, round 6 #2)** → owned by the wait prompt → taken by `controls_only`'s exit and handled by the boundary (pending page, `Reobserve`), also at the announce band where `negotiate` never listens; the `practise_errors` that follows is not cut by it. A `/page 5 --text p5.txt` typed in reply to `ask_page_text` reaches `acquire_page` with its path (round 6 #1).
 12. **Epoch bumps inside one prompt (round 6 #3).** A `/fix` or `back` during `read_listen` bumps the epoch; a second line the learner had already typed for the same page prompt is still delivered (ownership is the prompt id, not the epoch).
 13. **Scripted sources (round 6 #10).** A scripted line is stamped when produced; existing M6 tests whose scripted lines are read during an unowned `say` keep passing because an item owned by `None` goes to the next listen.
@@ -401,7 +423,7 @@ So the one rule is: **retry once with A's raw leaves re-rendered and every Brain
 Each step lists what it needs from earlier steps; a kind is offered only when its handler **and** its facts exist (D14), so no step exposes a half-built feature.
 
 - **M7a call layer** (needs: nothing new). D1 first (its `test_privacy` cases and the two legacy `prepare` callers), D2 (`leafi/core/provenance.py`, `of_output`, source `0` in `_gate` and the fence), D3 `may_send`, D4, D5's port with the claude and mock backends and the whole bridge of D5 (with `menu.allowed`'s handler gate and `construct`'s `brain` branch returning `Rejected` until M7c, S6), D6 schemas and rendering, D7 in `admit`, D8, D9 settings (the ADR-0018 amendment and ADR-0017's `revised` note for O1 and D7's reservation accounting), D10, D11. No Brain call is made by a session yet. Tests: `test_brain_call` (D7's budget cases, the output reserve for the camera Mouth, tier skip by remaining time, D8's walk on `invalid` / `timeout` / `failed` including O1's route on a real clock (the worked example), reset deferred to the backend's next call, audit rows written after the walk, the rendered order and single breakpoint, a **deadline expiry inside a Brain call** mapped by the caller), `test_routing`, `test_brain_schemas` (also: a reply violating a constraint stripped from the API schema is rejected by Pydantic), `test_privacy` (D1, D2, D3, D4; A1's unanswered school, with M7f P7's document changes in the same commit: ADR-0018 §3, ADR-0016's `household-terms` check as a warning, `doctor`'s `schools` line and `alerts.py`'s text), `test_egress` (D8's detector states), `test_architecture` (D22's rule, with `_store_utterance`, `rows.start_activity` and `identify.adopt` moved onto `learner_store`), `test_learner_store` (source `0`), the `STUDY_BRAIN_MODEL` import, `test_env_schema` (new keys, `PRIVACY_FLOOR`, the Ollama gate per tier entry), `test_construct` (a learner naming "questions" before M7c is told it cannot be done; no `KeyError`; `test_a_kind_outside_the_menu_and_a_url_are_rejected` ported, since it assigns `s2.generate` and the `brain` branch now returns `Rejected("not available now")`, round 4 #11), `limits.extract_calls` (2, 0–5) added to `harness/settings.SPEC` here because D7's post-session `Budget` reads it (round 4 #11), D22's `insert_named` / `update_named` with `rows.finish_activity` moved onto `update_named`, `test_forget_race` and the `test_architecture` rule (D22), the suite green with the bridge.
-- **M7b the Brain sequences** (needs M7a). `observe` (D3, D6's order, `turn`), `sequence`, `with_filler`, D21 (`Utterance.ended_at` in the voice Listener and `typed_utterance`, the owner timeline, `controls_only(owner)`, `listen(owner, …)` at every activity listen), `Talk.say(epoch=)`, D13, arms with a Brain. Kinds offered: those with handlers today (`review_anki`, `read_listen`, `read_aloud`, `practise_errors`, `add_cards`, `break`, `end`); Brain content only for `read_aloud` and `add_cards` waits for M7c (until then their owner `brain` falls through to the default chain). `security.md`'s egress table gains the `decide` purpose's payload description in this commit, the first that sends observations (R13). Tests: `test_arms`, `test_cancellation` (stop typed and spoken during a Brain call through the real `Inputs`; stop during the mediator's retry; deadline expiry during `decide`; busy audit at `finalize`), `test_inputs_ownership` (D21's seven consequences, with `Utterance.ended_at` set by the voice Listener at segment close), `test_filler`, `test_negotiate_freshness` (a mismatched `turn` dropped), a mock-Brain session end to end. Then, owner present: one compilation probe per schema against the API.
+- **M7b the Brain sequences** (needs M7a). `observe` (D3, D6's order, `turn`), `sequence`, `with_filler`, D21 (`Utterance.ended_at` in the voice Listener and `typed_utterance`, the owner timeline, `controls_only(owner)`, `listen(owner, …)` at every activity listen), `Talk.say(epoch=)`, D13, arms with a Brain. Kinds offered: those with handlers today (`review_anki`, `read_listen`, `read_aloud`, `practise_errors`, `add_cards`, `break`, `end`); Brain content only for `read_aloud` and `add_cards` waits for M7c (until then their owner `brain` falls through to the default chain). `security.md`'s egress table gains the `decide` purpose's payload description in this commit, the first that sends observations (R13). Tests: `test_arms`, `test_cancellation` (stop typed and spoken during a Brain call through the real `Inputs`; stop during the mediator's retry; deadline expiry during `decide`; busy audit at `finalize`), `test_inputs_ownership` (D21's thirteen consequences, with `Utterance.ended_at` set by the voice Listener at segment close), `test_filler`, `test_negotiate_freshness` (a mismatched `turn` dropped), a mock-Brain session end to end. Then, owner present: one compilation probe per schema against the API.
 - **M7c generation, scoring, quiz and questions** (needs M7b). Async construction and the per-boundary cache (D14) with M6's tests ported, `menu`/`construct` reading `s.brain` directly (the `Session.generate` bridge removed), the `generate` kinds and reference binding (D15), Brain content for `read_aloud` and `add_cards`, the **`quiz` and `learner_questions` handlers** (their facts, read sentences of the cycle, exist since M6), `judge`, `scoring.py` (D16), the `degraded` preface. `security.md` gains `generate`, `answer` and `judge`. Tests: `test_construct` Brain cases (incl. a re-offer reusing cached content after the allowance is spent; `Reobserve` discarding it), `test_answer_scores` (ADR-0017's three cases: "I don't know what through means" not a success; a low-confidence spoken "through" `unavailable`; a low-confidence spoken quiz answer writes no encounter), `test_quiz_answerability`, `test_card_checks` and `test_anki_single_path` with Brain-owned content, `test_prompt_injection` (D20 structural).
 - **M7d items, teaching, recall, records** (needs M7c). Migration 7 (`item_status_events` with its backfill, `decision_records`), `test_migration_7` (schema equals fresh, rows kept, backfill of acknowledged cards); from this commit the owner's schema-6 `data/leafi.db` refuses to open until the owner runs `leafi backup` and `leafi migrate` (6 → 7) with every Leafi process stopped (an owner step, never run unasked; AGENTS.md); household `day`; the fold, `apply` and every writer; `observe_cards`; `anki._update_status` removed; `leafi items ignore|unignore`; ranking (O5, O6) and **`World.facts()` populating `new_item_candidates` and `recall_due`** (R11); the **`teach_items` and `recall_items` handlers**; the learner settings `mastery.mode` (`retrievals` | `anki`), `mastery.min_retrievals` (6, 1–20), `mastery.min_days` (3, 1–14) added to `harness/settings.SPEC` with their ranges and to the settings page; `apply_records`; `extract_notes`; notes ageing out and their deletion (D18). Tests: `test_item_status` (the hand-run above, each rule, empty history), `test_mastery`, `test_recall_schedule`, `test_forget` additions, `test_extract_notes` (unrendered id dropped, guests skipped, runs after `stop`, after `time_up_session` and with the session budget spent), and a **harness test** in which a real session (mock Brain, scripted inputs) reads a page, is offered `teach_items` for a ranked new item, completes it, and is offered `recall_items` the next household day (synthetic `Facts` would hide a disconnected feature, R11).
 - **M7e evaluation and cleanup** (needs M7d). The arm report; the replay set's writer, pruning and replay script (D19) with ADR-0018 §4.3 and `security.md` §4.3 amended in the same commit; `test_replay_set` (guests write none; a row citing A refused once A is marked forgetting, also when built by B's session before the mark; `forget --learner A` removes B's rows citing A; replay under `cloud.text` off withholds the words; `forget --brain-records` deleting only the Brain's records); the bridge removed, `coach.py`'s helpers moved and `coach.py` deleted (D5); Ollama on the port; M6's left-overs (`test_settings_reload` as a whole-session test; the `cache/voice-diag.wav` replay with `interrupt=never`, hardware-marked); docs (`code-locator.md`, `testing.md`, `config.md`). Then, owner present: the real-Claude text session (`ANTHROPIC_API_KEY`) and D20's measured checks.
