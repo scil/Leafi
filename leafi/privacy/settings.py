@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from leafi.core import learner_store
 from leafi.core.storage import Store, dumps, loads, now_iso
+from leafi.core.text import placeholder_reason
 
 KEYS: dict[str, object] = {"cloud.text": True, "privacy.media": "ask", "privacy.school": None}
 MEDIA = ("ask", "never")
@@ -109,6 +110,8 @@ def set_school(store: Store, learner_id: int, school: str | None) -> LearnerPriv
     name = school.strip()
     if not name:
         raise InvalidPrivacySetting("a school needs a name (or say no school)")
+    if (why := placeholder_reason(name)) is not None:
+        raise InvalidPrivacySetting(f"{name!r} is not a school's name: {why}")
     with store.transaction():
         hit = store.one("SELECT id, kind FROM household_terms WHERE term = ? COLLATE NOCASE", (name,))
         if hit is None:
@@ -134,6 +137,8 @@ def add_term(store: Store, term: str, kind: str = "name") -> int:
     name = term.strip()
     if not name:
         raise InvalidPrivacySetting("a term needs some text")
+    if (why := placeholder_reason(name)) is not None:
+        raise InvalidPrivacySetting(f"{name!r} is not a term to protect: {why}")
     if kind not in TERM_KINDS:
         raise InvalidPrivacySetting(f"kind must be one of {', '.join(TERM_KINDS)}")
     with store.transaction():

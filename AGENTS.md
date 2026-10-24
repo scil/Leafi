@@ -18,7 +18,7 @@ Household AI agent: hardware-agnostic core (`leafi/`), book-study track (`leafi/
 - Tests: `.venv\Scripts\python -m pytest -q` (all green before commit). Hardware/model tests run only with `LEAFI_HW_TESTS=1`.
 - Habit mock run: `.venv\Scripts\python -m agent.main --mock --now brush_pm`; task editor and `.env` settings page: `python -m agent.webui` → 127.0.0.1:8770.
 - Study: `python -m leafi study --text --mock --book X --page-text <file> [--learner NAME]` needs no hardware and speaks nowhere; `python -m leafi doctor` lists models to download; `python -m leafi devices` prints the Hub.
-- `data/leafi.db` below schema 6 refuses to open: `python -m leafi backup`, then `python -m leafi migrate` (`--learner "<name>"` only from schema 4) with every Leafi process stopped (ADR-0018 §7.2). Never run `migrate` on the owner's file unasked.
+- `data/leafi.db` below schema 6 refuses to open: `python -m leafi backup`, then `python -m leafi migrate` (only from schema 4: add `--learner` and the child's real first name in quotes; a placeholder such as `<name>` is refused) with every Leafi process stopped (ADR-0018 §7.2). Never run `migrate` on the owner's file unasked.
 - Containers: `docker compose up -d`; host go2rtc: `scripts\win\go2rtc-host.bat`. MQTT host port is 18830, Frigate 15000, host go2rtc 2984 (Windows reserves the usual ports).
 
 ## Verification

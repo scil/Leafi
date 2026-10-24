@@ -98,7 +98,7 @@ def sqlite_line(settings: Settings) -> str:
             try:
                 mode = c.execute("PRAGMA journal_mode").fetchone()[0]
                 n = c.execute("PRAGMA user_version").fetchone()[0]
-                learner = " --learner \"<name>\"" if n < 5 else ""
+                learner = " --learner and the child's first name in quotes" if n < 5 else ""
                 schema = f" schema={n}" + ("" if n == storage.SCHEMA_VERSION else
                                            f" (run python -m leafi migrate{learner}, ADR-0018 §7.2)")
             finally:
@@ -145,8 +145,10 @@ def schools_line(settings: Settings) -> str:
     missing = [n for n, s in rows if json.loads(s or "{}").get("privacy.school") is None]
     if not missing:
         return f"{'schools':<22}{'leafi.db':<16}{'ok':<16}{len(rows)} learner(s) answered; python -m leafi privacy schools"
-    return (f"{'schools':<22}{'leafi.db':<16}{'not answered':<16}{', '.join(missing)}: set with python -m leafi "
-            "privacy learner \"<name>\" school \"<school>\"|none --yes")
+    first = missing[0]
+    return (f"{'schools':<22}{'leafi.db':<16}{'not answered':<16}{', '.join(missing)}: set each with e.g. "
+            f"python -m leafi privacy learner \"{first}\" school, then the school's name in quotes (or none), "
+            "then --yes")
 
 
 def wordlist_line(settings: Settings) -> str:

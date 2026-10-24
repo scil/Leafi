@@ -133,3 +133,23 @@ def typed_utterance(text: str, source: str = "console") -> Utterance:
     """A typed Utterance: words without timestamps or confidence, no audio (B11)."""
     return Utterance(text=text, words=[Word(w) for w in words(text)], typed=True,
                      line_end=ends_sentence(text), source=source)
+
+
+_PLACEHOLDER_MARKS = re.compile(r"[<>{}\[\]]")
+_PLACEHOLDER_TOKEN = re.compile(r"^[A-Z][A-Z0-9_]*_[A-Z0-9_]+$")  # YOUR_NAME, CHILD_NAME
+_PLACEHOLDER_WORDS = {"name", "your name", "first name", "the child's name", "child's name", "child name",
+                      "learner name", "school", "school name", "the school's name", "名字", "孩子的名字", "学校",
+                      "学校名"}  # not "Learner": `learner_store.ensure_learner` enrols one by that name
+
+
+def placeholder_reason(value: str) -> str | None:
+    """Why `value` looks like a placeholder copied from an instruction rather than a real name, or None (a migrate
+    hint's `<name>` was once stored as a learner's name, 2026-10-23)."""
+    v = " ".join(value.split())
+    if _PLACEHOLDER_MARKS.search(v):
+        return "it contains < > { } [ ], which instructions use around a placeholder"
+    if _PLACEHOLDER_TOKEN.match(v):
+        return "it looks like a placeholder token (CAPITALS_WITH_UNDERSCORES)"
+    if v.casefold().strip("\"'“”‘’ ") in _PLACEHOLDER_WORDS:
+        return "it is the instruction's word, not a real name"
+    return None

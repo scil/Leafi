@@ -12,6 +12,7 @@ import sqlite3
 from collections.abc import Iterable
 
 from leafi.core.storage import Store, dumps, loads, now_iso
+from leafi.core.text import placeholder_reason
 
 DIRECT = frozenset({"reading_sessions", "knowledge_items", "difficulties", "retrieval_events", "learner_notes",
                     "book_notes", "review_answers", "anki_outbox", "consents", "encounters"})
@@ -83,6 +84,9 @@ def create(store: Store, display_name: str, *, kind: str = "learner", birth_year
     name = display_name.strip()
     if not name:
         raise ValueError("a learner needs a name")
+    why = placeholder_reason(name)
+    if why is not None:
+        raise ValueError(f"{name!r} is not a learner's name: {why}; type the child's own first name")
     return store.insert("learners", kind=kind, display_name=name, birth_year=birth_year, school_year=school_year,
                         settings=dumps(settings or {}), created_at=now_iso())
 
@@ -118,7 +122,7 @@ def choose(store: Store, name: str | None, *, enrol: bool = True) -> tuple[int, 
     if len(rows) == 1:
         return rows[0]["id"], False
     if not rows:
-        raise LearnerChoice("no learner yet: start with --learner \"<name>\"")
+        raise LearnerChoice("no learner yet: start with --learner followed by the child's first name in quotes")
     raise LearnerChoice(f"say who is reading with --learner; enrolled: {_names(rows)}")
 
 

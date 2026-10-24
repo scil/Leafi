@@ -24,6 +24,8 @@ from typing import IO, Any
 
 import portalocker
 
+from .text import placeholder_reason
+
 log = logging.getLogger("leafi.storage")
 
 JOURNAL_SIZE_LIMIT = 32 * 1024 * 1024  # a -wal file past this is truncated after a checkpoint (ADR-0019 §4)
@@ -492,9 +494,10 @@ def wal_safe(version: tuple[int, int, int]) -> bool:
 
 
 def _migrate_hint(db: Path, version: int) -> str:
-    learner = " --learner \"<name of the child who has been reading>\"" if version < 5 else ""
+    command = ("`python -m leafi migrate --learner` followed by the first name of the child who has been reading, "
+               "in quotes," if version < 5 else "`python -m leafi migrate`")
     return (f"{db.name} is at schema {version}, this Leafi needs {SCHEMA_VERSION}: run `python -m leafi backup`, "
-            f"then `python -m leafi migrate{learner}` with every other Leafi process closed (ADR-0018 §7.2)")
+            f"then {command} with every other Leafi process closed (ADR-0018 §7.2)")
 
 
 class Store:
@@ -785,6 +788,8 @@ def migrate_file(path: Path | str, learner_name: str | None = None, *, backup_di
             raise SchemaError(f"{path.name} is empty; Leafi creates it at schema {SCHEMA_VERSION} on first open")
         if version < 5 and not name:
             raise ValueError("the first learner needs a name")
+        if version < 5 and (why := placeholder_reason(name)) is not None:
+            raise ValueError(f"{name!r} is not a learner's name: {why}; type the child's own first name")
         stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
         dest = (backup_dir or path.parent / "backups") / f"leafi-v{version}-{stamp}.db"
         n = 1

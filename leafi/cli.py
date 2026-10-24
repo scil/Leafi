@@ -309,7 +309,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
             print(f"{path} does not exist; Leafi creates it at schema {storage.SCHEMA_VERSION} on first open")
             return 0
         if not args.learner and storage.file_version(path) < 5:
-            print("migrate needs --learner \"<name>\": the child whose sessions are already recorded")
+            print("migrate needs --learner followed by the first name of the child whose sessions are already "
+                  "recorded, in quotes")
             return 2
         from leafi.core.config import legacy_redact_terms
 
@@ -453,10 +454,14 @@ def cmd_setup(args: argparse.Namespace) -> int:
         missing = privacy.missing_school(store)
         n_terms = len(privacy.terms(store))
     print("1. every learner's school (a learner without one keeps their own words off the cloud):")
-    print("   " + (", ".join(n for _, n in missing) + ": python -m leafi privacy learner \"<name>\" school "
-                   "\"<school>\"|none --yes" if missing else "all answered (python -m leafi privacy schools)"))
-    print(f"2. other names to protect (relatives, friends, places): {n_terms} now; "
-          "python -m leafi privacy terms add \"<term>\" [--kind name|school|other] --yes")
+    if missing:
+        for _, n in missing:
+            print(f"   python -m leafi privacy learner \"{n}\" school, then the school's name in quotes "
+                  "(or none), then --yes")
+    else:
+        print("   all answered (python -m leafi privacy schools)")
+    print(f"2. other names to protect (relatives, friends, places): {n_terms} now; add one with "
+          "python -m leafi privacy terms add, then the name in quotes, then --kind name, school or other, then --yes")
     print(f"3. Anki: {NOTICE}")
     return 0
 

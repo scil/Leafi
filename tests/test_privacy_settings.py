@@ -213,7 +213,41 @@ def test_setup_prints_the_steps_and_the_anki_notice(settings, monkeypatch, capsy
         learner_store.create(store, "Mia")
     assert cli.main(["setup"]) == 0
     out = capsys.readouterr().out
-    assert "Mia: python -m leafi privacy learner" in out and NOTICE in out
+    assert 'python -m leafi privacy learner "Mia" school' in out and NOTICE in out and "<" not in out
+
+
+@pytest.mark.parametrize("value", ["<孩子的名字>", "<name>", "{name}", "[school]", "YOUR_NAME", "name",
+                                   "孩子的名字", "Your Name"])
+def test_placeholder_shaped_names_schools_and_terms_are_refused(store, value):
+    with pytest.raises(ValueError, match="type the child's own first name"):
+        learner_store.create(store, value)
+    mia = learner_store.create(store, "Mia")
+    with pytest.raises(privacy.InvalidPrivacySetting, match="not a school"):
+        privacy.set_school(store, mia, value)
+    with pytest.raises(privacy.InvalidPrivacySetting, match="not a term"):
+        privacy.add_term(store, value)
+
+
+@pytest.mark.parametrize("value", ["Rocco", "Anne-Marie", "O'Brien", "小明", "James McKinney Elementary School",
+                                   "Name Ng"])
+def test_real_names_pass_the_placeholder_check(value):
+    from leafi.core.text import placeholder_reason
+
+    assert placeholder_reason(value) is None
+
+
+def test_migrate_refuses_a_placeholder_as_the_first_learner(tmp_path):
+    from leafi.core import storage
+    from tests.test_migration_5 import _version, v4_file
+
+    path = tmp_path / "leafi.db"
+    v4_file(path)
+    with pytest.raises(ValueError, match="not a learner's name"):
+        storage.migrate_file(path, "<孩子的名字>")
+    assert _version(path) == 4  # refused before the backup and before any step
+    assert not (tmp_path / "backups").exists()
+    hint = storage._migrate_hint(path, 4)
+    assert "<" not in hint and "first name of the child" in hint
 
 
 # ---------------------------------------------------------------- versions
