@@ -18,7 +18,8 @@ ALL = Facts(first_boundary=True, anki_reachable=True, anki_due=2, has_book=True,
 def test_built_in_order(tmp_path):
     s = make_session(tmp_path, facts=ALL, cycle=True)
     kinds = [sp.kind for sp in policy.default_chain(s, allowed(s))]
-    assert kinds == ["review_anki", "recall_items", "practise_errors", "add_cards", "read_listen", "end"]
+    # `recall_items` joins once its handler lands (M7d): the menu offers only kinds with a handler (M7 design S6)
+    assert kinds == ["review_anki", "practise_errors", "add_cards", "read_listen", "end"]
     assert policy.policy_version(policy.BUILT_IN) == policy.policy_version(list(policy.BUILT_IN))
 
 

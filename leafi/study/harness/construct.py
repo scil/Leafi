@@ -90,11 +90,9 @@ def construct(s: Session, spec: Spec, menu: set[str] | None = None) -> Activity 
     owner = s.settings[f"policy.content.{spec.kind}"]
     content = None
     if owner == "brain":
-        if s.generate is None:
-            return Rejected("not available now")
-        content = spec.content  # M7: validated by the kind's schema, else one `generate` call
-        if content is None:
-            return Rejected("not available now")
+        # Until M7c's validated generation (design D14) a Brain-owned kind is never built from unvalidated
+        # content, whatever a spec carries (M7 design S6).
+        return Rejected("not available now")
     if _has_url(sel) or _has_url(content):
         return Rejected("no URLs")
     return Activity(spec.kind, sel, spec.source, content=content, content_owner=owner)

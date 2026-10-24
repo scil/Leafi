@@ -22,7 +22,8 @@ def test_after_the_soft_deadline_only_end(tmp_path):
 def test_reading_review_and_recall_need_their_facts(tmp_path):
     s = make_session(tmp_path, facts=Facts(has_book=True, unread_current=True, anki_reachable=True, anki_due=3,
                                            recall_due=(1,)))
-    assert allowed(s) == {"end", "break", "read_listen", "read_aloud", "review_anki", "recall_items"}
+    # `recall_items` has its facts but no handler until M7d, so it is not offered yet (M7 design S6)
+    assert allowed(s) == {"end", "break", "read_listen", "read_aloud", "review_anki"}
     s2 = make_session(tmp_path / "b", facts=Facts(anki_reachable=True, anki_due=3, reviews_goal_met=True))
     assert "review_anki" not in allowed(s2)
 

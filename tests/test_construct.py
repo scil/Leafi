@@ -43,5 +43,7 @@ def test_a_kind_outside_the_menu_and_a_url_are_rejected(tmp_path):
     assert construct(s, Spec("practise_errors", {"candidate_ids": [11]})) == Rejected("not allowed now")  # no cycle
     s2 = make_session(tmp_path / "b", facts=F, values={"policy.content.add_cards": "brain"}, cycle=True)
     s2.generate = object()
+    # M7a: a Brain-owned kind is refused until M7c validates its generated content (design S6), so unvalidated
+    # content — here a URL — never reaches an activity.
     assert construct(s2, Spec("add_cards", {"item_ids": [7]}, content={"back": "see https://x.example"})) == \
-        Rejected("no URLs")
+        Rejected("not available now")

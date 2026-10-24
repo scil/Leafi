@@ -35,7 +35,9 @@ def allowed(s: Session) -> set[str]:
             m.add("add_cards")
         if s.ledger.boundary_activities(cyc) >= s.settings["limits.activities_per_cycle"]:
             m &= {"read_listen", "read_aloud", "end"}  # continuations do not count
-    return m
+    from leafi.study.harness.activities import KINDS  # lazy: activities imports the harness modules
+
+    return {k for k in m if k in KINDS}  # a kind is offered only once its handler exists (M7 design S6)
 
 
 def other_allowed(s: Session, m: set[str], listed: set[str]) -> list[Spec]:
