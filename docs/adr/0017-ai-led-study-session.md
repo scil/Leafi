@@ -5,7 +5,7 @@ date: 2026-10-21
 revised: 2026-10-22 (v4: the independent codex and code-plan-review rounds on v3 and the owner's answers — session length and end timing configurable for every case, evaluation randomised per session, mastery producers, quiz answers under decision 6, routing tables per household; v3: configurable default policy with per-step code/Brain content, exploration, configurable mastery, parent features deferred; earlier rounds, see Reviews)
 supersedes: 0013 (session rules only, see §8)
 amends: 0003, 0013 (Difficulties and the first-words prompt: §8.6, §6.1)
-revised-after-acceptance: 2026-10-22 (pointers into ADR-0013 v2 after its round-1 and round-2 reviews: §3.4 `item_said`, §6.1, §8, §8.1, §8.2, §8.5; §6.2's frequency source CYP-LEX instead of SUBTLEX-UK, owner decision)
+revised-after-acceptance: 2026-10-22 (pointers into ADR-0013 v2 after its round-1 and round-2 reviews: §3.4 `item_said`, §6.1, §8, §8.1, §8.2, §8.5; §6.2's frequency source CYP-LEX instead of SUBTLEX-UK, owner decision); 2026-10-24 (as built in M7a, `docs/plans/active/2026-10-23-m7-brain-design.md`: §5.1's `decide` routes `fast → standard` at every difficulty until M10 measures it, owner decision O1 of 2026-10-23; §5's budget is charged per **reserved** transmission, after the reservation commits, which is never less than what was sent (design D7); §5.2's `PER_CALL_S` is per purpose and tier for `decide` (design D8); §9's replay set lives in `data/leafi.db` (`decision_records`), not `data/evals/decisions/`, so the forget fence covers it (design D19))
 ---
 
 # The Brain leads the study session; the study harness executes, measures and limits it

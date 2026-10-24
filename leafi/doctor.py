@@ -48,8 +48,11 @@ PURPOSE = {
     "sqlite": "the database of sessions, miscues and progress (data/leafi.db); serves the owner and every session",
     "names": ("finds people, schools and places nobody listed in a learner's own words before they reach a cloud "
               "service (ADR-0018 §3); without its model only listed names are replaced; serves each child's privacy"),
-    "schools": ("every learner's school name or \"no school\", replaced before any text leaves (ADR-0018 §3); a "
-                "learner without an answer keeps their own words off the cloud; serves each child's privacy"),
+    "schools": ("every learner's school name or \"no school\", replaced before any text leaves (ADR-0018 §3); "
+                "without an answer the school cannot be replaced unless the name detector finds it; serves each "
+                "child's privacy"),
+    "brain tiers": ("the study Brain's fast, standard and deep models, and a legacy key still standing in for a tier "
+                    "(M7 design D9); serves the AI-led session"),
     "wordlists": ("tells a misread real word (a candidate error to practise) from a garbled one (only observed); "
                   "later ranks new words by level (M7); serves the learner's error detection"),
 }
@@ -126,6 +129,19 @@ def names_line(settings: Settings) -> str:
             "python -m leafi doctor --download --only names")
 
 
+def brain_tiers_line(settings: Settings) -> str:
+    """The effective study Brain tiers and any legacy fallback in use (M7 design D9)."""
+    from leafi.core.config import LEGACY_TIER_KEYS, TIER_KEYS, tier_problems
+
+    names = {*TIER_KEYS.values(), *LEGACY_TIER_KEYS.values()}
+    given = {f.upper(): str(getattr(settings, f)) for f in settings.model_fields_set if f.upper() in names}
+    tiers = settings.brain_tiers()
+    shown = "; ".join(f"{t} {', '.join(e) or 'not configured'}" for t, e in tiers.items())
+    problems = tier_problems(given)
+    state = "check" if problems else "ok"
+    return f"{'brain tiers':<22}{'.env':<16}{state:<16}{shown}" + (f" — {'; '.join(problems)}" if problems else "")
+
+
 def schools_line(settings: Settings) -> str:
     """Learners without a school answer, whose school cannot be replaced by the lists (design D10; since
     2026-10-24 it no longer keeps their words local), read-only so it works on a file not yet migrated."""
@@ -177,6 +193,7 @@ def report(settings: Settings) -> str:
     add("sqlite", sqlite_line(settings))
     add("names", names_line(settings))
     add("schools", schools_line(settings))
+    add("brain tiers", brain_tiers_line(settings))
     add("wordlists", wordlist_line(settings))
     if settings.anki_url:
         from leafi.study.anki import NOTICE

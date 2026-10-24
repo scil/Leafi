@@ -15,8 +15,12 @@ CHANGED = {"NOTIFY_WITH_SNAPSHOT": "true", "BOOK_LOOKUP": "openlibrary", "AUDIO_
            # ADR-0018 §5 † keys
            "CLOUD_PARENT_TEXT": "false", "PRIVACY_TTS_LEARNER_LINES": "cloud", "TTS_EDGE_MODE": "library",
            "PRIVACY_NAME_DETECTOR": "false", "LOCAL_MODELS": "ollama:qwen3:8b",
-           "MAGPIE_URL": "http://magpie.example.com"}
-CAN_BE_EMPTY = ("TELEGRAM_CHAT_ID", "OLLAMA_URL", "STUDY_BRAIN_MODEL", "LOCAL_MODELS", "MAGPIE_URL")
+           "MAGPIE_URL": "http://magpie.example.com",
+           # M7 design D9: the Brain's tiers and routes
+           "BRAIN_TIER_FAST": "claude:claude-haiku-4-5", "BRAIN_TIER_STANDARD": "claude:claude-sonnet-5",
+           "BRAIN_TIER_DEEP": "claude:claude-opus-4-8", "BRAIN_ROUTES": "x"}  # a JSON value needs quoting in .env; the confirmation rule is the same
+CAN_BE_EMPTY = ("TELEGRAM_CHAT_ID", "OLLAMA_URL", "STUDY_BRAIN_MODEL", "LOCAL_MODELS", "MAGPIE_URL",
+                "BRAIN_TIER_FAST", "BRAIN_TIER_STANDARD", "BRAIN_TIER_DEEP", "BRAIN_ROUTES")
 GATED = [*envprotect.GATE_FLOOR, ("PRON_AUTO_JUDGE", "yes"), ("PRON_AUTO_JUDGE", "1"), ("PRON_AUTO_JUDGE", "on")]
 
 

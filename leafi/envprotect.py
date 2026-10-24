@@ -15,11 +15,15 @@ PRIVACY_FLOOR = frozenset({"NOTIFY_WITH_SNAPSHOT", "BOOK_LOOKUP", "AUDIO_KEEP_CL
                            "OLLAMA_URL",  # the vision judge posts camera frames there: off the LAN = images leave
                            "TELEGRAM_CHAT_ID",  # where NOTIFY_WITH_SNAPSHOT frames and alerts are delivered
                            "CLOUD_PARENT_TEXT", "PRIVACY_TTS_LEARNER_LINES", "TTS_EDGE_MODE",
-                           "PRIVACY_NAME_DETECTOR", "LOCAL_MODELS", "MAGPIE_URL"})
+                           "PRIVACY_NAME_DETECTOR", "LOCAL_MODELS", "MAGPIE_URL",
+                           # M7 design D9: a tier or route change moves learner text between backends
+                           "BRAIN_TIER_FAST", "BRAIN_TIER_STANDARD", "BRAIN_TIER_DEEP", "BRAIN_ROUTES"})
 
 # ADR-0011 / ADR-0003 release gates: (key, a value that must be refused); "*" = any non-empty value
 GATE_FLOOR = (("PRON_AUTO_JUDGE", "true"), ("ASR_HOTWORDS", "lexicon"), ("OCR_SNAP", "auto"),
               ("ASR_BACKEND", "whisper"), ("OCR_BACKEND", "qwen_vl"), ("BRAIN_BACKEND", "ollama"),
-              ("OCR_SECOND_OPINION", "*"), ("BRAIN_LOCAL_MODEL", "*"))
+              ("OCR_SECOND_OPINION", "*"), ("BRAIN_LOCAL_MODEL", "*"),
+              # an Ollama entry in any tier waits for the same measurement as BRAIN_BACKEND=ollama (M7 design D9)
+              ("BRAIN_TIER_FAST", "ollama:*"), ("BRAIN_TIER_STANDARD", "ollama:*"), ("BRAIN_TIER_DEEP", "ollama:*"))
 
 CREDENTIAL_NAME = r"(?i)(TOKEN|PASSW|SECRET|KEY|CREDENTIAL|PRIVATE)"

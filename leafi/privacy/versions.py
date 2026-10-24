@@ -18,12 +18,15 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from leafi.core.config import process_environment
+from leafi.core.config import LEGACY_TIER_KEYS, TIER_KEYS, effective_tiers, process_environment
 from leafi.core.storage import loads
 
 # The household keys whose change must stop requests prepared before it (design D12).
 POLICY_KEYS = ("CLOUD_PARENT_TEXT", "PRIVACY_TTS_LEARNER_LINES", "TTS_EDGE_MODE", "PRIVACY_NAME_DETECTOR",
-               "LOCAL_MODELS", "MAGPIE_URL", "OLLAMA_URL", "PRIVACY_OPS_LOG_DAYS", "HOUSEHOLD_TZ")
+               "LOCAL_MODELS", "MAGPIE_URL", "OLLAMA_URL", "PRIVACY_OPS_LOG_DAYS", "HOUSEHOLD_TZ", "BRAIN_ROUTES")
+# The Brain tiers enter the fingerprint by their EFFECTIVE value (M7 design D9): writing the tier keys while
+# commenting out an equal legacy key changes nothing for a running process; changing what is routed does.
+TIER_READ_KEYS = (*TIER_KEYS.values(), *LEGACY_TIER_KEYS.values())
 
 
 @dataclass(frozen=True)
@@ -85,19 +88,22 @@ def policy_values(env_file: Path | None = Path(".env"), environ: Mapping[str, st
     from dotenv import dotenv_values
 
     environ = process_environment() if environ is None else environ
+    read = (*POLICY_KEYS, *TIER_READ_KEYS)
     values: dict[str, str] = {}
     if env_file is not None and Path(env_file).exists():
         for k, v in dotenv_values(env_file, encoding="utf-8").items():
-            if k.upper() in POLICY_KEYS and v is not None:
+            if k.upper() in read and v is not None:
                 values[k.upper()] = v
     for k, v in environ.items():
-        if k.upper() in POLICY_KEYS:
+        if k.upper() in read:
             values[k.upper()] = v
     return values
 
 
 def fingerprint(secret: bytes, values: Mapping[str, str]) -> str:
-    body = json.dumps({k: values.get(k) for k in POLICY_KEYS}, sort_keys=True, separators=(",", ":"))
+    tiers = effective_tiers({k: v for k, v in values.items() if k in TIER_READ_KEYS})
+    body = json.dumps({**{k: values.get(k) for k in POLICY_KEYS}, "BRAIN_TIERS": tiers}, sort_keys=True,
+                      separators=(",", ":"))
     return hmac.new(secret, b"policy:" + body.encode(), hashlib.sha256).hexdigest()
 
 

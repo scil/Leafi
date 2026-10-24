@@ -87,6 +87,8 @@ def typed(k: Key, text: str) -> Any:
 def gated(k: Key, text: str) -> bool:
     if k.gate_nonempty and text != "":
         return True
+    if k.gate_prefixes and any(item.strip().startswith(k.gate_prefixes) for item in text.split(",")):
+        return True
     if not k.gate_values:
         return False
     if k.type == "list":

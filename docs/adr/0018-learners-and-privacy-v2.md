@@ -171,7 +171,7 @@ One table, owned by `security.md` after acceptance; changes to keys marked † n
 | `recognition.voice`, `recognition.face` | learner | on (face counts only when measured) | on / off |
 | `guest.keep_days` | household | 7 | 0–30 (0 = delete at wrap) |
 | `privacy.ops_log_days` | household | 30 | 1–365 |
-| `LOCAL_MODELS` †, `BRAIN_TIERS` †, `BRAIN_ROUTES` †, `MAGPIE_URL` † | household | — | §2, ADR-0017 §5.1 |
+| `LOCAL_MODELS` †, `BRAIN_TIER_FAST` †, `BRAIN_TIER_STANDARD` †, `BRAIN_TIER_DEEP` † (amended 2026-10-24 from one `BRAIN_TIERS` key, M7 design D9), `BRAIN_ROUTES` †, `MAGPIE_URL` † | household | — | §2, ADR-0017 §5.1 |
 | `HOUSEHOLD_TZ` | household | from `tzlocal` | an IANA name |
 
 Session length and end timing for learners, guests and unknown ages are ADR-0017 §6.3 settings.

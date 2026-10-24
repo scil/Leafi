@@ -50,6 +50,7 @@ class Key:
     privacy: bool = False
     gate_values: tuple[str, ...] = ()
     gate_nonempty: bool = False
+    gate_prefixes: tuple[str, ...] = ()  # gated when any comma-separated entry starts with one (M7 design D9)
     validator: Validator | None = None
     example: str | None = None
     example_commented: bool = False
@@ -129,8 +130,10 @@ def _parse(data: dict) -> Manifest:
                   and d.get("absent") in (None, *EMPTY_RULES), f"{where}: bad default for {r}")
             default[r] = ReaderDefault(d["value"], d["empty"], d.get("absent"))
         gate = spec.get("gate") or {}
-        _need(set(gate) <= {"values", "nonempty"}, f"{where}: unknown gate field")
+        _need(set(gate) <= {"values", "nonempty", "prefixes"}, f"{where}: unknown gate field")
         gvalues = tuple(gate.get("values") or ())
+        gprefixes = tuple(gate.get("prefixes") or ())
+        _need(all(isinstance(p, str) and p for p in gprefixes), f"{where}: gate prefixes must be non-empty strings")
         if t in ("enum", "list"):
             _need(set(gvalues) <= set(options), f"{where}: gate value outside options")
         v = spec.get("validator")
@@ -155,7 +158,8 @@ def _parse(data: dict) -> Manifest:
             name=name, group=spec["group"], type=t, readers=rs, help=help_,
             options=tuple(options) if options else None, domain=spec.get("domain"), default=default,
             secret=bool(spec.get("secret")) or t == "secret", privacy=bool(spec.get("privacy")),
-            gate_values=gvalues, gate_nonempty=bool(gate.get("nonempty")), validator=validator,
+            gate_values=gvalues, gate_nonempty=bool(gate.get("nonempty")), gate_prefixes=gprefixes,
+            validator=validator,
             example=ex["value"] if ex else None, example_commented=bool(ex and ex.get("commented")),
             notes=tuple(spec.get("notes") or ()), notes_after=tuple(spec.get("notes_after") or ()))
         _need(all("\n" not in n for n in keys[name].notes + keys[name].notes_after), f"{where}: a note has a newline")

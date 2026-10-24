@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     brain_model_cheap: str = "claude-haiku-5-5"
     brain_deadline_s: float = 12.0
     brain_local_model: str = ""
+    # M7 design D9: the study Brain's tiers, each a comma-separated `backend:model` list; read through
+    # `brain_tiers()` / `effective_tiers()`, which apply the legacy fallback (STUDY_BRAIN_MODEL, BRAIN_MODEL_CHEAP)
+    brain_tier_fast: str = "claude:claude-haiku-5-5"
+    brain_tier_standard: str = "claude:claude-sonnet-5-5"
+    brain_tier_deep: str = "claude:claude-opus-5-5"
+    brain_routes: str = ""  # JSON override of single routing cells; empty = ADR-0017 §5.1 with O1's change
     ollama_url: str = "http://127.0.0.1:11434"
     anthropic_api_key: str = ""
     book_lookup: str = "off"
@@ -146,6 +152,52 @@ class Settings(BaseSettings):
 
     def local_model_list(self) -> list[str]:
         return [t.strip() for t in self.local_models.split(",") if t.strip()]
+
+    def brain_tiers(self) -> dict[str, tuple[str, ...]]:
+        """The effective tiers: each tier key if it is set (in `.env` or the environment), else its legacy key if
+        that is set, else the default (M7 design D9). The one fallback, shared with the policy fingerprint."""
+        names = {*TIER_KEYS.values(), *LEGACY_TIER_KEYS.values()}
+        given = {f.upper(): str(getattr(self, f)) for f in self.model_fields_set if f.upper() in names}
+        return effective_tiers(given)
+
+
+TIERS = ("fast", "standard", "deep")
+TIER_KEYS = {"fast": "BRAIN_TIER_FAST", "standard": "BRAIN_TIER_STANDARD", "deep": "BRAIN_TIER_DEEP"}
+LEGACY_TIER_KEYS = {"deep": "STUDY_BRAIN_MODEL", "fast": "BRAIN_MODEL_CHEAP"}  # bare Claude model ids
+DEFAULT_TIERS = {"fast": "claude:claude-haiku-5-5", "standard": "claude:claude-sonnet-5-5",
+                 "deep": "claude:claude-opus-5-5"}
+
+
+def effective_tiers(values: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    """`values` holds only the keys actually given (upper-case names). A tier key decides when given; else its
+    legacy key, which named a bare Claude model (`m` → `claude:m`; anything else leaves the tier unconfigured,
+    and `tier_problems` says why); else the default. An empty value means the tier is not configured."""
+    out: dict[str, tuple[str, ...]] = {}
+    for tier, key in TIER_KEYS.items():
+        legacy = LEGACY_TIER_KEYS.get(tier)
+        if key in values:
+            raw = values[key]
+        elif legacy in values:
+            model = values[legacy].strip()
+            raw = f"claude:{model}" if model.startswith("claude-") else ""
+        else:
+            raw = DEFAULT_TIERS[tier]
+        out[tier] = tuple(e.strip() for e in raw.split(",") if e.strip())
+    return out
+
+
+def tier_problems(values: Mapping[str, str]) -> list[str]:
+    """What `doctor` reports about the tier settings: a legacy fallback in use, or one that cannot be used."""
+    out = []
+    for tier, key in TIER_KEYS.items():
+        legacy = LEGACY_TIER_KEYS.get(tier)
+        if key not in values and legacy in values:
+            model = values[legacy].strip()
+            if model.startswith("claude-"):
+                out.append(f"{key} not set: {legacy}={model} is used (set {key} to retire it)")
+            else:
+                out.append(f"{key} not set and {legacy}={model} is not a Claude model: the tier is not configured")
+    return out
 
 
 def legacy_redact_terms(env_file: Path | None = Path(".env")) -> list[str]:
