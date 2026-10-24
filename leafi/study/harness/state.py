@@ -19,8 +19,10 @@ from leafi.study.harness.settings import LearnerSettings
 
 
 class Talk(Protocol):
-    async def say(self, text: str, *, provenance: Provenance = SYSTEM) -> None: ...  # M5 design D13
-    async def ask(self, owner, text: str, *, provenance: Provenance = SYSTEM) -> None: ...  # M7 D21: a prompt
+    async def say(self, text: str, *, provenance: Provenance = SYSTEM,
+                  epoch: tuple | None = None) -> None: ...  # M5 design D13; M7 D12: dropped under a newer epoch
+    async def ask(self, owner, text: str, *, provenance: Provenance = SYSTEM,
+                  epoch: tuple | None = None) -> None: ...  # M7 D21: a prompt
     async def listen(self, timeout_s: float | None, owner=..., *, accepts_page: bool = True
                      ) -> Utterance | None: ...
 

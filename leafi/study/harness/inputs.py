@@ -285,17 +285,23 @@ class Inputs:
     def lease_held(self) -> bool:
         return self.latch.terminal != "lease_lost"
 
-    async def say(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM) -> None:
+    async def say(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM,
+                  epoch: tuple | None = None) -> None:
         """`provenance` says where the text came from (M5 design D13): a learner's own words, page text, or Leafi's
         own phrase; the TTS service keeps a learner's words (and any line holding a protected name) off the
         cloud. Controls are read during playback; nothing is spoken after the lease is lost (Faces still show
         it). A plain line is no prompt (D21): outside a Brain wait it makes no prompt current, so a line typed
-        while it plays goes to the next listen, as in M6."""
+        while it plays goes to the next listen, as in M6. `epoch`: a Brain-derived line is dropped when the live
+        epoch is no longer the one it was made under (M7 design D12)."""
         if self._waiting == 0:
             self.present(None)
-        await self._speak(text, lang, slow=slow, provenance=provenance)
+        await self._speak(text, lang, slow=slow, provenance=provenance, epoch=epoch)
 
-    async def _speak(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM) -> None:
+    async def _speak(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM,
+                     epoch: tuple | None = None) -> None:
+        if epoch is not None and self.latch.epoch.key() != epoch:
+            log.info("a line made under an earlier epoch was dropped")
+            return
         if self.notice is not None:  # "mic lost", deferred from the Ear's reader to the main flow (D21)
             notice, self.notice = self.notice, None
             await self._speak(phrases.say(notice))

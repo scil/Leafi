@@ -93,6 +93,20 @@ async def test_an_ear_lost_at_a_boundary_is_absorbed_and_inside_an_activity_ends
     assert out == ["typed on the console", "mic_lost"]
 
 
+async def test_a_line_made_under_an_earlier_epoch_is_not_spoken(tmp_path):
+    """M7 design D12: a Brain-derived line carries the epoch it was made under."""
+    inputs = make(tmp_path, Stamped([]))
+
+    async def body(i, out):
+        made = i.latch.epoch.key()
+        await i.say("Shall we read on?", epoch=made)
+        i.latch.epoch.bump()  # e.g. a page turn while the Brain was thinking
+        await i.ask(("offer", 1, 1), "You read this page well.", epoch=made)
+        out.extend(d.text for d in i.hub.faces["f"].shown if d.kind == "say")
+
+    assert await run_with(inputs, body) == ["Shall we read on?"]
+
+
 def test_an_activity_takes_only_its_own_late_items(tmp_path):
     inputs = make(tmp_path, Stamped([]))
     inputs.late = [_Item("page", typed_utterance("/page 4"), ("offer", 1, 1)),

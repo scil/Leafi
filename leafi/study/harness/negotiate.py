@@ -156,7 +156,7 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         autonomy = s.autonomy
         if autonomy >= st["bands.announce"]:
             line, prov = announcement(prop, a)
-            await talk.say(line, provenance=prov)
+            await talk.say(line, provenance=prov, epoch=epoch)  # D12: never spoken under a newer epoch
             s.checkpoint()
             if s.take_skip():
                 _exclude(s, a.kind)
@@ -165,9 +165,9 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         owner = ("offer", s.latch.epoch.turn_id, b.offers)  # D21: the offer's lines and its answer, one prompt
         reason, prov = rationale_line(prop, a)
         if autonomy >= st["bands.argue"]:
-            await talk.ask(owner, reason, provenance=prov)
+            await talk.ask(owner, reason, provenance=prov, epoch=epoch)
         elif autonomy >= st["bands.ask"]:
-            await talk.ask(owner, reason, provenance=prov)
+            await talk.ask(owner, reason, provenance=prov, epoch=epoch)
             await talk.ask(owner, f"Shall we {describe(a)}? Or something else?")
         else:
             await talk.ask(owner, f"Would you like to {describe_choices(s, a, m, st['negotiation.choices'])}?")
