@@ -47,13 +47,19 @@ class LearnerPrivacy:
 
 
 def read(store: Store, learner_id: int) -> LearnerPrivacy:
-    row = store.one("SELECT kind, forgetting, settings FROM learners WHERE id=?", (learner_id,))
+    return from_row(learner_id, store.one("SELECT kind, forgetting, settings FROM learners WHERE id=?",
+                                          (learner_id,)))
+
+
+def from_row(learner_id: int, row) -> LearnerPrivacy:
+    """`row` holds (kind, forgetting, settings) by name or position, or is None for a missing learner."""
     if row is None:
         return LearnerPrivacy(learner_id, None, False, False, "never", None, 0)
-    values = loads(row["settings"], {})
-    guest = row["kind"] != "learner"
+    kind, forgetting, settings = row[0], row[1], row[2]
+    values = loads(settings, {})
+    guest = kind != "learner"
     return LearnerPrivacy(
-        learner_id, row["kind"], bool(row["forgetting"]),
+        learner_id, kind, bool(forgetting),
         cloud_text=False if guest else bool(values.get("cloud.text", KEYS["cloud.text"])),
         media="never" if guest else values.get("privacy.media", KEYS["privacy.media"]),
         school=values.get("privacy.school"), version=int(values.get(VERSION, 0)))

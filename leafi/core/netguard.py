@@ -94,18 +94,29 @@ def live_grants() -> list[Grant]:
 def grant(host: str, addresses: list[str] | frozenset[str], port: int | None, *, ttl_s: float,
           kind: str = "connect") -> Iterator[Grant]:
     """Open a grant for this context (and contexts copied from it while it lives); revoked on exit or at `ttl_s`."""
+    g, token = open_grant(host, addresses, port, ttl_s=ttl_s, kind=kind)
+    try:
+        yield g
+    finally:
+        leave(token)
+        revoke(g)
+
+
+def open_grant(host: str, addresses: list[str] | frozenset[str], port: int | None, *, ttl_s: float,
+               kind: str = "connect") -> tuple[Grant, contextvars.Token]:
+    """The parts of `grant` for a caller whose grant outlives the code that opened it (a response stream): it
+    leaves the context with `leave(token)` once connected, and revokes with `revoke(g)` when the stream ends."""
     g = Grant(host.lower(), frozenset(_norm(a) for a in addresses), port, time.monotonic() + ttl_s, kind)
     with _active_lock:
         _active[g.id] = g
     g._timer = threading.Timer(ttl_s, revoke, args=(g,))
     g._timer.daemon = True
     g._timer.start()
-    token = _current.set(_current.get() + (g.id,))
-    try:
-        yield g
-    finally:
-        _current.reset(token)
-        revoke(g)
+    return g, _current.set(_current.get() + (g.id,))
+
+
+def leave(token: contextvars.Token) -> None:
+    _current.reset(token)
 
 
 def revoke(g: Grant) -> None:
