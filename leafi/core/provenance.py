@@ -46,6 +46,8 @@ class Leaf:
 
     value: str
     prov: Provenance = SYSTEM
+    substitute: str | None = None  # what is sent instead when this leaf may not leave (D3: a heard word becomes
+    #                                its expected word and category); None: the leaf is dropped
 
 
 def of_output(sent: Iterable[Provenance]) -> Provenance:

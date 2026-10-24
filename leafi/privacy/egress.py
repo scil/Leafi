@@ -431,6 +431,24 @@ class Egress:
             self._finish(gone, "failed")
         return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping, tok.attempt_id)
 
+    def may_send(self, destination: str, model: str | None, text: Text) -> bool:
+        """Whether `prepare` would let this leaf go to `destination` for `model` (M7 design D3): the same gate,
+        made public, so a caller's per-leaf filter and egress cannot disagree. A local destination takes all."""
+        dest = self.registry.get(destination)
+        if dest is None:
+            return False
+        if dests.effective(dest, model, self.settings) != "cloud":
+            return True
+        sources = [s for s in text.sources if s != PARENT_SOURCE]
+        c = self._conn()
+        privacy = {i: privacy_settings.from_row(i, c.execute(
+            "SELECT kind, forgetting, settings FROM learners WHERE id=?", (i,)).fetchone()) for i in sources}
+        try:
+            _gate(text, privacy, self.settings)
+        except Refused:
+            return False
+        return True
+
     def contains_protected(self, text: str) -> bool:
         """Whether `text` holds a listed name (TTS routing, design D13): such a line is spoken locally."""
         c = self._conn()

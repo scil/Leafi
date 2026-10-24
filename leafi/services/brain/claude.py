@@ -25,13 +25,20 @@ PURPOSE = {Intent.EXPLAIN_WORD: "generate", Intent.EXPLAIN_SENTENCE: "generate",
 
 
 class ClaudeBrain:
-    def __init__(self, settings, client=None, egress=None) -> None:
+    """`run(BrainRequest)` is the v1 bridge (until M7e); `call(ModelRequest)` is the M7 port (design D5)."""
+
+    name = "claude"
+    locality_destination = DESTINATION
+    host = "api.anthropic.com"
+
+    def __init__(self, settings, client=None, egress=None, model: str | None = None) -> None:
         self.settings = settings
-        self.model = settings.study_brain_model
+        self.model = model or settings.study_brain_model
         self.deadline_s = float(settings.brain_deadline_s)
         self._key = settings.anthropic_api_key
         self._client = client
         self._egress = egress
+        self.needs_reset = False
 
     def egress(self):
         if self._egress is None:
@@ -96,8 +103,99 @@ class ClaudeBrain:
         return data
 
 
-def create(settings, client=None) -> ClaudeBrain:
-    return ClaudeBrain(settings, client)
+    # ---------------------------------------------------------------- the M7 port (design D3, D5, D6)
+    async def call(self, req):
+        """Filter, render, prepare through egress (with the model and the caller's budget), send through the
+        mediating client; every outcome is a `CallRecord` (a cancellation propagates)."""
+        import json
+        import time
+
+        from leafi.core.ports import CallRecord
+        from leafi.privacy.egress import TOKEN_HEADER, Outgoing, Refused, Text
+        from leafi.services.brain.render import AssistantTurnWithheld, filter_turns, messages_body
+
+        if not self._key:
+            return CallRecord("failed", model=req.model, detail="no ANTHROPIC_API_KEY")
+        e = self.egress()
+
+        def text(leaf):
+            return Text(leaf.value, leaf.prov.cls, leaf.prov.sources)
+
+        try:
+            turns, _held = filter_turns(req.turns, lambda leaf: e.may_send(DESTINATION, req.model, text(leaf)))
+        except AssistantTurnWithheld:
+            return CallRecord("refused", model=req.model, detail="an earlier turn may no longer leave")
+        body = messages_body(req, turns, text)
+        try:
+            prepared = e.prepare(DESTINATION, req.purpose, Outgoing(path="/v1/messages", json=body),
+                                 learner_id=req.learner_id, session_id=req.session_id, ttl_s=req.timeout_s + 1,
+                                 model=req.model, budget=req.budget)
+        except Refused as err:
+            return CallRecord("refused", model=req.model, detail=str(err)[:120])
+        req.attempt.sent, req.attempt.egress_attempt_id, req.attempt.model = prepared.json, prepared.attempt_id, \
+            req.model
+        started = time.monotonic()
+        import anthropic
+
+        try:
+            msg = await self._client_for(req.timeout_s).messages.create(
+                **prepared.json, extra_headers={TOKEN_HEADER: prepared.token_id})
+        except anthropic.PermissionDeniedError as err:
+            reason = _refusal(err)
+            outcome = "over_budget" if reason == "over budget" else "refused"
+            return self._record(outcome, req, prepared, started, detail=reason)
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as err:
+            return self._record("failed", req, prepared, started, detail=type(err).__name__)
+        usage = getattr(msg, "usage", None)
+        received = "".join(getattr(b, "text", "") for b in msg.content if getattr(b, "type", "") == "text")
+        rec = self._record("ok", req, prepared, started, received=received, usage=usage,
+                           stop_reason=getattr(msg, "stop_reason", None), model=getattr(msg, "model", req.model))
+        if rec.stop_reason in ("refusal", "max_tokens"):
+            rec.outcome, rec.detail = "invalid", ("refusal at ." if rec.stop_reason == "refusal" else "truncated at .")
+            return rec
+        try:
+            rec.value = json.loads(prepared.reverse(received))
+        except ValueError:
+            rec.outcome, rec.detail = "invalid", "type at ."
+        return rec
+
+    def _client_for(self, timeout_s: float):
+        """The SDK client on egress's mediating transport; its own timeout is a backstop behind the walk's."""
+        client = self._get_client()
+        return client.with_options(timeout=timeout_s + 1.0)
+
+    def _record(self, outcome, req, prepared, started, *, received=None, usage=None, stop_reason=None, model=None,
+                detail=""):
+        import time
+
+        from leafi.core.ports import CallRecord
+
+        row = self.egress()._conn().execute("SELECT transmitted_attempts FROM egress_log WHERE id=?",
+                                            (prepared.attempt_id,)).fetchone()
+        return CallRecord(
+            outcome, sent=prepared.json, received=received, model=model or req.model, provider="anthropic",
+            tokens_in=int(getattr(usage, "input_tokens", 0) or 0), tokens_out=int(getattr(usage, "output_tokens", 0)
+                                                                                  or 0),
+            tokens_cached=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+            latency_ms=int((time.monotonic() - started) * 1000), transmissions=int(row[0]) if row else 0,
+            stop_reason=stop_reason, detail=detail)
+
+    async def reset(self) -> None:
+        """After a cut call: a connection being opened when a cancel lands can leak from the pool (libraries §2)."""
+        client, self._client = self._client, None
+        if client is not None:
+            await client.close()
+
+
+def _refusal(err) -> str:
+    try:
+        return str(err.response.json().get("refused", ""))[:120]
+    except Exception:  # noqa: BLE001 - a 403 that is not egress's: just "refused"
+        return "refused"
+
+
+def create(settings, client=None, model: str | None = None) -> ClaudeBrain:
+    return ClaudeBrain(settings, client, model=model)
 
 
 def status(settings) -> tuple[str, str]:

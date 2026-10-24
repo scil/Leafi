@@ -48,5 +48,33 @@ class MockBrain:
         return validate(req.intent, data) if data is not None else None
 
 
+class MockModel:
+    """The M7 port's mock (design D5): replies by purpose (a value, or a callable of the request); records every
+    request; never leaves the process. Used by `--mock` sessions and the tests."""
+
+    locality_destination = "mock"
+    host = None
+
+    def __init__(self, replies: dict | None = None, name: str = "mock") -> None:
+        self.name, self.replies, self.requests = name, dict(replies or {}), []
+        self.needs_reset = False
+
+    async def call(self, req):
+        from leafi.core.ports import CallRecord
+
+        self.requests.append(req)
+        sent = {"model": req.model, "purpose": req.purpose,
+                "turns": [[leaf.value for s in t.sections for leaf in s.leaves] for t in req.turns]}
+        req.attempt.sent, req.attempt.model = sent, req.model
+        reply = self.replies.get(req.purpose)
+        value = reply(req) if callable(reply) else reply
+        if value is None:
+            return CallRecord("failed", sent=sent, model=req.model, detail="no scripted reply")
+        return CallRecord("ok", value=value, sent=sent, model=req.model, provider="mock", transmissions=1)
+
+    async def reset(self) -> None:
+        self.needs_reset = False
+
+
 def create(settings, reply=None, unavailable: bool = False) -> MockBrain:
     return MockBrain(reply, unavailable)
