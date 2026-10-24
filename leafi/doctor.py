@@ -174,8 +174,10 @@ def report(settings: Settings) -> str:
     add("names", names_line(settings))
     add("schools", schools_line(settings))
     add("wordlists", wordlist_line(settings))
-    if not settings.redact_list():
-        lines.append("WARNING: REDACT_TERMS is empty; set it with: python -m leafi setup --redact \"<name>,<school>\"")
+    if settings.anki_url:
+        from leafi.study.anki import NOTICE
+
+        lines.append(f"NOTE (Anki): {NOTICE}")
     if settings.pron_auto_judge:
         lines.append("NOTE: PRON_AUTO_JUDGE is on; it requires the evaluation threshold in ADR-0011.")
     return "\n".join(lines)

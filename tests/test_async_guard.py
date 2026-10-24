@@ -15,6 +15,6 @@ async def test_stale_brain_result_is_discarded_by_the_turn_guard():
             guard.update(3, 2)  # the learner skipped meanwhile
             return await super().run(req)
 
-    assert await coach.enrich(Slow(), coach.questions_request("The fox ran.", []), guard, 1.0) is None
+    assert await coach.enrich(Slow(), coach.questions_request("The fox ran."), guard, 1.0) is None
     guard2 = coach.AsyncGuard(7)
-    assert await coach.enrich(MockBrain(), coach.questions_request("The fox ran.", []), guard2, 1.0)
+    assert await coach.enrich(MockBrain(), coach.questions_request("The fox ran."), guard2, 1.0)

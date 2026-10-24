@@ -8,7 +8,7 @@ Three roots, one owner each:
 | `config/devices.yml` | `leafi/core/hub.py` | process start (`python -m leafi devices` prints the parsed result) | which devices exist and which capabilities each provides |
 | `config/tasks.yml` | `agent/tasks.py` (task editor UI) | mtime check on every read | habit tasks |
 
-`.env` is edited on the task editor's 设置 (.env) tab (`python -m agent.webui`) or by hand. The page and `python -m leafi setup --redact` write only through `leafi/core/envfile.py::update_env` (lock, backup to `data/env-backup/`, ACL kept) and only while the file is in canonical form: every line blank, a column-0 comment, or `KEY=value` with a bare `[A-Za-z0-9_./:@,+=%-]*` value, a single-quoted value without `'`, `\` or `${`, or (for a value with an apostrophe) a double-quoted value without `"`, `\` or `$`; an empty value followed by a comment is written `KEY=''  # …`. Design: `docs/plans/active/2026-10-21-env-settings-page.md`.
+`.env` is edited on the task editor's 设置 (.env) tab (`python -m agent.webui`) or by hand. The page and the CLI (`python -m leafi privacy terms import`, which removes the retired `REDACT_TERMS`) write only through `leafi/core/envfile.py::update_env` (lock, backup to `data/env-backup/`, ACL kept) and only while the file is in canonical form: every line blank, a column-0 comment, or `KEY=value` with a bare `[A-Za-z0-9_./:@,+=%-]*` value, a single-quoted value without `'`, `\` or `${`, or (for a value with an apostrophe) a double-quoted value without `"`, `\` or `$`; an empty value followed by a comment is written `KEY=''  # …`. Design: `docs/plans/active/2026-10-21-env-settings-page.md`.
 
 ## `config/devices.yml` (schema v1)
 

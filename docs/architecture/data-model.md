@@ -25,7 +25,7 @@ The rows below give each entity's meaning as of schema 4; schema 5 is these plus
 | `anki_outbox` | id, knowledge_item_id, op (`add`/`update`), state (`pending`/`sent`/`acked`/`failed`), attempts, last_error?, anki_note_id?, card_ids (json), last_acked_fields (json hash per field), attempted_fields (hashes of the first add attempt), updated_at | Local synchronisation outbox (ADR-0004 amendment). Before `add`, `findNotes "tag:leafi-id::<anki_item_key>"` dedupes a lost acknowledgement and takes `attempted_fields`, never the remote values, as the baseline; an `update` touches a field only when its remote value still equals `last_acked_fields`. |
 | `review_answers` | id, knowledge_item_id, card_id, ease (1 again / 3 good in v1, chosen by the learner), state (`pending`/`sent`/`acked`/`failed`), sent_at?, acked_at? | Written `pending`, set `sent` immediately before `answerCards`, `acked` on response; a `sent` answer is never replayed; reconciliation via `getReviewsOfCards` after `sent_at` marks `acked`, else it stays `sent` and is listed for the parent. |
 | `lexicon` | word, language, source (`book`/`correction`/`manual`), book_id?, weight, updated_at | Advisory in v1 (ADR-0011): candidates for OCR snap and future ASR bias. Rebuilt from revisions + corrections; manual rows survive. |
-| `learner_profile` | key, value (json), updated_at | Small facts the coach may use (the name the child gave Leafi, explanation language order). No identity, no images, no embeddings. `REDACT_TERMS` live in config, not here. |
+| `learner_profile` | key, value (json), updated_at | Small facts the coach may use (the name the child gave Leafi, explanation language order). No identity, no images, no embeddings. Protected names live in `household_terms`, not here. |
 
 ## Migration 5 (in `storage.py` since 2026-10-23)
 
@@ -66,7 +66,7 @@ Egress under M5 (`docs/plans/active/2026-10-23-m5-egress-design.md` D5, D8, D10,
 | `pseudonyms` | new: entity (`learner:<id>`, `former:<id>`, `term:<id>`), surrogate, both unique (surrogate case-insensitively) | design D10 |
 | `privacy_state` | new: `protected_version`, bumped by triggers on every insert, delete or name/alias/kind/forgetting update of `learners` and every change to `household_terms`, in the writer's transaction | design D12 |
 | `learners.settings` | the privacy keys `cloud.text`, `privacy.media`, `privacy.school` (`none` or a `household_terms` id of kind `school`) and `privacy.version`, written only by `leafi.privacy.settings` (the harness's `settings.save` refuses them) | design D10, D12 |
-| `household_terms` | the household's old `REDACT_TERMS` imported as kind `name` (a learner's own name skipped); `import_legacy_terms` runs again before the key is removed | design D12 |
+| `household_terms` | the household's old `REDACT_TERMS` imported as kind `name` (a learner's own name skipped); since M5d the key is retired: egress imports a leftover value at start, `leafi privacy terms import --yes` also removes it from `.env`, and `leafi privacy terms add|remove` edits the list | design D12 |
 
 ## Invariants
 

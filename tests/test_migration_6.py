@@ -170,7 +170,8 @@ def test_migrate_command_on_a_v5_file(settings, monkeypatch, capsys):
     path = settings.db_path
     path.parent.mkdir(parents=True)
     v5_file(path)
-    monkeypatch.setattr(cli, "_settings", lambda: settings.model_copy(update={"redact_terms": "Grandma Rose"}))
+    monkeypatch.setattr(cli, "_settings", lambda: settings)
+    monkeypatch.setenv("REDACT_TERMS", "Grandma Rose")  # the retired key, still read once for the import
     assert cli.main(["migrate"]) == 0
     out = capsys.readouterr().out
     assert "from schema 5 to 6" in out and "first learner" not in out

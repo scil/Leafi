@@ -65,6 +65,15 @@ def _wire(settings):
     return mock_egress(settings, route), sent
 
 
+def _terms(settings, *items: tuple[str, str]) -> None:
+    """The household's protected terms (`leafi privacy terms add`), set before the session."""
+    from leafi.privacy import settings as privacy
+
+    with Store(settings.db_path) as store:
+        for term, kind in items:
+            privacy.add_term(store, term, kind)
+
+
 def _no_canary(sent, canaries=CANARIES) -> None:
     for r in sent:
         blob = (str(r.url) + "\n" + r.content.decode("utf-8", "replace")).lower()
@@ -77,7 +86,7 @@ async def test_no_canary_leaves_in_any_outbound_body(settings):
     e, sent = _wire(settings)
     fake_anki = FakeAnki()
     settings.anthropic_api_key = "test-key-not-real"
-    settings.redact_terms = f"{SCHOOL},{LABEL}"  # until M5d: the household's old list, read beside household_terms
+    _terms(settings, (SCHOOL, "school"), (LABEL, "other"))
     notifier = NotifierDevice("parent", {"bark_url": "https://api.day.app/KEY", "telegram_bot_token": "T",
                                          "telegram_chat_id": "C", "egress": e}, settings=settings)
     listener = ScriptedListener([
@@ -264,7 +273,7 @@ async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatc
             Path(path).write_bytes(b"\x00" * 600)
 
     monkeypatch.setattr(edge_tts, "Communicate", Recorder)
-    settings.redact_terms = f"{NAME},{SCHOOL},{LABEL}"
+    _terms(settings, (NAME, "name"), (SCHOOL, "school"), (LABEL, "other"))
     class GatedConsole:
         """Types the next line only after Leafi shows "listening" (like a person at the console)."""
 

@@ -658,6 +658,10 @@ def save(body: Any, path: Path = Path(".env"), data_dir: Path = Path("data"), ro
     if isinstance(outcome, Committed):
         acts = sorted({m.readers[r] for key in ops if key in m.keys for r in m.keys[key].readers})
         log.info("saved .env keys: %s", ", ".join(sorted(ops)))
+        if any(key in m.keys and m.keys[key].privacy and "leafi" in m.keys[key].readers for key in ops):
+            # M5 design D12: a running Leafi process compares `.env` with what it loaded before every send
+            warnings.append("until they restart, running Leafi processes refuse to send anything that came from "
+                            "a learner or a parent (their privacy settings changed)")
         return SaveResult(200, {"ok": True, "digest": outcome.digest, "activation": acts,
                                 "warnings": warnings + outcome.warnings})
     return SaveResult(200, {"ok": False, "errors": {"*": outcome.reason}, "warnings": outcome.warnings})

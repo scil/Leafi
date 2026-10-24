@@ -4,7 +4,7 @@
 
 1. **Images, faces, poses never leave the LAN.** Book pages are images. OCR, vision judge and barcode decoding run locally. Enforced by: egress tests below; the `Notifier` port carries text only.
 2. **The learner's voice stays local by default.** ASR and pronunciation scoring are local; audio is not persisted unless `AUDIO_KEEP_CLIPS=true`. Enforced by: config default + `tests/test_storage.py` retention test.
-3. **Cloud payloads carry no identity; a learner's own words only pseudonymised and only when allowed** (ADR-0018, superseding ADR-0011's "no learner text"). Every household name, school and listed term is replaced before any text leaves; a learner's words leave only with their `cloud.text` on and a school answer, run through the name detector too; an exact age from the profile never leaves (an age said in the learner's own words is sent as said, owner decision 2026-10-23). The legacy `REDACT_TERMS` is still read as names until M5d moves it into `household_terms`. Enforced by: the egress pipeline and the canary tests below.
+3. **Cloud payloads carry no identity; a learner's own words only pseudonymised and only when allowed** (ADR-0018, superseding ADR-0011's "no learner text"). Every household name, school and listed term is replaced before any text leaves; a learner's words leave only with their `cloud.text` on and a school answer, run through the name detector too; an exact age from the profile never leaves (an age said in the learner's own words is sent as said, owner decision 2026-10-23). The protected terms are `household_terms` (`python -m leafi privacy terms`); the retired `REDACT_TERMS` was imported into them. Enforced by: the egress pipeline and the canary tests below.
 4. **Cameras never enter the bathroom**; the study camera points at the desk. Enforced by: advisory (physical).
 5. **Child-transparent and child-controlled.** Leafi says when it listens and looks; the Face shows the listening state; `stop` and `skip` work in every state; at most 2 retries per word; no persistent Difficulty without corroboration (ADR-0009). Enforced by: `tests/test_practice.py`, `tests/test_session_controls.py`.
 
@@ -35,6 +35,25 @@ Everything else stays on the LAN. OpenPronounce is configured with an offline re
 Enforcement: `tests/test_privacy.py` — (a) the wire beneath egress's mediator recorded over a text-mode session seeded with canaries (learner name, school, a handwritten label in the page fixture, audio bytes), a Brain request carrying a learner's words (a Chinese sibling name, a Latin name inside Chinese text, the school), and operational alerts; every outbound body is canary-free and every host is in the table above; (b) a subprocess run with `LEAFI_NO_NETWORK=1` must complete a text-mode session and a pronunciation score on a fixture clip. `tests/test_egress.py` (the real `anthropic` SDK against a loopback gateway port with the guard enforcing; tokens, admission, refusals), `tests/test_netguard.py` (grants, revocation shutting retained sockets including TLS, gateway ports, `lan`, UDP, proxies), `tests/test_pseudonym.py`, `tests/test_detector.py`. The suite itself runs with the guard enforcing and an offline egress, so no test reaches the network.
 
 **Known limits** (stated, not prevented): sockets opened by subprocesses (docker, netsh) are outside the guard; a write on a socket kept past its grant is not intercepted on Windows (revocation shuts admitted sockets down instead); a transmission admitted just before a privacy change made by another process may complete (one request); the `lan` class is resolved at process start, so a DHCP change needs a restart.
+
+## Privacy settings (ADR-0018 §5)
+
+Household keys are in `.env` (settings page, group Privacy); a † key needs the page's confirmation bound to its value, and after any privacy change a running Leafi process refuses to send learner or parent text until it restarts (its `.env` fingerprint no longer matches). Learner keys are in `learners.settings`, changed only by `python -m leafi privacy …` (shown, then `--yes`).
+
+| Setting | Where | Default | Values |
+|---|---|---|---|
+| `cloud.text` † | learner (`privacy learner` writer; a `consents` row each change) | on | on / off; guests always off |
+| `privacy.school` | learner | unanswered (learner words stay local) | a school term, or `none` |
+| `privacy.media` † | learner | ask | ask / never (media refused until M9) |
+| `CLOUD_PARENT_TEXT` † | household | true | true / false |
+| `PRIVACY_TTS_LEARNER_LINES` † | household | local | local / cloud |
+| `TTS_EDGE_MODE` † | household | library | library (mediated not built) |
+| `PRIVACY_NAME_DETECTOR` † | household | true | true / false (`doctor` shows the model's state) |
+| `household_terms` † | `python -m leafi privacy terms add|remove --yes` | names and schools from enrolment | a list |
+| `LOCAL_MODELS` †, `MAGPIE_URL` † | household | empty | ADR-0018 §2 |
+| `PRIVACY_OPS_LOG_DAYS` | household | 30 | 1–365 |
+| `GUEST_KEEP_DAYS` | household | 7 | 0–30 |
+| `HOUSEHOLD_TZ` | household | this machine's zone | an IANA name |
 
 ## Prompt safety
 

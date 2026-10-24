@@ -85,7 +85,7 @@ def test_doctor_reports_every_service(settings):
     assert set(doctor.PURPOSE) == {label for label, _, _ in doctor.SERVICES} | {"sqlite", "names", "schools", "wordlists"}
     assert "ANTHROPIC_API_KEY empty" in out
     assert "deferred" in out
-    assert "REDACT_TERMS is empty" in out
+    assert "REDACT_TERMS" not in out and "NOTE (Anki): Anki can sync your cards to AnkiWeb" in out
 
 
 def test_cli_devices_and_doctor_run(monkeypatch, capsys):

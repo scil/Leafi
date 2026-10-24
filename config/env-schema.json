@@ -113,6 +113,10 @@
       "title": "Study and ops (leafi; defaults in leafi/core/config.py)"
     },
     {
+      "id": "privacy",
+      "title": "Privacy (ADR-0018 §5; learner keys: python -m leafi privacy)"
+    },
+    {
       "id": "habit",
       "title": "Habit agent (agent/config.py)"
     },
@@ -1230,25 +1234,6 @@
         "commented": false
       }
     },
-    "REDACT_TERMS": {
-      "group": "g12",
-      "type": "text",
-      "readers": [
-        "leafi"
-      ],
-      "default": {
-        "leafi": {
-          "value": "",
-          "empty": "empty"
-        }
-      },
-      "help": "learner name, school: python -m leafi setup --redact \"<name>,<school>\" — comma-separated terms removed from cloud payloads (learner name, school); set by `python -m leafi setup --redact \"…\"`; `doctor` warns when empty",
-      "privacy": true,
-      "example": {
-        "value": "",
-        "commented": false
-      }
-    },
     "STUDY_IDLE_S": {
       "group": "g12",
       "type": "float",
@@ -1333,7 +1318,7 @@
           "empty": "empty"
         }
       },
-      "help": "AnkiConnect target",
+      "help": "AnkiConnect target. Anki can sync your cards to AnkiWeb. Card text can include what Leafi learned from your child's answers. Check your Anki sync setting.",
       "example": {
         "value": "http://127.0.0.1:8765",
         "commented": false
@@ -1949,6 +1934,157 @@
         }
       },
       "help": "days an unconfirmed guest's session is kept before it is forgotten; 0-30, 0 = delete at wrap (ADR-0018 §1)"
+    },
+    "CLOUD_PARENT_TEXT": {
+      "group": "privacy",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "true",
+          "empty": "error"
+        }
+      },
+      "help": "parent text (a parent's corrections) may go to the cloud, pseudonymised (ADR-0018 §3, §5)",
+      "privacy": true,
+      "example": {
+        "value": "true",
+        "commented": false
+      }
+    },
+    "PRIVACY_TTS_LEARNER_LINES": {
+      "group": "privacy",
+      "type": "enum",
+      "options": [
+        "local",
+        "cloud"
+      ],
+      "domain": "leafi.services.tts:LEARNER_LINES",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "local",
+          "empty": "empty"
+        }
+      },
+      "help": "local | cloud — local: a learner's own words and any line naming a listed person, school or term are spoken by Kokoro, never by edge-tts (ADR-0018 §2)",
+      "privacy": true,
+      "example": {
+        "value": "local",
+        "commented": false
+      }
+    },
+    "TTS_EDGE_MODE": {
+      "group": "privacy",
+      "type": "enum",
+      "options": [
+        "library"
+      ],
+      "domain": "leafi.services.tts:EDGE_MODES",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "library",
+          "empty": "empty"
+        }
+      },
+      "help": "library — edge-tts speaks each prepared line under a grant; the mediated mode of ADR-0018 §2 is not built yet",
+      "privacy": true,
+      "example": {
+        "value": "library",
+        "commented": false
+      }
+    },
+    "PRIVACY_NAME_DETECTOR": {
+      "group": "privacy",
+      "type": "bool",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "true",
+          "empty": "error"
+        }
+      },
+      "help": "find unlisted names, schools and places in a learner's own words before the cloud (Presidio + spaCy; `doctor` shows whether its model is present)",
+      "privacy": true,
+      "example": {
+        "value": "true",
+        "commented": false
+      }
+    },
+    "LOCAL_MODELS": {
+      "group": "privacy",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "backend:model pairs that count as local, comma-separated (e.g. ollama:qwen3:8b); a local backend may read a learner's words unpseudonymised (ADR-0018 §2)",
+      "privacy": true,
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "MAGPIE_URL": {
+      "group": "privacy",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "the magpie gateway; always a cloud destination, its port a gateway port (ADR-0018 §2)",
+      "privacy": true,
+      "example": {
+        "value": "",
+        "commented": false
+      }
+    },
+    "PRIVACY_OPS_LOG_DAYS": {
+      "group": "privacy",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "30",
+          "empty": "error"
+        }
+      },
+      "help": "days `ops` attempts stay in egress_log; 1-365 (ADR-0018 §5)"
+    },
+    "HOUSEHOLD_TZ": {
+      "group": "privacy",
+      "type": "text",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "",
+          "empty": "empty"
+        }
+      },
+      "help": "the household's IANA time zone; empty: this machine's"
     },
     "SENTENCE_PAUSE_S": {
       "group": "study-ops",

@@ -3,7 +3,7 @@
 Lists, applied to every text class: each enrolled learner's display name and alias (one person entity,
 `learner:<id>`), and every `household_terms` row — names of forgotten learners (`former:<id>`, one entity per
 former learner across all their terms), other names (`term:<id>`), schools ("the school") and other terms
-(`[place]`). While `REDACT_TERMS` still exists (until M5d), its terms are read too, as names.
+(`[place]`). The retired `REDACT_TERMS` was imported into `household_terms` (migration 6 and M5d).
 
 Matching runs on NFC text, case-insensitively, longest term first. A Latin-script term matches where it is not
 next to another Latin letter or a digit (so `我叫Rocco今天` matches and "Roccoli" does not); possessives and
@@ -81,7 +81,7 @@ class Lists:
         raise KeyError(matched)
 
 
-def load_lists(conn: sqlite3.Connection, legacy_terms: list[str] | tuple[str, ...] = ()) -> Lists:
+def load_lists(conn: sqlite3.Connection) -> Lists:
     entries: list[Entry] = []
     seen: set[str] = set()
 
@@ -104,8 +104,6 @@ def load_lists(conn: sqlite3.Connection, legacy_terms: list[str] | tuple[str, ..
             add(term, "other", None)
         else:
             add(term, "person", f"former:{former}" if former is not None else f"term:{tid}")
-    for term in legacy_terms:  # REDACT_TERMS until M5d removes it (design D12)
-        add(term, "person", f"legacy:{term.strip().casefold()}")
     return Lists(entries)
 
 
@@ -134,7 +132,7 @@ def surrogates(conn: sqlite3.Connection, secret: bytes, lists: Lists) -> dict[st
                 log.warning("surrogate of %s is now a household name; reallocated", ent)
         taken = protected | {s.casefold() for s in stored.values()}
         for ent in entities:
-            if ent in stored or ent.startswith("legacy:"):
+            if ent in stored:
                 continue
             name = _probe(secret, ent, pool, taken)
             if name is None:
@@ -148,7 +146,7 @@ def surrogates(conn: sqlite3.Connection, secret: bytes, lists: Lists) -> dict[st
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-    return {ent: stored.get(ent, NAME) for ent in entities if not ent.startswith("legacy:")}
+    return {ent: stored.get(ent, NAME) for ent in entities}
 
 
 @dataclass
@@ -234,30 +232,22 @@ class Pseudonymizer:
         return NAME
 
 
-def build(conn: sqlite3.Connection, secret: bytes, legacy_terms: list[str] | tuple[str, ...] = ()) -> Pseudonymizer:
+def build(conn: sqlite3.Connection, secret: bytes) -> Pseudonymizer:
     """Allocate what is missing, then read: for callers outside a read snapshot (tests, tools)."""
-    surrogates(conn, secret, load_lists(conn, legacy_terms))
-    return build_read(conn, secret, legacy_terms)
+    surrogates(conn, secret, load_lists(conn))
+    return build_read(conn, secret)
 
 
-def build_read(conn: sqlite3.Connection, secret: bytes,
-               legacy_terms: list[str] | tuple[str, ...] = ()) -> Pseudonymizer:
+def build_read(conn: sqlite3.Connection, secret: bytes) -> Pseudonymizer:
     """Read-only, for egress's snapshot: the lists and the stored surrogates as they are now. An entity that has
     none yet (it appeared after the allocation step) is replaced by `[name]`, never sent."""
-    lists = load_lists(conn, legacy_terms)
+    lists = load_lists(conn)
     stored = {r[0]: r[1] for r in conn.execute("SELECT entity, surrogate FROM pseudonyms")}
     protected = {" ".join(norm(e.term).split()).casefold() for e in lists.entries}
-    pool, taken = surrogate_pool(), protected | {s.casefold() for s in stored.values()}
     names: dict[str, str] = {}
     for ent in sorted({e.entity for e in lists.entries if e.entity}):
-        if ent.startswith("legacy:"):
-            name = _probe(secret, ent, pool, taken)
-            names[ent] = name or NAME
-            if name:
-                taken.add(name.casefold())
-        else:
-            sur = stored.get(ent)
-            names[ent] = sur if sur is not None and sur.casefold() not in protected else NAME
+        sur = stored.get(ent)
+        names[ent] = sur if sur is not None and sur.casefold() not in protected else NAME
     display: dict[str, str] = {}
     for lid, name in conn.execute("SELECT id, display_name FROM learners WHERE kind = 'learner'"):
         display[f"learner:{lid}"] = name

@@ -24,6 +24,9 @@ from leafi.study import knowledge
 from leafi.study.books import slug
 
 log = logging.getLogger("leafi.anki")
+# ADR-0018 §2 (owner decision 2026-10-22): shown by `leafi setup`, `leafi doctor` and the settings page (ANKI_URL)
+NOTICE = ("Anki can sync your cards to AnkiWeb. Card text can include what Leafi learned from your child's answers. "
+          "Check your Anki sync setting.")
 MAX_ATTEMPTS = 5
 EASES = (1, 2, 3, 4)  # again, hard, good, easy (ADR-0017 §3.1)
 

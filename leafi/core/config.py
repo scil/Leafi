@@ -58,12 +58,20 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     book_lookup: str = "off"
 
-    # ---- privacy ----
-    redact_terms: str = ""
+    # ---- privacy ---- (protected names live in `household_terms`: `python -m leafi privacy terms`)
     audio_keep_clips: bool = False
     eval_transcripts: bool = False
     leafi_no_network: bool = False
     leafi_debug_text: bool = False
+    # ADR-0018 §5 household keys (M5 design D12); the learner keys live in `learners.settings`
+    cloud_parent_text: bool = True  # parent text (corrections a parent made) may go to the cloud, pseudonymised
+    privacy_tts_learner_lines: str = "local"  # local: a learner's words and protected names never reach cloud TTS
+    tts_edge_mode: str = "library"  # library (mediated: not built yet)
+    privacy_name_detector: bool = True  # Presidio + spaCy on a learner's own words before the cloud
+    local_models: str = ""  # backend:model pairs that count as local (comma-separated), e.g. ollama:qwen3:8b
+    magpie_url: str = ""  # the magpie gateway (cloud by definition; a gateway port when loopback)
+    privacy_ops_log_days: int = 30  # `ops` rows of egress_log older than this are deleted
+    household_tz: str = ""  # IANA name; empty: this machine's zone
 
     # ---- notifications (text only in the study track) ----
     bark_url: str = ""
@@ -136,8 +144,15 @@ class Settings(BaseSettings):
     def lease_path(self) -> Path:
         return self.data_dir / "leafi.lock"
 
-    def redact_list(self) -> list[str]:
-        return [t.strip() for t in self.redact_terms.split(",") if t.strip()]
+    def local_model_list(self) -> list[str]:
+        return [t.strip() for t in self.local_models.split(",") if t.strip()]
+
+
+def legacy_redact_terms(env_file: Path | None = Path(".env")) -> list[str]:
+    """The retired `REDACT_TERMS`, read once more so its terms move into `household_terms` (M5 design D12): from
+    the process environment or `.env`, whichever `Settings` would have used."""
+    raw = env_lookup("REDACT_TERMS", None, env_file) or ""
+    return [t.strip() for t in raw.split(",") if t.strip()]
 
 
 def env_lookup(name: str, settings: Settings | None = None, env_file: Path | None = Path(".env")) -> str | None:

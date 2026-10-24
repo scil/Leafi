@@ -249,6 +249,41 @@ class Egress:
         self._lock = _FileLock(self.db_path, exclusive=False)  # never beside a migration
         self._inner = inner
         self.recover()
+        self.import_legacy_terms(env_file)
+        self.prune_ops(getattr(settings, "privacy_ops_log_days", 30))
+
+    def import_legacy_terms(self, env_file: Path | None) -> int:
+        """A `REDACT_TERMS` still set in `.env` or the environment moves into `household_terms` (idempotent; M5
+        design D12): its names stay protected after the key was retired. `leafi privacy terms import` then
+        removes the line from `.env`."""
+        from leafi.core.config import legacy_redact_terms
+        from leafi.core.storage import import_legacy_terms
+
+        terms = legacy_redact_terms(env_file) if env_file is not None else []
+        if not terms:
+            return 0
+        c = self._conn()
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            n = import_legacy_terms(c, terms)
+            c.execute("COMMIT")
+        except BaseException:
+            if c.in_transaction:
+                c.execute("ROLLBACK")
+            raise
+        if n:
+            log.warning("imported %d REDACT_TERMS term(s) into household_terms; remove the key from .env with "
+                        "`python -m leafi privacy terms import`", n)
+        return n
+
+    def prune_ops(self, days: int) -> int:
+        """`ops` attempts older than `PRIVACY_OPS_LOG_DAYS` are deleted (ADR-0018 §5); study attempts stay until
+        their learner is forgotten."""
+        import datetime as dt
+
+        cutoff = (dt.datetime.now(dt.UTC) - dt.timedelta(days=max(1, int(days)))).isoformat(timespec="milliseconds")
+        return self._conn().execute("DELETE FROM egress_log WHERE purpose='ops' AND created_at < ?",
+                                    (cutoff,)).rowcount
 
     # ---- database (a connection per thread; the shared Store is not thread-safe, design U5)
     def _conn(self) -> sqlite3.Connection:
@@ -303,15 +338,14 @@ class Egress:
         sources = sorted({s for t in texts for s in t.sources} | ({learner_id} if study and learner_id else set()))
         c = self._conn()
         cloud = dest.locality == "cloud"
-        legacy = self.settings.redact_list()
         if cloud:  # allocation writes; done before the read snapshot so the snapshot sees the surrogates
-            pseudonym.surrogates(c, self.key, pseudonym.load_lists(c, legacy))
+            pseudonym.surrogates(c, self.key, pseudonym.load_lists(c))
         c.execute("BEGIN")
         try:
             snap = versions.snapshot(c, sources) if study else None
             privacy = {i: privacy_settings.from_row(i, c.execute(
                 "SELECT kind, forgetting, settings FROM learners WHERE id=?", (i,)).fetchone()) for i in sources}
-            p = pseudonym.build_read(c, self.key, legacy) if cloud else None
+            p = pseudonym.build_read(c, self.key) if cloud else None
         finally:
             c.execute("COMMIT")
         if cloud:
@@ -368,7 +402,7 @@ class Egress:
         version = versions.protected_version(c)
         cached = getattr(self, "_lists", None)
         if cached is None or cached[0] != version:
-            lists = pseudonym.load_lists(c, self.settings.redact_list())
+            lists = pseudonym.load_lists(c)
             cached = self._lists = (version, lists.pattern())
         return cached[1] is not None and cached[1].search(pseudonym.norm(text)) is not None
 

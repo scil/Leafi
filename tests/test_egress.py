@@ -168,6 +168,8 @@ async def test_learner_words_need_cloud_text_and_a_school_answer(world):
         w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
     with pytest.raises(eg.Refused, match="without its source"):
         w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "learner")}), learner_id=w.rocco)
+    w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)  # default on
+    w.settings.cloud_parent_text = False
     with pytest.raises(eg.Refused, match="parent text"):
         w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)
     local = w.egress.prepare("local", "generate", Outgoing(json=body), learner_id=leo)  # a local model may read it

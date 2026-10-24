@@ -1,6 +1,6 @@
 """Brain service (ADR-0003, ADR-0011): enrichment only — explanations and comprehension questions.
 
-The request type takes text and counts only: a redacted page window (≤ 3 sentences), a target word or
+The request type takes text and counts only: a page window (≤ 3 sentences; egress pseudonymises it), a target word or
 phrase from the page, candidate words, an intent enum and counts. It has no field for learner free text,
 audio, images or identity, and its constructor rejects anything else. Replies are validated against a
 strict schema and the action allow-list; anything else is dropped (`None` = unavailable).

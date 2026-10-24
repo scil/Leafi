@@ -39,7 +39,7 @@ agent/         legacy habit track; unchanged until T2 (product.md) migrates it o
 1. `leafi.core` imports no `leafi.devices`, `leafi.services` or `leafi.study`. Enforced by `tests/test_architecture.py` (import graph check).
 2. A track never imports a device adapter or a model backend module directly; it asks the Hub for capabilities and the service registry for a service. Enforced by the same test.
 3. Every call that leaves the LAN is listed in the egress policy (quality-attributes/security.md, ADR-0011) with its module and payload; the study track's notifications are text-only. Enforced by `tests/test_privacy.py` (outbound recorder with canaries + no-network subprocess run).
-4. Cloud payloads are built by `study/coach.py` from the redacted page window, miscue words and an intent enum; learner free text is redacted first. Enforced by the canary test.
+4. Every cloud request leaves through `leafi.privacy.egress`, which replaces each protected name (`household_terms`, every learner's name and school) and sends a learner's own words only when that learner allows it (ADR-0018). Enforced by `tests/test_privacy.py` and the socket guard.
 5. Page text is read through `pages.current_text()`; verified spans survive re-OCR; history is invalidated, never deleted (ADR-0010). Enforced by `tests/test_corrections.py`.
 6. Half-duplex: the session's listening gate is closed while any Mouth plays; one `SpeechSerializer` per session; the study session holds the speech lease that the habit track respects. Enforced by `tests/test_hub.py` temporal tests, `tests/test_speaker_lease.py`.
 

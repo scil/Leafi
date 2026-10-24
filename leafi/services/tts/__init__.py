@@ -31,6 +31,10 @@ REGISTRY = Registry("tts", {
 })
 
 
+LEARNER_LINES = ("local", "cloud")  # PRIVACY_TTS_LEARNER_LINES (ADR-0018 §5)
+EDGE_MODES = ("library",)  # TTS_EDGE_MODE; `mediated` (ADR-0018 §2) is not built yet
+
+
 class LocalOnlyUnavailable(RuntimeError):
     """A line that must stay local with only cloud backends configured: no audio."""
 

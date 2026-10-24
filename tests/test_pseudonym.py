@@ -20,8 +20,8 @@ def store(tmp_path):
         yield s
 
 
-def _p(store, legacy=()):
-    return pseudonym.build(store.conn, KEY, legacy)
+def _p(store):
+    return pseudonym.build(store.conn, KEY)
 
 
 def _apply(p, text):
@@ -111,7 +111,18 @@ def test_a_forgotten_learners_terms_share_one_surrogate(store):
     assert out == f"{sur}, also {sur}"
 
 
-def test_legacy_redact_terms_are_protected_until_removed(store):
-    p = _p(store, legacy=["Grandma Rose"])
-    out, m = _apply(p, "Grandma Rose came")
-    assert "Rose" not in out and len(m.back) == 1
+def test_a_retired_redact_terms_is_protected_once_egress_imports_it(settings, monkeypatch):
+    """M5d: the key is gone from Settings; egress imports a leftover value into `household_terms` at start."""
+    from leafi.privacy import egress, secret
+
+    monkeypatch.setenv("REDACT_TERMS", "Grandma Rose, Maple Street")
+    secret._forget_cache()
+    e = egress.Egress(settings, env_file=settings.data_dir / "no.env")
+    try:
+        with Store(settings.db_path) as store:
+            p = _p(store)
+            out, m = _apply(p, "Grandma Rose came to Maple Street")
+            assert "Rose" not in out and "Maple" not in out and len(m.back) == 2
+            assert e.import_legacy_terms(settings.data_dir / "no.env") == 0  # idempotent
+    finally:
+        e.close()

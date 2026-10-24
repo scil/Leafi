@@ -150,6 +150,8 @@ def cmd_privacy(args: argparse.Namespace) -> int:
     from leafi.privacy import settings as privacy
 
     settings = _settings()
+    if args.what == "terms":
+        return _privacy_terms(args, settings)
     with Store(settings.db_path) as store:
         if args.what == "schools":
             for r in learner_store.enrolled(store):
@@ -179,6 +181,81 @@ def cmd_privacy(args: argparse.Namespace) -> int:
             return 1
         print(f"learner #{lid} {args.name}: school {shown} (privacy version {p.version})")
     return 0
+
+
+def _privacy_terms(args: argparse.Namespace, settings: Settings) -> int:
+    """`privacy terms [list]`, `add TERM [--kind]`, `remove TERM`, `import`: the household's protected names,
+    schools and other terms (ADR-0018 §3); changes need `--yes`."""
+    from leafi.core.config import legacy_redact_terms
+    from leafi.core.storage import Store, import_legacy_terms
+    from leafi.privacy import settings as privacy
+
+    action = args.action or "list"
+    with Store(settings.db_path) as store:
+        if action == "list":
+            rows = privacy.terms(store)
+            for tid, term, kind, former in rows:
+                print(f"#{tid} {kind:<7}{term}" + (f"  (forgotten learner #{former})" if former is not None else ""))
+            if not rows:
+                print("no household terms; the learners' own names are protected without one")
+            return 0
+        if action == "import":
+            legacy = legacy_redact_terms()
+            if not legacy:
+                from dotenv import dotenv_values
+
+                if Path(".env").exists() and "REDACT_TERMS" in dotenv_values(".env", encoding="utf-8"):
+                    if not args.yes:
+                        print("REDACT_TERMS is empty: would remove the line from .env. Run again with --yes.")
+                        return 1
+                    return _unset_env("REDACT_TERMS")
+                print("REDACT_TERMS is not set: nothing to import")
+                return 0
+            if not args.yes:
+                print(f"would import {len(legacy)} REDACT_TERMS term(s) as names and remove the key from .env. "
+                      "Run again with --yes to do it.")
+                return 1
+            with store.transaction():
+                n = import_legacy_terms(store.conn, legacy)
+            print(f"imported {n} term(s) into household_terms ({len(legacy) - n} already there or a learner's name)")
+            return _unset_env("REDACT_TERMS")
+        if not args.term:
+            print(f"privacy terms {action} needs a term")
+            return 2
+        shown = f"{args.kind} {args.term!r}" if action == "add" else repr(args.term)
+        if not args.yes:
+            print(f"would {action} household term {shown}. Run again with --yes to do it.")
+            return 1
+        try:
+            if action == "add":
+                tid = privacy.add_term(store, args.term, args.kind)
+                print(f"household term #{tid}: {shown}")
+            else:
+                for line in privacy.remove_term(store, args.term):
+                    print(line)
+                print(f"removed household term {shown}")
+        except privacy.InvalidPrivacySetting as e:
+            print(e)
+            return 1
+    return 0
+
+
+def _unset_env(key: str) -> int:
+    """Remove a retired key from `.env` through the shared writer (lock, backup, canonical form)."""
+    from leafi import envedit
+
+    try:
+        digest = envedit.current_digest()
+    except OSError as e:
+        print(f"{key} left in .env: it cannot be read ({e.__class__.__name__})")
+        return 1
+    result = envedit.save({"digest": digest, "ops": {key: {"op": "unset"}}}, trusted_confirm=True)
+    if result.body.get("ok"):
+        print(f"{key} removed from .env")
+        return 0
+    print(f"{key} left in .env:", result.body.get("error") or "; ".join(
+        f"{k}: {v}" for k, v in result.body.get("errors", {}).items()))
+    return 1
 
 
 def cmd_backup(args: argparse.Namespace) -> int:
@@ -234,8 +311,10 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         if not args.learner and storage.file_version(path) < 5:
             print("migrate needs --learner \"<name>\": the child whose sessions are already recorded")
             return 2
+        from leafi.core.config import legacy_redact_terms
+
         res = storage.migrate_file(path, args.learner, learner_settings={"anki.deck": settings.anki_deck},
-                                   legacy_terms=settings.redact_list())
+                                   legacy_terms=legacy_redact_terms())
     except storage.DatabaseInUse as e:
         print(e)
         return 2
@@ -363,25 +442,23 @@ def cmd_checks(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
-    from leafi import envedit
+    """The household's privacy setup in order (ADR-0018 §3, §5): learners' schools, protected terms, the Anki
+    notice. It only prints; each step is its own confirmed command."""
+    from leafi.core.storage import Store
+    from leafi.privacy import settings as privacy
+    from leafi.study.anki import NOTICE
 
-    # the shared writer (lock, backup, canonical form); this explicit command is the owner's confirmation
-    try:
-        digest = envedit.current_digest()
-    except OSError as e:
-        print(f"REDACT_TERMS not saved: .env cannot be read ({e.__class__.__name__})")
-        return 1
-    result = envedit.save({"digest": digest, "ops": {"REDACT_TERMS": {"op": "set", "value": args.redact}}},
-                          trusted_confirm=True)
-    if result.body.get("ok"):
-        print("REDACT_TERMS updated in .env")
-        return 0
-    if "recovery" in result.body:
-        print(".env needs manual recovery; files kept:", ", ".join(v for v in result.body["recovery"].values() if v))
-    else:
-        print("REDACT_TERMS not saved:", result.body.get("error") or "; ".join(
-            f"{k}: {v}" for k, v in result.body.get("errors", {}).items()))
-    return 1
+    settings = _settings()
+    with Store(settings.db_path) as store:
+        missing = privacy.missing_school(store)
+        n_terms = len(privacy.terms(store))
+    print("1. every learner's school (a learner without one keeps their own words off the cloud):")
+    print("   " + (", ".join(n for _, n in missing) + ": python -m leafi privacy learner \"<name>\" school "
+                   "\"<school>\"|none --yes" if missing else "all answered (python -m leafi privacy schools)"))
+    print(f"2. other names to protect (relatives, friends, places): {n_terms} now; "
+          "python -m leafi privacy terms add \"<term>\" [--kind name|school|other] --yes")
+    print(f"3. Anki: {NOTICE}")
+    return 0
 
 
 def cmd_env_example(args: argparse.Namespace) -> int:
@@ -450,6 +527,12 @@ def main(argv: list[str] | None = None) -> int:
     pv = sub.add_parser("privacy", help="learners' privacy answers (ADR-0018 §3, §5)")
     pvs = pv.add_subparsers(dest="what", required=True)
     pvs.add_parser("schools", help="every learner's school answer, to confirm")
+    pt = pvs.add_parser("terms", help="the household's protected names, schools and other terms")
+    pt.add_argument("action", nargs="?", choices=["list", "add", "remove", "import"],
+                    help="list (default) | add TERM | remove TERM | import (the retired REDACT_TERMS)")
+    pt.add_argument("term", nargs="?")
+    pt.add_argument("--kind", choices=["name", "school", "other"], default="name")
+    pt.add_argument("--yes", action="store_true", help="confirm (without it, only print what would change)")
     pl = pvs.add_parser("learner", help="set a learner's school: a name, or none")
     pl.add_argument("name")
     pl.add_argument("key", choices=["school"])
@@ -480,7 +563,6 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--status", action="store_true", help="restart budget and unsent alerts (health.ps1)")
     a.set_defaults(fn=cmd_alert)
     st = sub.add_parser("setup", help="local setup")
-    st.add_argument("--redact", required=True, help="comma-separated terms removed from cloud payloads")
     st.set_defaults(fn=cmd_setup)
     sub.add_parser("env-example", help="regenerate .env.example from config/env-schema.json"
                    ).set_defaults(fn=cmd_env_example)

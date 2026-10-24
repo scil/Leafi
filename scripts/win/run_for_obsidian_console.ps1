@@ -40,5 +40,8 @@ switch ($Button) {
     'taskeditor' { cmd /c start "Leafi 动作与设置" /d E:\GitHub\scil\Leafi .venv\Scripts\python.exe -m agent.webui; Done }  # 动作编辑界面
     'eval-download' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\eval-data-download.bat < nul"; Done }  # 下载评测数据
     'reading-eval' { cmd /c "cd /d E:\GitHub\scil\Leafi && scripts\win\reading-eval.bat < nul"; Done }  # 朗读评测
+    'privacy-setup' { .venv\Scripts\python.exe -m leafi setup; Done }  # 隐私设置步骤
+    'privacy-schools' { .venv\Scripts\python.exe -m leafi privacy schools; Done }  # 孩子的学校
+    'privacy-terms' { .venv\Scripts\python.exe -m leafi privacy terms; Done }  # 受保护的名字
     default { Write-Output "Unknown console button: $Button"; exit 2 }
 }

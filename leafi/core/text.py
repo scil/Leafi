@@ -124,16 +124,6 @@ def sentences(tokens: list[TextToken]) -> dict[int, tuple[int, int]]:
     return out
 
 
-REDACTED = "[name]"
-
-
-def redact(text: str, terms, placeholder: str = REDACTED) -> str:
-    """Replace every `REDACT_TERMS` term (case-insensitive, longest first) before text leaves the LAN."""
-    for t in sorted({t for t in terms if t}, key=len, reverse=True):
-        text = re.sub(re.escape(t), placeholder, text, flags=re.IGNORECASE)
-    return text
-
-
 def ends_sentence(text: str) -> bool:
     s = text.rstrip().rstrip("\"'”’)]")
     return s == "" or s.endswith((".", "?", "!"))

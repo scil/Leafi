@@ -24,12 +24,13 @@ def test_check_outcomes_are_an_exhaustive_partition():
     assert coach.check_outcome("it is the", keys) == "unavailable"
 
 
-def test_redaction_and_page_window_are_page_text_only():
+def test_the_page_window_is_page_text_only_and_names_the_learner_for_attribution():
+    """Names are replaced by egress when the request is prepared (tests/test_privacy.py), not here."""
     st = ReadingState.from_text(PAGE)
     window = coach.page_window(PAGE, st, [1, 2, 3])
-    req = coach.explain_request(window, None, ["Zephyrine", "Quillfield"])
-    assert "Zephyrine" not in req.window and coach.REDACTED in req.window
-    assert req.intent is Intent.EXPLAIN_SENTENCE
+    req = coach.explain_request(window, None, learner_id=7, session_id=3)
+    assert req.window in PAGE.replace("\n", " ") or all(s in PAGE for s in req.window.split(". "))
+    assert (req.intent, req.learner_id, req.session_id) == (Intent.EXPLAIN_SENTENCE, 7, 3)
 
 
 def test_find_on_page_returns_page_spelling_or_none():
@@ -59,13 +60,13 @@ def test_validation_drops_extra_fields_and_disallowed_actions():
 
 async def test_brain_unavailable_returns_none():
     guard = coach.AsyncGuard(1)
-    req = coach.questions_request("The fox ran home.", [])
+    req = coach.questions_request("The fox ran home.")
     assert await coach.enrich(MockBrain(unavailable=True), req, guard, 1.0) is None
 
 
 async def test_claude_backend_without_key_is_unavailable(settings):
     brain = ClaudeBrain(settings)
-    assert await brain.run(coach.questions_request("The fox ran home.", [])) is None
+    assert await brain.run(coach.questions_request("The fox ran home.")) is None
 
 
 async def test_claude_backend_validates_and_never_retries_itself(settings):

@@ -75,6 +75,8 @@ def test_privacy_change_needs_its_confirmation(server):
     body = json.loads(call(server, "POST", "/api/env", {"digest": digest, "ops": ops,
                                                       "confirm": {"BOOK_LOOKUP": envedit.confirmation("openlibrary")}})[1])
     assert body["ok"] is True
+    # the page says running Leafi processes now hold back learner and parent text until restarted (M5 D12)
+    assert any("refuse to send anything that came from a learner" in w for w in body["warnings"])
 
 
 @pytest.mark.parametrize("path", ["/api/env", "/api/tasks"])

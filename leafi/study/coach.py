@@ -1,5 +1,6 @@
-"""Coach: builds the only cloud payloads (overview.md rule 4), guards async results, judges CHECK answers
-locally, and plans Practice. Learner free text is never put into a BrainRequest.
+"""Coach: builds the Brain's page-text requests (overview.md rule 4; `leafi.privacy.egress` pseudonymises them),
+guards async results, judges CHECK answers locally, and plans Practice. Learner free text is never put into a
+BrainRequest.
 """
 
 from __future__ import annotations
@@ -7,12 +8,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from leafi.core.storage import Store
 from leafi.core.text import norm, words
-from leafi.core.text import redact as core_redact
 from leafi.services.brain import MAX_WINDOW_CHARS, BrainRequest, Intent
 from leafi.study import knowledge
 from leafi.study.alignment import ReadingState
@@ -21,11 +20,6 @@ from leafi.study.stopwords import STOPWORDS
 log = logging.getLogger("leafi.coach")
 
 MAX_PRACTICE = 2
-REDACTED = "[name]"
-
-
-def redact(text: str, terms: Iterable[str]) -> str:
-    return core_redact(text, terms, REDACTED)
 
 
 def sentence_text(page_text: str, state: ReadingState, sid: int) -> str:
@@ -61,14 +55,16 @@ def find_on_page(state: ReadingState, phrase: str) -> str | None:
     return None
 
 
-def explain_request(window: str, target: str | None, terms: Iterable[str], languages=("en", "zh")) -> BrainRequest:
+def explain_request(window: str, target: str | None, languages=("en", "zh"), *, learner_id: int | None = None,
+                    session_id: int | None = None) -> BrainRequest:
+    """Page text only; `leafi.privacy.egress` replaces every protected name when the request is prepared."""
     intent = Intent.EXPLAIN_WORD if target else Intent.EXPLAIN_SENTENCE
-    return BrainRequest(intent, redact(window, terms), redact(target, terms) if target else None,
-                        languages=tuple(languages))
+    return BrainRequest(intent, window, target, languages=tuple(languages), learner_id=learner_id,
+                        session_id=session_id)
 
 
-def questions_request(window: str, terms: Iterable[str]) -> BrainRequest:
-    return BrainRequest(Intent.QUESTIONS, redact(window, terms))
+def questions_request(window: str, *, learner_id: int | None = None, session_id: int | None = None) -> BrainRequest:
+    return BrainRequest(Intent.QUESTIONS, window, learner_id=learner_id, session_id=session_id)
 
 
 # ---------------------------------------------------------------- async guard (ADR-0010 §5/§8)

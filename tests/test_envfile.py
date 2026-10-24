@@ -48,7 +48,7 @@ def test_env_example_is_canonical_and_reads_as_the_grammar_says(tmp_path):
     assert f.problems() == []
     assert f.apply({}).render() == raw
     assert dotenv_text(tmp_path, raw) == f.values()
-    for key in ("XIAOMI_USERID", "XIAOMI_DID", "BARK_URL", "CHILD_FACE_LABEL", "REDACT_TERMS"):
+    for key in ("XIAOMI_USERID", "XIAOMI_DID", "BARK_URL", "CHILD_FACE_LABEL", "LOCAL_MODELS"):
         assert f.values()[key] == "", key  # `KEY=   # help` used to read as the help text
 
 

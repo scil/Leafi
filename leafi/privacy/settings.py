@@ -120,6 +120,56 @@ def set_school(store: Store, learner_id: int, school: str | None) -> LearnerPriv
         return write(store, learner_id, "privacy.school", term_id)
 
 
+TERM_KINDS = ("name", "school", "other")
+
+
+def terms(store: Store) -> list[tuple[int, str, str, int | None]]:
+    """(id, term, kind, former learner id) of every household term."""
+    return [(r["id"], r["term"], r["kind"], r["former_learner_id"])
+            for r in store.all("SELECT id, term, kind, former_learner_id FROM household_terms ORDER BY id")]
+
+
+def add_term(store: Store, term: str, kind: str = "name") -> int:
+    """A protected name, school or other term (ADR-0018 §3 lists). An existing term (any case) changes kind."""
+    name = term.strip()
+    if not name:
+        raise InvalidPrivacySetting("a term needs some text")
+    if kind not in TERM_KINDS:
+        raise InvalidPrivacySetting(f"kind must be one of {', '.join(TERM_KINDS)}")
+    with store.transaction():
+        hit = store.one("SELECT id, kind FROM household_terms WHERE term = ? COLLATE NOCASE", (name,))
+        if hit is not None:
+            if hit["kind"] != kind:
+                store.execute("UPDATE household_terms SET kind=? WHERE id=?", (kind, hit["id"]))
+            return hit["id"]
+        return store.insert("household_terms", term=name, kind=kind, created_at=now_iso())
+
+
+def remove_term(store: Store, term: str) -> list[str]:
+    """Remove a term; returns what else changed. A learner whose school it was has no school answer again (their
+    own words stay off the cloud until it is set); a surrogate goes with the last term of its entity."""
+    effects: list[str] = []
+    with store.transaction():
+        hit = store.one("SELECT id, kind, former_learner_id FROM household_terms WHERE term = ? COLLATE NOCASE",
+                        (term.strip(),))
+        if hit is None:
+            raise InvalidPrivacySetting(f"no household term {term!r}")
+        for r in learner_store.enrolled(store):
+            values = loads(r["settings"], {})
+            if values.get("privacy.school") == hit["id"]:
+                values.pop("privacy.school")
+                values[VERSION] = int(values.get(VERSION, 0)) + 1
+                store.execute("UPDATE learners SET settings=? WHERE id=?", (dumps(values), r["id"]))
+                effects.append(f"learner #{r['id']} {r['display_name']} has no school answer now")
+        store.execute("DELETE FROM household_terms WHERE id=?", (hit["id"],))
+        store.execute("DELETE FROM pseudonyms WHERE entity=?", (f"term:{hit['id']}",))
+        former = hit["former_learner_id"]
+        if former is not None and not store.one("SELECT 1 FROM household_terms WHERE former_learner_id=?",
+                                                (former,)):
+            store.execute("DELETE FROM pseudonyms WHERE entity=?", (f"former:{former}",))
+    return effects
+
+
 def school_name(store: Store, privacy: LearnerPrivacy) -> str | None:
     """What `doctor` and the console show for the owner to confirm (a voice answer is a child's ASR text)."""
     if privacy.school in (None, "none"):

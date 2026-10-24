@@ -1,6 +1,5 @@
 """The `.env` save coordinator (design §5, rev 8): typed gates, privacy confirmations, masking, lists, all-or-nothing."""
 
-import argparse
 
 import pytest
 from dotenv import dotenv_values
@@ -74,22 +73,12 @@ def test_bool_values_are_only_the_offered_spellings(env, tmp_path, value):
     assert "OCR_AUTO_ROTATE" in save(tmp_path, {"OCR_AUTO_ROTATE": {"op": "set", "value": value}}).body["errors"]
 
 
-def test_setup_saves_a_name_with_an_apostrophe(tmp_path, monkeypatch):
-    from leafi import cli
-
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_bytes(b"REDACT_TERMS=old\n")
-    assert cli.cmd_setup(argparse.Namespace(redact="Ann O'Brien,Some School")) == 0
-    assert dotenv_values(tmp_path / ".env")["REDACT_TERMS"] == "Ann O'Brien,Some School"
-    assert EnvFile.parse((tmp_path / ".env").read_bytes()).problems() == []
-
-
-def test_setup_reports_an_unreadable_env(tmp_path, monkeypatch, capsys):
+def test_the_cli_removing_a_retired_key_reports_an_unreadable_env(tmp_path, monkeypatch, capsys):
     from leafi import cli
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").mkdir()
-    assert cli.cmd_setup(argparse.Namespace(redact="Ann")) == 1
+    assert cli._unset_env("REDACT_TERMS") == 1
     assert "cannot be read" in capsys.readouterr().out
 
 
@@ -165,19 +154,11 @@ def test_malformed_bodies_are_400(tmp_path, body):
     assert envedit.save(body, path=tmp_path / ".env", data_dir=tmp_path / "data").status == 400
 
 
-def test_cmd_setup_keeps_line_endings_and_position(tmp_path, monkeypatch):
+def test_the_cli_removes_a_retired_key_keeping_line_endings_and_the_other_lines(tmp_path, monkeypatch):
     from leafi import cli
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_bytes(b"A_KEY_X=1\r\nREDACT_TERMS=old\r\nZ=2\r\n")
-    assert cli.cmd_setup(argparse.Namespace(redact="Ann,Some School")) == 0
-    assert (tmp_path / ".env").read_bytes() == b"A_KEY_X=1\r\nREDACT_TERMS='Ann,Some School'\r\nZ=2\r\n"
-    assert EnvFile.parse((tmp_path / ".env").read_bytes()).values()["REDACT_TERMS"] == "Ann,Some School"
-
-
-def test_cmd_setup_creates_a_missing_env(tmp_path, monkeypatch):
-    from leafi import cli
-
-    monkeypatch.chdir(tmp_path)
-    assert cli.cmd_setup(argparse.Namespace(redact="Ann")) == 0
-    assert dotenv_values(tmp_path / ".env")["REDACT_TERMS"] == "Ann"
+    assert cli._unset_env("REDACT_TERMS") == 0  # the shared writer comments a removed line out, in place
+    assert (tmp_path / ".env").read_bytes() == b"A_KEY_X=1\r\n# REDACT_TERMS=old\r\nZ=2\r\n"
+    assert EnvFile.parse((tmp_path / ".env").read_bytes()).problems() == []

@@ -189,7 +189,7 @@ def build(settings) -> list[Check]:
         Check("disk", threaded(lambda: shutil.disk_usage(Path(settings.data_dir).resolve().anchor).free
                                >= settings.min_free_gb * 1e9)),
         Check("models", threaded(lambda: _models_ok(settings))),
-        Check("redact-terms", threaded(lambda: bool(settings.redact_list()))),
+        Check("household-terms", threaded(lambda: _schools_answered(settings))),
         Check("telegram", threaded(lambda: channel_ok(settings, "telegram"))),
         Check("heartbeat", threaded(lambda: channel_ok(settings, "heartbeat"))),
         Check("devices", threaded(lambda: _devices_ok(settings))),
@@ -208,8 +208,23 @@ def timing_ok(settings) -> bool:
     return not problems and timing.heartbeat_ok(timing.gatus_heartbeat_s(gatus_cfg), t, services)
 
 
+def _schools_answered(settings) -> bool:
+    """Every enrolled learner has a school answer (ADR-0018 §3); read-only, like `leafi doctor`'s line."""
+    import json
+    import sqlite3
+
+    if not Path(settings.db_path).exists():
+        return True
+    c = sqlite3.connect(f"file:{Path(settings.db_path).resolve().as_posix()}?mode=ro", uri=True)
+    try:
+        rows = c.execute("SELECT settings FROM learners WHERE kind='learner' AND forgetting=0").fetchall()
+    finally:
+        c.close()
+    return all(json.loads(s or "{}").get("privacy.school") is not None for (s,) in rows)
+
+
 NAMES = ("task", "docker-autostart", "go2rtc-patched", "ports", "power", "toasts", "active-hours", "disk",
-         "models", "redact-terms", "telegram", "heartbeat", "devices", "supervision-timing", "env-file")
+         "models", "household-terms", "telegram", "heartbeat", "devices", "supervision-timing", "env-file")
 
 
 class CheckRunner:

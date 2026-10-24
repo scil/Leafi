@@ -165,6 +165,57 @@ def test_doctor_names_learners_without_a_school(settings):
     assert "not answered" in line and "Leo" in line and "Mia" not in line
 
 
+def test_terms_add_change_kind_and_remove_unlinking_a_school(store):
+    mia = learner_store.create(store, "Mia")
+    privacy.set_school(store, mia, "Oakwood")
+    tid = privacy.add_term(store, "Grandma Lu")
+    assert privacy.add_term(store, "grandma lu", "other") == tid  # same term, kind changed
+    assert [(t, k) for _, t, k, _ in privacy.terms(store)] == [("Oakwood", "school"), ("Grandma Lu", "other")]
+    with pytest.raises(privacy.InvalidPrivacySetting):
+        privacy.add_term(store, "x", "planet")
+    effects = privacy.remove_term(store, "oakwood")
+    assert effects == [f"learner #{mia} Mia has no school answer now"]
+    assert privacy.read(store, mia).school is None and not privacy.read(store, mia).cloud_text_allowed
+    with pytest.raises(privacy.InvalidPrivacySetting, match="no household term"):
+        privacy.remove_term(store, "Oakwood")
+
+
+def test_privacy_terms_command_and_the_legacy_import(settings, monkeypatch, capsys, tmp_path):
+    from leafi import cli
+
+    monkeypatch.setattr(cli, "_settings", lambda: settings)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_bytes(b"REDACT_TERMS='Grandma Lu,Maple Street'\n")  # as `setup --redact` wrote it
+    Store(settings.db_path).close()
+    assert cli.main(["privacy", "terms"]) == 0
+    assert "no household terms" in capsys.readouterr().out
+    assert cli.main(["privacy", "terms", "add", "Uncle Bo"]) == 1  # without --yes only shows
+    assert cli.main(["privacy", "terms", "add", "Uncle Bo", "--yes"]) == 0
+    assert cli.main(["privacy", "terms", "import"]) == 1
+    assert "would import 2" in capsys.readouterr().out
+    assert cli.main(["privacy", "terms", "import", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "imported 2 term(s)" in out and "REDACT_TERMS removed from .env" in out
+    assert b"# REDACT_TERMS=" in (tmp_path / ".env").read_bytes()
+    assert cli.main(["privacy", "terms", "remove", "Uncle Bo", "--yes"]) == 0
+    capsys.readouterr()
+    assert cli.main(["privacy", "terms"]) == 0
+    out = capsys.readouterr().out
+    assert "Grandma Lu" in out and "Maple Street" in out and "Uncle Bo" not in out
+
+
+def test_setup_prints_the_steps_and_the_anki_notice(settings, monkeypatch, capsys):
+    from leafi import cli
+    from leafi.study.anki import NOTICE
+
+    monkeypatch.setattr(cli, "_settings", lambda: settings)
+    with Store(settings.db_path) as store:
+        learner_store.create(store, "Mia")
+    assert cli.main(["setup"]) == 0
+    out = capsys.readouterr().out
+    assert "Mia: python -m leafi privacy learner" in out and NOTICE in out
+
+
 # ---------------------------------------------------------------- versions
 
 

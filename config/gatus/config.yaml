@@ -36,7 +36,7 @@ external-endpoints:
   - {name: active-hours, group: checks, token: "${GATUS_TOKEN}"}
   - {name: disk, group: checks, token: "${GATUS_TOKEN}"}
   - {name: models, group: checks, token: "${GATUS_TOKEN}"}
-  - {name: redact-terms, group: checks, token: "${GATUS_TOKEN}"}
+  - {name: household-terms, group: checks, token: "${GATUS_TOKEN}"}
   - {name: telegram, group: checks, token: "${GATUS_TOKEN}"}
   - {name: heartbeat, group: checks, token: "${GATUS_TOKEN}"}
   - {name: devices, group: checks, token: "${GATUS_TOKEN}"}

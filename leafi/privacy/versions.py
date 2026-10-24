@@ -21,10 +21,9 @@ from pathlib import Path
 from leafi.core.config import process_environment
 from leafi.core.storage import loads
 
-# The household keys whose change must stop requests prepared before it (design D12). REDACT_TERMS stays until
-# M5d removes it.
+# The household keys whose change must stop requests prepared before it (design D12).
 POLICY_KEYS = ("CLOUD_PARENT_TEXT", "PRIVACY_TTS_LEARNER_LINES", "TTS_EDGE_MODE", "PRIVACY_NAME_DETECTOR",
-               "LOCAL_MODELS", "MAGPIE_URL", "OLLAMA_URL", "PRIVACY_OPS_LOG_DAYS", "HOUSEHOLD_TZ", "REDACT_TERMS")
+               "LOCAL_MODELS", "MAGPIE_URL", "OLLAMA_URL", "PRIVACY_OPS_LOG_DAYS", "HOUSEHOLD_TZ")
 
 
 @dataclass(frozen=True)
