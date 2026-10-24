@@ -172,8 +172,83 @@ async def test_learner_words_need_cloud_text_and_a_school_answer(world):
     w.settings.cloud_parent_text = False
     with pytest.raises(eg.Refused, match="parent text"):
         w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)
-    local = w.egress.prepare("local", "generate", Outgoing(json=body), learner_id=leo)  # a local model may read it
+    w.settings.local_models = "local:m1"
+    local = w.egress.prepare("local", "generate", Outgoing(json={**body, "model": "m1"}), learner_id=leo,
+                             model="m1")  # a local model may read it
     assert b"Leo here" in local.body
+
+
+def _local_body(text: str, learner: int, model: str) -> dict:
+    return {"model": model, "messages": [{"role": "user", "content": Text(text, "learner", (learner,))}]}
+
+
+async def test_a_model_bound_destination_is_local_only_for_a_listed_model(world):
+    """M7 design D1: Ollama-like destinations are local only for a `backend:model` on LOCAL_MODELS that is not a
+    cloud-hosted name, on a loopback host; otherwise their text is gated and pseudonymised like any cloud call."""
+    w = world
+    loc = w.egress.registry["local"]
+    assert loc.model_bound and not w.egress.registry["fake"].model_bound
+    w.settings.local_models = "local:m1, local:big-cloud, local:qwen3:cloud"
+    assert dests.effective(loc, "m1", w.settings) == "local"
+    for model in ("m2", "big-cloud", "qwen3:cloud", "m1:latest"):  # unlisted, cloud-hosted names, inexact
+        assert dests.effective(loc, model, w.settings) == "cloud", model
+    lan = dests.Destination("lan_ollama", "http", frozenset({"192.168.1.5"}), 11434, frozenset({"generate"}), "local")
+    assert dests.effective(lan, "m1", w.settings) == "cloud"  # a LAN host is not "this machine" (S9)
+    named = dests.Destination("named", "http", frozenset({"localhost"}), 11434, frozenset({"generate"}), "local")
+    w.settings.local_models = "named:m1"
+    assert dests.effective(named, "m1", w.settings) == "local"
+    probe = dests.Destination("probe", "http", frozenset({"127.0.0.1"}), 11434, frozenset({dests.OPS}), "local")
+    assert not probe.model_bound and dests.effective(probe, None, w.settings) == "local"  # ops: unchanged
+
+
+async def test_an_unlisted_local_model_is_gated_and_pseudonymised(world):
+    w = world
+    w.settings.local_models = "local:m1"
+    sent = w.egress.prepare("local", "generate", Outgoing(json=_local_body("Rocco read it.", w.rocco, "m2")),
+                            learner_id=w.rocco, model="m2")
+    assert b"Rocco" not in sent.body  # treated as cloud: replaced by a surrogate
+    leo = learner_store.create(w.store, "Leo")
+    privacy.set_school(w.store, leo, None)
+    privacy.write(w.store, leo, "cloud.text", False)
+    with pytest.raises(eg.Refused, match="cloud.text off"):
+        w.egress.prepare("local", "generate", Outgoing(json=_local_body("Leo here", leo, "m2")), learner_id=leo,
+                         model="m2")
+    kept = w.egress.prepare("local", "generate", Outgoing(json=_local_body("Leo here", leo, "m1")), learner_id=leo,
+                            model="m1")
+    assert b"Leo here" in kept.body  # listed: local, as LOCAL_MODELS allows
+
+
+async def test_the_ollama_adapter_names_its_model_and_is_local_only_when_listed(world):
+    """The v1 Ollama adapter (M7a bridge) passes its model; page text naming a learner reaches it as written only
+    when `ollama:<model>` is on LOCAL_MODELS (M7 design D1), else with the surrogate."""
+    from leafi.services.brain import BrainRequest, Intent
+    from leafi.services.brain.ollama import OllamaBrain
+
+    w = world
+    w.egress.registry["ollama"] = dests.Destination("ollama", "http", frozenset({"127.0.0.1"}), w.server.port,
+                                                    dests.BRAIN, "local")
+    w.settings.brain_local_model = "m1"
+    req = BrainRequest(Intent.EXPLAIN_SENTENCE, "Rocco went home.", learner_id=w.rocco)
+    w.settings.local_models = "ollama:m1"
+    await OllamaBrain(w.settings, egress=w.egress).run(req)
+    w.settings.local_models = ""
+    await OllamaBrain(w.settings, egress=w.egress).run(req)
+    listed, unlisted = (r["body"] for r in w.server.requests)
+    assert json.loads(listed)["model"] == "m1" and b"Rocco" in listed
+    assert b"Rocco" not in unlisted
+
+
+async def test_the_checked_model_must_be_the_one_sent(world):
+    w = world
+    w.settings.local_models = "local:m1"
+    with pytest.raises(eg.Refused, match="names the model"):
+        w.egress.prepare("local", "generate", Outgoing(json=_local_body("hi", w.rocco, "m1")), learner_id=w.rocco)
+    with pytest.raises(eg.Refused, match="body names model 'm2'"):
+        w.egress.prepare("local", "generate", Outgoing(json=_local_body("hi", w.rocco, "m2")), learner_id=w.rocco,
+                         model="m1")
+    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=_brain_body(w, "hi")),
+                         learner_id=w.rocco, model="claude-x")  # a cloud destination: the model is recorded
+    assert w.egress.tokens.claim(p.token_id).model == "claude-x"
 
 
 async def test_a_change_between_prepare_and_send_refuses(world):

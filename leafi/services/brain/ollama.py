@@ -1,6 +1,8 @@
-"""Ollama backend (local), through `leafi.privacy.egress`: the OpenAI-compatible `POST /v1/chat/completions`
-(ADR-0018 §2, M5 design D17). `OLLAMA_URL`'s port is a gateway port, so the request needs egress's grant; a
-local destination receives the text as it is (no pseudonymisation), which is what `LOCAL_MODELS` allows."""
+"""Ollama backend, through `leafi.privacy.egress`: the OpenAI-compatible `POST /v1/chat/completions` (ADR-0018 §2,
+M5 design D17). `OLLAMA_URL`'s port is a gateway port, so the request needs egress's grant. The destination is
+model-bound (M7 design D1): the request names its model, and egress treats it as local (text as it is) only when
+`ollama:<model>` is on `LOCAL_MODELS`, is not a cloud-hosted name and the host is loopback; otherwise the text is
+gated and pseudonymised like any cloud call."""
 
 from __future__ import annotations
 
@@ -41,7 +43,8 @@ class OllamaBrain:
         e = self.egress()
         try:
             p = e.prepare(DESTINATION, "generate", Outgoing(path="/v1/chat/completions", json=body),
-                          learner_id=req.learner_id, session_id=req.session_id, ttl_s=self.deadline_s)
+                          learner_id=req.learner_id, session_id=req.session_id, ttl_s=self.deadline_s,
+                          model=self.model)
         except Refused as err:
             log.info("local brain request refused by egress: %s", err)
             return None

@@ -74,7 +74,7 @@ class ClaudeBrain:
             prepared = self.egress().prepare(DESTINATION, PURPOSE[req.intent],
                                              Outgoing(path="/v1/messages", json=self.request_params(req)),
                                              learner_id=req.learner_id, session_id=req.session_id,
-                                             ttl_s=self.deadline_s)
+                                             ttl_s=self.deadline_s, model=self.model)
         except Refused as e:
             log.info("brain request refused by egress: %s", e)
             return None

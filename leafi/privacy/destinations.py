@@ -4,10 +4,14 @@ Each record names the purposes it accepts, its locality (`cloud` filters learner
 the request headers it accepts (exact values for those that carry meaning, a pattern for the SDK's own, any value
 for the credential), and its redirect policy (study purposes never follow one; `ops` downloads follow only to the
 hosts listed, D16). URL-configured destinations are built from the settings.
+
+A destination that takes a Brain purpose and is not registered `cloud` (Ollama) is **model-bound** (M7 design D1):
+its effective locality depends on the model sent there, and `effective()` is the one place that decides it.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -16,6 +20,7 @@ from urllib.parse import urlsplit
 from leafi.core.config import Settings
 
 STUDY = frozenset({"decide", "generate", "answer", "judge", "word", "tts", "media", "catalog", "notify"})
+BRAIN = frozenset({"decide", "generate", "answer", "judge", "word"})
 OPS = "ops"
 TEXT_PURPOSES = STUDY - {"media"}  # one mediator retry (D7)
 
@@ -59,6 +64,36 @@ class Destination:
         if isinstance(rule, str):
             return value == rule
         return bool(rule.fullmatch(value))
+
+    @property
+    def model_bound(self) -> bool:
+        """Takes a Brain purpose and is not registered `cloud`: its locality is decided per model (D1)."""
+        return self.locality != "cloud" and bool(self.purposes & BRAIN)
+
+
+def _cloud_hosted(model: str) -> bool:
+    """An Ollama cloud-hosted model name (`gpt-oss:120b-cloud`, `qwen3:cloud`): never local (ADR-0018 §2)."""
+    return model.endswith("-cloud") or model.partition(":")[2] == "cloud"
+
+
+def _loopback_literal(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False  # any other name could resolve elsewhere when the request is sent
+
+
+def effective(dest: Destination, model: str | None, settings: Settings) -> str:
+    """The locality egress applies (M7 design D1). A model-bound destination is `local` only for a `backend:model`
+    on LOCAL_MODELS (compared exactly) that is not a cloud-hosted name, on a loopback host; else `cloud`."""
+    if not dest.model_bound:
+        return dest.locality
+    listed = f"{dest.name}:{model}" in settings.local_model_list() if model else False
+    if listed and not _cloud_hosted(model) and all(_loopback_literal(h) for h in dest.hosts):
+        return "local"
+    return "cloud"
 
 
 def _from_url(name: str, url: str, purposes: frozenset[str], locality: str, **kw) -> Destination | None:

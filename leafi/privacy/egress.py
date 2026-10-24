@@ -3,7 +3,8 @@
 `prepare(destination, purpose, Outgoing(...))` takes a request as fields, before any encoding. Text that came
 from a person is a `Text` with its provenance; a plain string is the caller's own (`system`). It refuses what
 the destination, the purpose or the source learners' settings do not allow, replaces every protected name for a
-cloud destination (`leafi.privacy.pseudonym`), encodes the fields itself into the exact bytes to send, writes the
+cloud destination (`leafi.privacy.pseudonym`; for a model-bound destination such as Ollama, "cloud" is decided per
+model by `destinations.effective`, M7 design D1, and the body's model must be the one named to `prepare`), encodes the fields itself into the exact bytes to send, writes the
 `egress_log` row (`sending`) and returns a `Prepared` holding an attempt token.
 
 The token's id travels in the `x-leafi-token` header of the one request it was made for; the mediating
@@ -110,6 +111,8 @@ class Token:
     fingerprint: str
     expires: float
     transmissions: int
+    model: str | None = None   # the model `prepare` checked against the body (M7 design D1)
+    locality: str = "cloud"    # `destinations.effective()` for that model
 
     @property
     def study(self) -> bool:
@@ -315,7 +318,7 @@ class Egress:
     # ---- prepare
     def prepare(self, destination: str | Destination, purpose: str, out: Outgoing, *,
                 learner_id: int | None = None, session_id: int | None = None,
-                ttl_s: float | None = None) -> Prepared:
+                ttl_s: float | None = None, model: str | None = None) -> Prepared:
         dest = destination if isinstance(destination, Destination) else self.registry.get(destination)
         if dest is None:
             raise Refused(f"no destination {destination!r}")
@@ -323,6 +326,13 @@ class Egress:
             raise Refused(f"{dest.name} does not accept purpose {purpose!r}")
         if purpose == "media":
             raise Refused("media is refused until M9 (design D20)")
+        if dest.model_bound and model is None:
+            raise Refused(f"{dest.name}: a request there names the model it is for (M7 design D1)")
+        if model is not None:  # the model checked is the one sent; the mediator then compares the whole body
+            sent = out.json.get("model") if isinstance(out.json, dict) else None
+            if sent != model:
+                raise Refused(f"{dest.name}: the body names model {sent!r}, not {model!r}")
+        locality = dests.effective(dest, model, self.settings)
         study = purpose != dests.OPS
         if study and learner_id is None:
             from leafi.privacy import runtime
@@ -337,7 +347,7 @@ class Egress:
         texts = list(_texts(out))
         sources = sorted({s for t in texts for s in t.sources} | ({learner_id} if study and learner_id else set()))
         c = self._conn()
-        cloud = dest.locality == "cloud"
+        cloud = locality == "cloud"
         if cloud:  # allocation writes; done before the read snapshot so the snapshot sees the surrogates
             pseudonym.surrogates(c, self.key, pseudonym.load_lists(c))
         c.execute("BEGIN")
@@ -391,7 +401,7 @@ class Egress:
              now_iso(), now_iso()))
         tok = Token(secrets.token_urlsafe(18), dest, purpose, learner_id, session_id, int(cur.lastrowid),
                     out.method.upper(), url, body, body_value, digest, snap, self.watch.loaded,
-                    time.monotonic() + ttl, 2 if purpose in dests.TEXT_PURPOSES else 1)
+                    time.monotonic() + ttl, 2 if purpose in dests.TEXT_PURPOSES else 1, model, locality)
         for gone in self.tokens.add(tok):
             self._finish(gone, "failed")
         return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping)
