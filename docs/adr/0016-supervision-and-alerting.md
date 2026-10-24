@@ -103,7 +103,7 @@ Restarts cannot fix a setting that is wrong. The supervisor also runs a list of 
 | `active-hours` | Windows Update active hours cover `ACTIVE_HOURS` (default 7–21), so updates do not reboot the PC while the household uses it |
 | `disk` | at least `MIN_FREE_GB` (default 5) free on the data drive |
 | `models` | `leafi doctor` reports no backend as missing or error |
-| `household-terms` | every enrolled learner has a school answer, so their own words may leave pseudonymised (ADR-0018 §3; `redact-terms` until 2026-10-24, when `REDACT_TERMS` became `household_terms`) |
+| `household-terms` | every enrolled learner has a school answer, so their school's name can be replaced (ADR-0018 §3; since the owner's decision of 2026-10-24 a missing answer no longer keeps their words local, so this check warns rather than guards; `redact-terms` until 2026-10-24, when `REDACT_TERMS` became `household_terms`) |
 | `telegram` | `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set (only while `telegram` is in `REQUIRED_CHANNELS`, default `telegram,heartbeat`: the owner chose both; toast-only is a supported choice by removing it) |
 | `heartbeat` | `HEARTBEAT_URL` is set (only while `heartbeat` is in `REQUIRED_CHANNELS`) |
 | `devices` | `config/devices.yml` parses |

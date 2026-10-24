@@ -156,12 +156,14 @@ async def test_a_body_or_header_the_adapter_did_not_prepare_is_refused(world):
     assert [r[3:] for r in _log(w)] == [("failed", 0)] * 3  # refused before any reservation
 
 
-async def test_learner_words_need_cloud_text_and_a_school_answer(world):
+async def test_learner_words_need_cloud_text_not_a_school_answer(world):
+    """Owner decision 2026-10-24 (M7 design A1): an unanswered school no longer keeps a learner's words local;
+    they leave pseudonymised (the lists, and the detector for an unlisted school)."""
     w = world
     leo = learner_store.create(w.store, "Leo")
     body = {"messages": [{"role": "user", "content": Text("Leo here", "learner", (leo,))}]}
-    with pytest.raises(eg.Refused, match="no school answer"):
-        w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
+    sent = w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
+    assert b"Leo" not in sent.body  # no school answer, still pseudonymised
     privacy.set_school(w.store, leo, None)
     privacy.write(w.store, leo, "cloud.text", False)
     with pytest.raises(eg.Refused, match="cloud.text off"):

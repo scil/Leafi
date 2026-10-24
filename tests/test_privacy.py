@@ -118,8 +118,27 @@ async def test_no_canary_leaves_in_any_outbound_body(settings):
     assert rows == [("bark", "notify", "sent"), ("telegram", "notify", "sent")]
 
 
+def test_the_parent_notification_names_a_learner_without_a_school_answer(settings):
+    """Owner decision 2026-10-24 (M7 design A1, rev 6 review #17): with no school answer the notification now names
+    the learner, as learner-derived text (so egress replaces the name by its surrogate); `cloud.text` off still
+    sends "A reader"."""
+    from leafi.core import learner_store
+    from leafi.core.ports import Counts
+    from leafi.devices.notifiers import NotifierDevice
+    from leafi.privacy import settings as privacy
+
+    e, _ = _wire(settings)
+    store = Store(settings.db_path)
+    kid = learner_store.create(store, NAME)
+    notifier = NotifierDevice(options={"egress": e}, settings=settings)
+    body = notifier.body(Counts(kid, None, pages=1))
+    assert body.value.startswith(NAME) and (body.provenance, body.sources) == ("derived_from_learner", (kid,))
+    privacy.write(store, kid, "cloud.text", False)
+    assert notifier.body(Counts(kid, None, pages=1)).startswith("A reader")
+
+
 async def test_a_learners_own_words_leave_only_pseudonymised_and_only_when_allowed(settings):
-    """ADR-0018 §3: with `cloud.text` on and the school answered, a learner's words reach the Brain with every
+    """ADR-0018 §3: with `cloud.text` on (and here the school answered, so it is listed), a learner's words reach the Brain with every
     listed name — the learner's, a sibling's in Chinese, a Latin name inside Chinese text, the school — replaced;
     with `cloud.text` off they never leave."""
     import pytest

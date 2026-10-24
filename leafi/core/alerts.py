@@ -47,8 +47,8 @@ _CHECK_FAILED = {
                     "while it is needed. Widen them in Windows Update settings.",
     "disk": "The data drive is almost full. Free some space on the PC.",
     "models": "A Leafi model is missing or broken. Run python -m leafi doctor on the PC.",
-    "household-terms": "A learner has no school answer, so their own words are kept off the cloud. Run python -m "
-                       "leafi privacy schools on the PC.",
+    "household-terms": "A learner has no school answer, so their school's name cannot be replaced if it appears "
+                       "in what is sent. Run python -m leafi privacy schools on the PC.",
     "telegram": "Telegram alerts are not configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID in .env), so alerts "
                 "only appear on the PC.",
     "heartbeat": "The heartbeat is not configured (HEARTBEAT_URL in .env), so nobody is told when the PC itself "

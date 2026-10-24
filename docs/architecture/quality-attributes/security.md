@@ -4,7 +4,7 @@
 
 1. **Images, faces, poses never leave the LAN.** Book pages are images. OCR, vision judge and barcode decoding run locally. Enforced by: egress tests below; the `Notifier` port carries text only.
 2. **The learner's voice stays local by default.** ASR and pronunciation scoring are local; audio is not persisted unless `AUDIO_KEEP_CLIPS=true`. Enforced by: config default + `tests/test_storage.py` retention test.
-3. **Cloud payloads carry no identity; a learner's own words only pseudonymised and only when allowed** (ADR-0018, superseding ADR-0011's "no learner text"). Every household name, school and listed term is replaced before any text leaves; a learner's words leave only with their `cloud.text` on and a school answer, run through the name detector too; an exact age from the profile never leaves (an age said in the learner's own words is sent as said, owner decision 2026-10-23). The protected terms are `household_terms` (`python -m leafi privacy terms`); the retired `REDACT_TERMS` was imported into them. Enforced by: the egress pipeline and the canary tests below.
+3. **Cloud payloads carry no identity; a learner's own words only pseudonymised and only when allowed** (ADR-0018, superseding ADR-0011's "no learner text"). Every household name, listed school and listed term is replaced before any text leaves; a learner's words leave only with their `cloud.text` on, run through the name detector too (since 2026-10-24 an unanswered school no longer keeps them local, owner decision against the recommendation; an unlisted school is replaced only if the detector finds it); an exact age from the profile never leaves (an age said in the learner's own words is sent as said, owner decision 2026-10-23). The protected terms are `household_terms` (`python -m leafi privacy terms`); the retired `REDACT_TERMS` was imported into them. Enforced by: the egress pipeline and the canary tests below.
 4. **Cameras never enter the bathroom**; the study camera points at the desk. Enforced by: advisory (physical).
 5. **Child-transparent and child-controlled.** Leafi says when it listens and looks; the Face shows the listening state; `stop` and `skip` work in every state; at most 2 retries per word; no persistent Difficulty without corroboration (ADR-0009). Enforced by: `tests/test_practice.py`, `tests/test_session_controls.py`.
 
@@ -43,7 +43,7 @@ Household keys are in `.env` (settings page, group Privacy); a † key needs the
 | Setting | Where | Default | Values |
 |---|---|---|---|
 | `cloud.text` † | learner (`privacy learner` writer; a `consents` row each change) | on | on / off; guests always off |
-| `privacy.school` | learner | unanswered (learner words stay local) | a school term, or `none` |
+| `privacy.school` | learner | unanswered (the school cannot be replaced by the lists; since 2026-10-24 it no longer keeps learner words local) | a school term, or `none` |
 | `privacy.media` † | learner | ask | ask / never (media refused until M9) |
 | `CLOUD_PARENT_TEXT` † | household | true | true / false |
 | `PRIVACY_TTS_LEARNER_LINES` † | household | local | local / cloud |

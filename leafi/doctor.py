@@ -127,7 +127,8 @@ def names_line(settings: Settings) -> str:
 
 
 def schools_line(settings: Settings) -> str:
-    """Learners without a school answer (design D10), read-only so it works on a file not yet migrated."""
+    """Learners without a school answer, whose school cannot be replaced by the lists (design D10; since
+    2026-10-24 it no longer keeps their words local), read-only so it works on a file not yet migrated."""
     import json
     import sqlite3
 
@@ -146,7 +147,8 @@ def schools_line(settings: Settings) -> str:
     if not missing:
         return f"{'schools':<22}{'leafi.db':<16}{'ok':<16}{len(rows)} learner(s) answered; python -m leafi privacy schools"
     first = missing[0]
-    return (f"{'schools':<22}{'leafi.db':<16}{'not answered':<16}{', '.join(missing)}: set each with e.g. "
+    return (f"{'schools':<22}{'leafi.db':<16}{'not answered':<16}{', '.join(missing)} (the school's name cannot "
+            "be replaced): set each with e.g. "
             f"python -m leafi privacy learner \"{first}\" school, then the school's name in quotes (or none), "
             "then --yes")
 

@@ -4,9 +4,10 @@ The keys live in `learners.settings` beside the harness settings, but `leafi.stu
 them (they are not in its SPEC); only `write` here changes them, and it bumps the learner's `privacy.version` and,
 for `cloud.text`, writes a `consents` row in the same transaction. Guests read as off whatever is stored.
 
-`privacy.school` is the answer ADR-0018 §3 requires of every learner: `none`, or the id of a `household_terms` row
-of kind `school` (siblings at one school share the row). While it is unset the learner's learner-derived text is
-refused to the cloud (design D10).
+`privacy.school` is the answer Leafi asks every learner for (ADR-0018 §3): `none`, or the id of a `household_terms`
+row of kind `school` (siblings at one school share the row), so the school's name can be replaced. Since the
+owner's decision of 2026-10-24 an unanswered school no longer keeps the learner's words local: they leave as
+`cloud.text` allows, with the lists and the name detector (which replaces organisations it finds) applied.
 """
 
 from __future__ import annotations
@@ -42,9 +43,9 @@ class LearnerPrivacy:
 
     @property
     def cloud_text_allowed(self) -> bool:
-        """Learner-derived text may go to the cloud: an enrolled learner, not being forgotten, `cloud.text` on,
-        and the school question answered."""
-        return (self.kind == "learner" and not self.forgetting and self.cloud_text and self.school_answered)
+        """Learner-derived text may go to the cloud: an enrolled learner, not being forgotten, `cloud.text` on
+        (the school answer is no longer required: owner decision 2026-10-24, M7 design A1)."""
+        return self.kind == "learner" and not self.forgetting and self.cloud_text
 
 
 def read(store: Store, learner_id: int) -> LearnerPrivacy:
@@ -151,8 +152,8 @@ def add_term(store: Store, term: str, kind: str = "name") -> int:
 
 
 def remove_term(store: Store, term: str) -> list[str]:
-    """Remove a term; returns what else changed. A learner whose school it was has no school answer again (their
-    own words stay off the cloud until it is set); a surrogate goes with the last term of its entity."""
+    """Remove a term; returns what else changed. A learner whose school it was has no school answer again (the
+    school can no longer be replaced by the lists); a surrogate goes with the last term of its entity."""
     effects: list[str] = []
     with store.transaction():
         hit = store.one("SELECT id, kind, former_learner_id FROM household_terms WHERE term = ? COLLATE NOCASE",
@@ -184,6 +185,7 @@ def school_name(store: Store, privacy: LearnerPrivacy) -> str | None:
 
 
 def missing_school(store: Store) -> list[tuple[int, str]]:
-    """Enrolled learners with no school answer: their learner-derived text stays off the cloud until one is set."""
+    """Enrolled learners with no school answer: their school cannot be replaced by the lists (only the name
+    detector may catch it), so `doctor` and the `household-terms` check ask for it."""
     return [(r["id"], r["display_name"]) for r in learner_store.enrolled(store)
             if loads(r["settings"], {}).get("privacy.school") is None]

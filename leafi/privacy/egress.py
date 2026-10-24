@@ -602,9 +602,7 @@ def _gate(t: Text, privacy: dict[int, privacy_settings.LearnerPrivacy], settings
         for s in learners:
             p = privacy.get(s)
             if p is None or not p.cloud_text_allowed:
-                why = ("no school answer" if p is not None and p.kind == "learner" and p.cloud_text
-                       and not p.school_answered else "cloud.text off, a guest, or not a learner")
-                raise Refused(f"learner {s}'s own words may not leave: {why}")
+                raise Refused(f"learner {s}'s own words may not leave: cloud.text off, a guest, or not a learner")
     elif t.provenance == "parent" and not getattr(settings, "cloud_parent_text", False):
         raise Refused("parent text may not leave (CLOUD_PARENT_TEXT off)")
     elif t.provenance not in ("page", "system", "parent"):

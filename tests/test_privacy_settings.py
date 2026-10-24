@@ -77,7 +77,7 @@ def test_defaults_and_guests(store):
     guest = learner_store.create(store, "guest", kind="guest", settings={"cloud.text": True})
     p = privacy.read(store, mia)
     assert (p.cloud_text, p.media, p.school, p.version) == (True, "ask", None, 0)
-    assert not p.cloud_text_allowed  # no school answer yet
+    assert p.cloud_text_allowed  # no school answer yet, which no longer gates (owner, 2026-10-24)
     g = privacy.read(store, guest)
     assert (g.cloud_text, g.media) == (False, "never") and not g.cloud_text_allowed
     assert privacy.read(store, 404).kind is None
@@ -175,7 +175,7 @@ def test_terms_add_change_kind_and_remove_unlinking_a_school(store):
         privacy.add_term(store, "x", "planet")
     effects = privacy.remove_term(store, "oakwood")
     assert effects == [f"learner #{mia} Mia has no school answer now"]
-    assert privacy.read(store, mia).school is None and not privacy.read(store, mia).cloud_text_allowed
+    assert privacy.read(store, mia).school is None and privacy.read(store, mia).cloud_text_allowed
     with pytest.raises(privacy.InvalidPrivacySetting, match="no household term"):
         privacy.remove_term(store, "Oakwood")
 
