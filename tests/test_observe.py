@@ -36,3 +36,17 @@ def test_ids_are_rendered_and_mapped_back_and_the_turn_is_opaque():
     assert o.ids["m12"] == ("candidate", 12) and o.ids["s3.2"] == ("sentence", 2) and o.ids["i5"] == ("item", 5)
     assert o.ids["a40"] == ("activity", 40) and o.turn == "t9"
     assert all("session_id" not in leaf.value for s in o.sections for leaf in s.leaves)
+
+
+def test_the_decide_request_is_frozen_except_its_sections():
+    from leafi.core.ports import CallAttempt
+    from leafi.study.brain import prompts
+
+    o = observe(_input())
+    make = prompts.decide_request(o.sections, policy=prompts.policy_text(autonomy=5, age_band="9-10"),
+                                  learner_id=7, session_id=2)
+    a = make("m", "fast", [], None, CallAttempt(), 2.0)
+    b = make("m", "fast", ["type at activity"], None, CallAttempt(), 2.0)
+    assert a.system == b.system and a.schema == b.schema and a.thinking == "off" and a.effort == "low"
+    assert [s.name for s in b.turns[0].sections][-1] == "rejected"
+    assert "rejected" not in [s.name for s in a.turns[0].sections]
