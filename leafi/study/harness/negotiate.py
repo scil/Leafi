@@ -147,14 +147,20 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
                 _exclude(s, a.kind)
                 continue
             return REOBSERVE if s.epoch() != epoch else Run(a)
+        owner = ("offer", s.latch.epoch.turn_id, b.offers)  # D21: the offer's lines and its answer, one prompt
         if autonomy >= st["bands.argue"]:
-            await talk.say(rationale_line(prop, a))
+            await talk.ask(owner, rationale_line(prop, a))
         elif autonomy >= st["bands.ask"]:
-            await talk.say(rationale_line(prop, a))
-            await talk.say(f"Shall we {describe(a)}? Or something else?")
+            await talk.ask(owner, rationale_line(prop, a))
+            await talk.ask(owner, f"Shall we {describe(a)}? Or something else?")
         else:
-            await talk.say(f"Would you like to {describe_choices(s, a, m, st['negotiation.choices'])}?")
-        c = parse_choice(await talk.listen(float(st["negotiation.ask_s"])))
+            await talk.ask(owner, f"Would you like to {describe_choices(s, a, m, st['negotiation.choices'])}?")
+        u = await talk.listen(float(st["negotiation.ask_s"]), owner, accepts_page=True)
+        if u is not None and s.on_page is not None and (pc := controls.parse(u.text)) is not None \
+                and pc.kind == "page":
+            s.on_page(u)  # a page turn during an offer: the boundary re-observes for the new page (D21)
+            return REOBSERVE
+        c = parse_choice(u)
         s.checkpoint()
         if s.epoch() != epoch:
             return REOBSERVE

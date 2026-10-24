@@ -14,6 +14,7 @@ import random
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import anyio
 
@@ -158,6 +159,7 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
 
     def finish_now(status) -> ActivityStatus:
         """No awaiting: also used while the scope is being cancelled. Busy → kept for the next write."""
+        w.inputs.activity_started_at = None
         try:
             rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id)
         except sqlite3.OperationalError as e:
@@ -168,6 +170,7 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
         w.first_boundary = False
         return ActivityStatus(status)
 
+    w.inputs.activity_started_at = time.monotonic()  # an Ear switch after this ends the activity (D21)
     try:
         status, outcome = await KINDS[act.kind](w, Activity(act.kind, params, act.decided_by, act.content,
                                                             act.content_owner, act.override), aid)
@@ -188,6 +191,7 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
         finish_now(ActivityStatus.INTERNAL_ERROR)
         raise
     # any other BaseException is a process exit: the row stays `running` for startup recovery (§2, §8.5)
+    w.inputs.activity_started_at = None
     try:
         await busy.retry(lambda: rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id))
     except busy.StoreBusy:
@@ -274,6 +278,7 @@ async def run_session(env: Env) -> int:
         w = World(s=s, inputs=inputs, settings=cfg, word_info=env.word_info, anki=env.anki, pron=env.pron,
                   page_tracker=env.page_tracker)
         s.facts_fn = w.facts
+        s.on_page = lambda u: _page_request(w, u)  # D21: a page turn heard at a boundary
         latch.versions = lambda: (hs.version(store, s.learner_id), 0)
         latch.on_settings_change = lambda: _reload(s)
         if env.on_built is not None:
@@ -323,6 +328,26 @@ async def run_session(env: Env) -> int:
         lease.release()
 
 
+def _drain_late(w: World) -> None:
+    """D21 (rev 9): at a boundary, a late page turn becomes the pending page; a late skip is dropped, since no
+    offer was heard yet (ADR-0017 §2.1: a skip before an offer excludes nothing)."""
+    for item in w.inputs.take_late():
+        if item.kind == "page":
+            _page_request(w, item.u)
+
+
+def _page_request(w: World, u) -> None:
+    """A page turn heard outside an activity (`/page N`, `--text FILE`, or the Eye) becomes the pending page."""
+    ctl = controls.parse(u.text)
+    text = None
+    if ctl is not None and ctl.path is not None:
+        try:
+            text = Path(ctl.path).read_text(encoding="utf-8")
+        except OSError:
+            log.warning("page turn: %s could not be read", ctl.path)
+    w.pending = PageRequest(ctl.n if ctl is not None else None, text)
+
+
 def _reload(s: Session) -> None:
     s.settings = hs.load(s.store, s.learner_id)
     s.ledger.limits = s.settings.limits()
@@ -335,6 +360,7 @@ async def _body(s: Session, w: World, env: Env) -> None:
     await identify_book(s, w, env)
     while True:
         s.checkpoint()
+        _drain_late(w)
         await w.refresh()
         menu = allowed(s)
         prop = None  # sequence(): the default policy's arm, or a Brain-arm boundary without a Brain (M7)

@@ -89,7 +89,7 @@ async def test_exclusions_survive_reobserve(tmp_path):
     s = make_session(tmp_path, facts=READING, values={"autonomy": 2})
 
     class BumpingTalk(type(s.talk)):
-        async def listen(self, timeout_s):
+        async def listen(self, timeout_s, owner=None, *, accepts_page=True):
             out = await super().listen(timeout_s)
             if self.listens == 2:
                 s.latch.epoch.bump()  # e.g. a page turn while Leafi waited for the answer

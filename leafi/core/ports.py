@@ -76,6 +76,7 @@ class Utterance:
     audio_ref: AudioRef | None = None
     line_end: bool = False  # typed line ended with . ? ! or was empty (ADR-0013 completion (ii))
     source: str = "console"
+    ended_at: float | None = None  # time.monotonic() when the learner finished it (M7 design D21); None: unknown
 
     @property
     def is_voice(self) -> bool:

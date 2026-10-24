@@ -27,7 +27,10 @@ class ScriptedTalk:
     async def say(self, text: str) -> None:
         self.said.append(text)
 
-    async def listen(self, timeout_s):
+    async def ask(self, owner, text: str, **kw) -> None:  # M7 design D21: a prompt, recorded like a line
+        self.said.append(text)
+
+    async def listen(self, timeout_s, owner=None, *, accepts_page=True):
         self.listens += 1
         r = self.replies.pop(0) if self.replies else None
         if r is None:

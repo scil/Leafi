@@ -20,7 +20,9 @@ from leafi.study.harness.settings import LearnerSettings
 
 class Talk(Protocol):
     async def say(self, text: str, *, provenance: Provenance = SYSTEM) -> None: ...  # M5 design D13
-    async def listen(self, timeout_s: float | None) -> Utterance | None: ...
+    async def ask(self, owner, text: str, *, provenance: Provenance = SYSTEM) -> None: ...  # M7 D21: a prompt
+    async def listen(self, timeout_s: float | None, owner=..., *, accepts_page: bool = True
+                     ) -> Utterance | None: ...
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,7 @@ class Session:
     generate: Callable[..., Any] | None = None  # M7: the Brain's `generate`; None = no Brain-owned content
     routable_answer: bool = False                 # M7: an eligible `answer` backend exists
     pending_rows: list = field(default_factory=list)  # §7.3: activity ends a busy store could not take yet
+    on_page: Callable[[Utterance], None] | None = None  # D21: a page turn heard at a boundary (the World's)
 
     def facts(self) -> Facts:
         return self.facts_fn(self)

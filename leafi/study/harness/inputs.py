@@ -15,8 +15,11 @@ caller (nothing is lost, nothing is read ahead). Controls act at once, also duri
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
+import time
+from dataclasses import dataclass
 
 import anyio
 
@@ -31,8 +34,25 @@ from leafi.study.harness.latch import Latch
 log = logging.getLogger("leafi.harness.inputs")
 
 EYE_OFFLINE_AFTER = 10  # consecutive empty page-watch frames before "camera offline" is shown (TD-20)
-_TIMEOUT = object()      # a source's own timeout (a scripted None): listen() returns None
-_SWITCHED = object()     # the Ear was lost and the console took over
+OWNER_KEEP_S = 60.0     # the owner timeline keeps this long, plus its newest entry before the cutoff (D21)
+_UNOWNED = object()     # listen() without an owner: M6's behaviour, every item taken
+
+
+@dataclass(frozen=True)
+class _Item:
+    """What a reader delivered (M7 design D21): `utterance`, `skip`, `page` or `timeout`, with the prompt that was
+    current when the learner finished it (None: no prompt was current)."""
+
+    kind: str
+    u: Utterance | None
+    owner: object
+
+
+@dataclass(frozen=True)
+class _Switched:
+    """The Ear was lost at `at` (monotonic) and the console took over."""
+
+    at: float
 
 
 class StaleInput(Exception):
@@ -61,6 +81,11 @@ class Inputs:
         self._busy: dict[str, bool] = {}
         self._sources: dict[str, object] = {}
         self._console_is_main = False  # after a lost Ear (text mode)
+        self._owners: list[tuple[float, object]] = []  # D21: (since, prompt id) timeline
+        self.late: list[_Item] = []  # pages and skips of ended prompts (D21)
+        self.activity_started_at: float | None = None  # set by run_activity while an activity runs
+        self.notice: str | None = None  # a phrase the main flow says before its next line ("mic_lost")
+        self._waiting = 0  # depth of controls_only()
 
     # ---- lifecycle
     def start(self) -> None:
@@ -83,41 +108,74 @@ class Inputs:
         if name in self._want and not self._busy[name]:
             self._want[name].set()
 
+    # ---- ownership (M7 design D21): an input belongs to the prompt current when the learner finished it
+    def present(self, owner) -> None:
+        """`owner` (a prompt id, or None) is current from now: called before a prompt is spoken or shown."""
+        if not self._owners or self._owners[-1][1] != owner:
+            now = time.monotonic()
+            self._owners.append((now, owner))
+            cutoff = now - OWNER_KEEP_S  # prune, but keep the newest entry at or before the cutoff
+            while len(self._owners) > 1 and self._owners[1][0] <= cutoff:
+                self._owners.pop(0)
+
+    def owner_at(self, t: float):
+        owner = None
+        for since, o in self._owners:
+            if since > t:
+                break
+            owner = o
+        return owner
+
+    @property
+    def current_owner(self):
+        return self._owners[-1][1] if self._owners else None
+
+    def take_late(self) -> list[_Item]:
+        """Pages and skips whose prompt had ended when they arrived (D21): drained by the boundary or activity."""
+        late, self.late = self.late, []
+        return late
+
     # ---- readers
     async def _reader(self, name: str) -> None:
         while True:
             await self._want[name].wait()
             self._want[name] = anyio.Event()
             self._busy[name] = True
+            asked = time.monotonic()
             try:
                 u = await self._sources[name].next_utterance(None)
             except ListenerLost as e:
                 self._busy[name] = False
                 if name == "main":
-                    await self._listener_lost(e)
+                    self._listener_lost(e)
                     return
                 raise
             self._busy[name] = False
-            await self._deliver(u, name)
+            await self._deliver(u, name, asked)
 
-    async def _deliver(self, u: Utterance | None, name: str) -> None:
+    async def _deliver(self, u: Utterance | None, name: str, asked: float) -> None:
         if u is None:
-            if name == "main" or self._console_is_main:
-                await self._send.send(_TIMEOUT)
+            if name == "main" or self._console_is_main:  # as M6: only the main source's silence is a timeout
+                await self._send.send(_Item("timeout", None, self.owner_at(asked)))
             return
+        owner = self.owner_at(u.ended_at if u.ended_at is not None else time.monotonic())
         ctl = controls.parse(u.text)
         if ctl is not None and ctl.kind == "stop":
             await self.hub.stop_speaking()
             self.latch.terminate("stop")
             return
         if ctl is not None and ctl.kind == "skip":
-            if self.speaking:
+            if self.speaking and owner == self.current_owner:
                 await self.hub.skip_current()  # during playback skip cuts the current line only
                 return
-            self.latch.post_skip()
-        await self._send.send(u)
+            await self._send.send(_Item("skip", u, owner))  # posted when its listener takes it (D21)
+            return
+        kind = "page" if ctl is not None and ctl.kind == "page" else "utterance"
+        await self._send.send(_Item(kind, u, owner))
 
-    async def _listener_lost(self, err: BaseException) -> None:
+    def _listener_lost(self, err: BaseException) -> None:
+        """Synchronous, before any await (D21 rev 8/9): the console becomes the main source and `Switched` is in
+        the stream before any line the console delivers next; "mic lost" is said by the main flow's next line."""
         log.error("voice listener lost: %s", err)
         alerts.insert(self.store, "study-mic", "event", "mic_lost")  # a code: `err` names the device (ADR-0016)
         console = self.control_source if self.control_source is not None and \
@@ -130,24 +188,93 @@ class Inputs:
         del self._sources["main"]  # this reader ends; the console reader now delivers the main input
         self._console_is_main = True
         self.latch.epoch.bump()
-        await self._send.send(_SWITCHED)
+        self.notice = "mic_lost"
+        self._send.send_nowait(_Switched(time.monotonic()))
 
     # ---- listen / say
-    async def listen(self, timeout_s: float | None) -> Utterance | None:
-        """Next input, or None at `timeout_s` (None waits). Raises StaleInput after an Ear switch."""
+    async def listen(self, timeout_s: float | None, owner=_UNOWNED, *, accepts_page: bool = True
+                     ) -> Utterance | None:
+        """Next input, or None at `timeout_s` (None waits). Returns what M6's callers received: an utterance (a
+        skip is posted to the skip queue and returned; a page turn comes back as its `/page …` utterance).
+
+        `owner` (M7 design D21): the prompt this listen answers. Unowned (the default) behaves as M6 and takes
+        every item. An owned listen takes only items of its prompt (or of no prompt), parks a page or skip of an
+        ended prompt in `late`, drops other stale items, and ignores a page unless `accepts_page`. An Ear switch
+        raises StaleInput when an activity began before it, for a setup prompt, or for an unowned listen; at a
+        boundary it is absorbed (the epoch bump makes the boundary re-observe)."""
+        owned = owner is not _UNOWNED
+        if owned:
+            self.present(owner)
         await self.hub.show(Display("listening", "listening"))
-        if self._recv.statistics().current_buffer_used == 0:  # an input already waiting answers first
+        if self._recv.statistics().current_buffer_used == 0:  # an input already waiting answers first (as M6)
             for name in self._sources:
                 self._request(name)
         with anyio.move_on_after(math.inf if timeout_s is None else timeout_s):
-            item = await self._recv.receive()
-            if item is _TIMEOUT:
-                return None
-            if item is _SWITCHED:
-                await self.say(phrases.say("mic_lost"))
-                raise StaleInput("listener switched to the console")
-            return item
+            while True:
+                item = await self._recv.receive()
+                if isinstance(item, _Switched):
+                    started = self.activity_started_at
+                    setup = isinstance(owner, tuple) and owner[:1] == ("setup",)
+                    if not owned or setup or (started is not None and started < item.at):
+                        raise StaleInput("listener switched to the console")
+                    continue
+                if owned and item.owner is not None and item.owner != owner:
+                    if item.kind in ("page", "skip"):
+                        self.late.append(item)  # D21: routed to the boundary or the activity, not lost
+                    else:
+                        log.info("stale input dropped (prompt %s, listening for %s)", item.owner, owner)
+                    for name in self._sources:  # a source freed by the stale read is asked again (D21)
+                        self._request(name)
+                    continue
+                if item.kind == "timeout":
+                    return None
+                if item.kind == "skip":
+                    self.latch.post_skip()
+                    return item.u
+                if item.kind == "page" and not accepts_page:
+                    log.info("page turn ignored by a listen that does not take pages")
+                    continue
+                return item.u
         return None
+
+    async def ask(self, owner, text: str, lang: str = "en", *, provenance: Provenance = SYSTEM, **kw) -> None:
+        """A prompt (D21): `owner` is current from before its first word, so an answer typed while it plays is
+        its answer."""
+        self.present(owner)
+        await self._speak(text, lang, provenance=provenance, **kw)
+
+    @contextlib.asynccontextmanager
+    async def controls_only(self, owner):
+        """Around a Brain wait (D21): the readers stay asked so `stop` and `skip` act during the call; on exit the
+        caller gets the pages and skips of `owner` (it decides what they mean) and everything else stays queued."""
+        self.present(owner)
+        self._waiting += 1
+        taken: list[_Item] = []
+        async with anyio.create_task_group() as tg:
+            async def keep_asking():
+                while True:
+                    for name in self._sources:
+                        self._request(name)
+                    await anyio.sleep(0.05)
+
+            tg.start_soon(keep_asking)
+            try:
+                yield taken
+            finally:
+                tg.cancel_scope.cancel()
+                self._waiting -= 1
+                rest = []
+                while True:
+                    try:
+                        item = self._recv.receive_nowait()
+                    except anyio.WouldBlock:
+                        break
+                    if isinstance(item, _Item) and item.kind in ("page", "skip") and item.owner == owner:
+                        taken.append(item)
+                    else:
+                        rest.append(item)
+                for item in rest:
+                    self._send.send_nowait(item)
 
     def lease_held(self) -> bool:
         return self.latch.terminal != "lease_lost"
@@ -156,7 +283,16 @@ class Inputs:
         """`provenance` says where the text came from (M5 design D13): a learner's own words, page text, or Leafi's
         own phrase; the TTS service keeps a learner's words (and any line holding a protected name) off the
         cloud. Controls are read during playback; nothing is spoken after the lease is lost (Faces still show
-        it)."""
+        it). A plain line is no prompt (D21): outside a Brain wait it makes no prompt current, so a line typed
+        while it plays goes to the next listen, as in M6."""
+        if self._waiting == 0:
+            self.present(None)
+        await self._speak(text, lang, slow=slow, provenance=provenance)
+
+    async def _speak(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM) -> None:
+        if self.notice is not None:  # "mic lost", deferred from the Ear's reader to the main flow (D21)
+            notice, self.notice = self.notice, None
+            await self._speak(phrases.say(notice))
         if not text:
             return
         if not self.lease_held():  # after `stop` the closing line is still spoken (deliver, §2); never after this
@@ -200,7 +336,8 @@ class Inputs:
                 settled = await tracker.settle()
                 if settled is not None and tracker.changed(settled):
                     log.info("page turn seen by the Eye")
-                    await self._send.send(typed_utterance("/page", "eye"))
+                    await self._send.send(_Item("page", typed_utterance("/page", "eye"),
+                                                self.owner_at(time.monotonic())))
 
     async def _renew_lease(self) -> None:
         """Renew every third of the TTL; a failed renewal means another launch took the lease (TD-15)."""
