@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
+from .provenance import SYSTEM, Provenance  # noqa: F401  (re-exported; defined there since M7 design D2)
+
 # ---------------------------------------------------------------- value types
 
 
@@ -145,20 +147,6 @@ class Presence(Protocol):
     def subscribe(self, fn: Callable[[PresenceEvent], None]) -> Callable[[], None]: ...
 
 
-@dataclass(frozen=True)
-class Provenance:
-    """Where a spoken or sent text came from (ADR-0018 §3): `system` (Leafi's own phrase), `page`, `parent`,
-    `learner` or `derived_from_learner`, and the learners it came from. The TTS service routes by it (M5 D13)."""
-
-    cls: str = "system"
-    sources: tuple[int, ...] = ()
-
-    @property
-    def learners_own(self) -> bool:
-        return self.cls in ("learner", "derived_from_learner")
-
-
-SYSTEM = Provenance()
 
 
 @dataclass(frozen=True)

@@ -50,6 +50,7 @@ import psutil
 
 from leafi.core import netguard
 from leafi.core.config import Settings
+from leafi.core.provenance import PARENT_SOURCE, Provenance
 from leafi.core.storage import Store, _FileLock, now_iso
 from leafi.privacy import destinations as dests
 from leafi.privacy import pseudonym, versions
@@ -80,7 +81,11 @@ class Text:
 
     value: str
     provenance: str = "system"
-    sources: tuple[int, ...] = ()
+    sources: tuple[int, ...] = ()  # may hold PARENT_SOURCE (0): parent text went into this (M7 design D2)
+
+    @property
+    def prov(self) -> Provenance:
+        return Provenance(self.provenance, self.sources)
 
 
 @dataclass
@@ -345,7 +350,9 @@ class Egress:
         if study and self.watch.stale():
             raise Refused("household privacy settings changed since this process started; restart it")
         texts = list(_texts(out))
-        sources = sorted({s for t in texts for s in t.sources} | ({learner_id} if study and learner_id else set()))
+        # PARENT_SOURCE is a flag, not a learner: never in the snapshot, the privacy map or the log (M7 D2, S1)
+        sources = sorted({s for t in texts for s in t.sources if s != PARENT_SOURCE}
+                         | ({learner_id} if study and learner_id else set()))
         c = self._conn()
         cloud = locality == "cloud"
         if cloud:  # allocation writes; done before the read snapshot so the snapshot sees the surrogates
@@ -584,11 +591,15 @@ def _walk(v, fill):
 
 
 def _gate(t: Text, privacy: dict[int, privacy_settings.LearnerPrivacy], settings: Settings) -> None:
-    """ADR-0018 §3 for a cloud destination: a learner's words only with every source learner allowing it."""
+    """ADR-0018 §3 for a cloud destination: a learner's words only with every source learner allowing it; text
+    of parent origin (a mixed output carrying PARENT_SOURCE, M7 design D2) only with CLOUD_PARENT_TEXT on too."""
+    if PARENT_SOURCE in t.sources and not getattr(settings, "cloud_parent_text", False):
+        raise Refused("parent text may not leave (CLOUD_PARENT_TEXT off)")
     if t.provenance in CLOUD_TEXT_CLASSES:
-        if not t.sources:
+        learners = [s for s in t.sources if s != PARENT_SOURCE]
+        if not learners:
             raise Refused(f"{t.provenance} text without its source learners")
-        for s in t.sources:
+        for s in learners:
             p = privacy.get(s)
             if p is None or not p.cloud_text_allowed:
                 why = ("no school answer" if p is not None and p.kind == "learner" and p.cloud_text

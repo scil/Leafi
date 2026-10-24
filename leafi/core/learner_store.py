@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable
 
+from leafi.core.provenance import PARENT_SOURCE
 from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.core.text import placeholder_reason
 
@@ -48,11 +49,13 @@ def prov(cls: str, sources: Iterable[int] = ()) -> tuple[str, str]:
 
 
 def stated_sources(cols: dict) -> set[int]:
-    """The learner ids a row's own `*source_learners` columns name: what the fence must check (codex M3 #3)."""
+    """The learner ids a row's own `*source_learners` columns name: what the fence must check (codex M3 #3).
+    `PARENT_SOURCE` names no learner and is left out (M7 design D2)."""
     out: set[int] = set()
     for name, value in cols.items():
         if name.endswith("source_learners"):
             out.update(int(i) for i in loads(value, []))
+    out.discard(PARENT_SOURCE)
     return out
 
 
@@ -63,7 +66,7 @@ def insert(store: Store, table: str, learner_id: int, *, sources: Iterable[int] 
     if table not in DIRECT:
         raise ValueError(f"{table} is not a learner-owned table")
     cols = {"learner_id": learner_id, **cols}
-    ids = sorted({learner_id, *sources, *stated_sources(cols)})
+    ids = sorted({learner_id, *sources, *stated_sources(cols)} - {PARENT_SOURCE})
     names = ", ".join(cols)
     marks = ", ".join("?" for _ in cols)
     idm = ", ".join("?" for _ in ids)

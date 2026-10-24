@@ -218,6 +218,35 @@ async def test_an_unlisted_local_model_is_gated_and_pseudonymised(world):
     assert b"Leo here" in kept.body  # listed: local, as LOCAL_MODELS allows
 
 
+async def _send(w, dest: str, p) -> httpx2.Response:
+    async with w.egress.client(dest) as c:
+        return await c.send(p.request())
+
+
+async def test_a_parent_origin_source_passes_admit_and_is_gated_by_cloud_parent_text(world):
+    """M7 design D2 / S1: source 0 marks parent origin in a mixed output. It never reaches the version snapshot
+    as a 'learner 0' (that refused every such request at admit), and a cloud send needs CLOUD_PARENT_TEXT."""
+    from leafi.core.provenance import PARENT_SOURCE
+
+    w = world
+    mixed = {"model": "m1", "messages": [{"role": "user",
+                                          "content": Text("Rocco likes rockets", "derived_from_learner",
+                                                          (w.rocco, PARENT_SOURCE))}]}
+    w.settings.local_models = "local:m1"
+    p = w.egress.prepare("local", "generate", Outgoing(path="/v1/chat", json=mixed), learner_id=w.rocco, model="m1")
+    assert (await _send(w, "local", p)).status_code == 200  # admitted: no "source learner 0 is gone"
+    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=mixed), learner_id=w.rocco)
+    assert (await _send(w, "fake", p)).status_code == 200
+    w.settings.cloud_parent_text = False
+    with pytest.raises(eg.Refused, match="parent text"):
+        w.egress.prepare("fake", "generate", Outgoing(json=mixed), learner_id=w.rocco)
+    only_parent = {"t": Text("x", "derived_from_learner", (PARENT_SOURCE,))}
+    w.settings.cloud_parent_text = True
+    with pytest.raises(eg.Refused, match="without its source"):  # names no learner: refused (round 4 #10)
+        w.egress.prepare("fake", "generate", Outgoing(json=only_parent), learner_id=w.rocco)
+    assert _log(w)[:2] == [("local", "generate", w.rocco, "sent", 1), ("fake", "generate", w.rocco, "sent", 1)]
+
+
 async def test_the_ollama_adapter_names_its_model_and_is_local_only_when_listed(world):
     """The v1 Ollama adapter (M7a bridge) passes its model; page text naming a learner reaches it as written only
     when `ollama:<model>` is on LOCAL_MODELS (M7 design D1), else with the surrogate."""
