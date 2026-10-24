@@ -92,7 +92,9 @@ def _exclude(s: Session, kind: str) -> None:
 
 
 def rationale_line(prop, a: Activity) -> str:
-    reason = getattr(prop, "rationale", None) if prop else None
+    """The Brain's reason only for the activity it proposed (M7 design D13); any other offer gets the static line."""
+    proposed = getattr(prop, "activity", None) if prop else None
+    reason = getattr(prop, "rationale", None) if proposed is not None and proposed.kind == a.kind else None
     return reason or f"I think we should {describe(a)} next."
 
 

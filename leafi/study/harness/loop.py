@@ -207,6 +207,11 @@ def finalize(s: Session, w: World, env: Env) -> dict:
     store = s.store
     reason = s.latch.terminal or "end"
     _flush_pending(s)
+    if s.pending_audit_brain:  # D8: brain_calls rows a busy store kept back
+        from leafi.study.brain import call as bc
+
+        while s.pending_audit_brain:
+            bc._insert(store, s.pending_audit_brain.pop(0))
     with store.transaction():
         if s.cycle_id is not None:
             rows.close_cycle(store, s.cycle_id, "stop" if reason == "stop" else "wrap")
@@ -363,7 +368,14 @@ async def _body(s: Session, w: World, env: Env) -> None:
         _drain_late(w)
         await w.refresh()
         menu = allowed(s)
-        prop = None  # sequence(): the default policy's arm, or a Brain-arm boundary without a Brain (M7)
+        prop = None  # the default policy's arm: negotiate's default chain decides
+        if s.arm == "brain" and env.brain is not None:  # ADR-0017 §3.3: the Brain proposes (M7 design D10)
+            from leafi.study.brain.sequence import REOBSERVE_PAGE, sequence
+
+            chain = [sp.kind for sp in policy.default_chain(s, menu - {"end"})]
+            prop = await sequence(s, w, env.brain, menu, chain)
+            if prop == REOBSERVE_PAGE:
+                continue
         out = await negotiate(s, prop, menu, s.epoch())
         if out is REOBSERVE:
             continue

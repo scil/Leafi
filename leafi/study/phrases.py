@@ -45,6 +45,8 @@ LINES: dict[str, list[str]] = {
     "noop": ["That doesn't do anything right now."],
     "idle": ["Let's take a break. See you next time!"],
     "bye": ["Great session, teammate. See you next time!"],
+    "filler": ["Let me think.", "Hmm, one moment.", "Let me see."],  # a Brain call past 0.8 s (ADR-0017 §5)
+    "degraded": ["Here is a short answer."],  # a `degraded` tier's answer (ADR-0017 §5.1)
     "lease_held": ["Another Leafi session is speaking right now."],
     "lease_lost": ["Another Leafi took over the speaker, so I'll stop here. Your reading is saved."],
     "mic_lost": ["I can't hear the microphone any more. Type what you read, or restart me when it's back."],

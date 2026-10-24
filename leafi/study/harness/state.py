@@ -100,6 +100,7 @@ class Session:
     routable_answer: bool = False                 # M7: an eligible `answer` backend exists
     pending_rows: list = field(default_factory=list)  # §7.3: activity ends a busy store could not take yet
     on_page: Callable[[Utterance], None] | None = None  # D21: a page turn heard at a boundary (the World's)
+    pending_audit_brain: list = field(default_factory=list)  # D8: brain_calls rows a busy store kept back
 
     def facts(self) -> Facts:
         return self.facts_fn(self)
