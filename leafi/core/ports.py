@@ -187,6 +187,7 @@ class Section:
 
     name: str
     leaves: tuple[Leaf, ...]
+    cache: bool = False  # M7 D6 (owner 2026-10-24): a prompt-cache breakpoint after this section
 
 
 @dataclass(frozen=True)

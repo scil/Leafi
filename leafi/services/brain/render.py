@@ -32,7 +32,7 @@ def filter_turns(turns: tuple[Turn, ...], may_send: Callable[[Leaf], bool]) -> t
                 held += 1
                 if leaf.substitute is not None:
                     leaves.append(Leaf(leaf.substitute, Provenance("page")))
-            sections.append(Section(s.name, tuple(leaves)))
+            sections.append(Section(s.name, tuple(leaves), s.cache))
         out.append(Turn(t.role, tuple(sections), t.provenance))
     return tuple(out), held
 
@@ -45,8 +45,9 @@ def messages_body(req: ModelRequest, turns: tuple[Turn, ...], text: Callable[[Le
     """The Anthropic Messages body. `text(leaf)` makes egress's `Text` (or a plain string for a local test).
 
     Order (D6): the frozen system text with one `cache_control` breakpoint; then each turn's sections as tagged
-    blocks in the order the caller gave them (stable first, volatile last). A multi-turn request may add a second
-    breakpoint on the last block of its first assistant turn (C3)."""
+    blocks in the order the caller gave them (stable first, volatile last). A section marked `cache` (the
+    session-level learner context of `generate`, `answer`, `judge`) ends with a breakpoint; a multi-turn request
+    may add one on the last block of its first assistant turn (C3)."""
     messages = []
     first_assistant = True
     for t in turns:
@@ -57,7 +58,10 @@ def messages_body(req: ModelRequest, turns: tuple[Turn, ...], text: Callable[[Le
             blocks.append({"type": "text", "text": f"<{s.name}>"})
             blocks.extend({"type": "text", "text": text(Leaf(_escape(leaf.value, s.name), leaf.prov))}
                           for leaf in s.leaves)
-            blocks.append({"type": "text", "text": f"</{s.name}>"})
+            close = {"type": "text", "text": f"</{s.name}>"}
+            if s.cache and t.role == "user":  # the session's learner context: one more breakpoint (owner 2026-10-24)
+                close["cache_control"] = {"type": "ephemeral"}
+            blocks.append(close)
         if not blocks:
             blocks.append({"type": "text", "text": "(nothing)"})
         if t.role == "assistant" and first_assistant and len(turns) > 1:

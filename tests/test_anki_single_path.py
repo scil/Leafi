@@ -34,6 +34,28 @@ async def test_add_cards_stores_the_card_text_and_push_sends_exactly_it(settings
     assert w.facts().cardable_items == ()
 
 
+async def test_a_brain_owned_card_is_stored_once_and_push_sends_exactly_it(settings):
+    """M7 design D15: Brain content reaches Anki only through `add_cards` and its checks, as stored."""
+    from leafi.core.provenance import Provenance
+
+    w = make_world(settings, settings, [])
+    item = _explained(w, "fox", "The fox ran home.")
+    content = {"cards": {item: {"front": "fox", "back": "a small <b>wild</b> dog", "sentence": "The fox ran home."}}}
+    status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]}, content=content, content_owner="brain",
+                                   content_provenance=Provenance("page"))
+    assert outcome["cards"] == 1
+    fake = FakeAnki()
+    await anki.sync_outbox(w.store, anki.AnkiClient(transport=fake.transport()), "Leafi")
+    (note,) = fake.notes.values()
+    assert note["fields"]["背面"] == "a small &lt;b&gt;wild&lt;/b&gt; dog"  # escaped, never rendered as HTML
+    long = {"cards": {item: {"front": "fox", "back": "x" * 199 + "&", "sentence": "The fox ran home."}}}
+    w2 = make_world(settings, settings, [])
+    item2 = _explained(w2, "fox", "The fox ran home.")
+    long["cards"] = {item2: long["cards"][item]}
+    _, out2, _ = await run(w2, "add_cards", {"item_ids": [item2]}, content=long, content_owner="brain")
+    assert out2["rejected"] == {item2: "the back is over 200 characters"}  # checked after escaping
+
+
 async def test_a_flagged_card_is_sent_with_a_tag_the_learner_sees(settings):
     w = make_world(settings, settings, [])
     item = _explained(w, "fox", "The fox ran home.")

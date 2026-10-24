@@ -8,6 +8,7 @@ its own statuses. Nothing is practised inside reading and nothing is said there 
 from __future__ import annotations
 
 import datetime as dt
+import html
 import logging
 import math
 import time
@@ -16,7 +17,7 @@ from leafi.core import learner_store
 from leafi.core.ports import Display, Provenance, Utterance
 from leafi.core.storage import dumps, loads, now_iso
 from leafi.core.text import words
-from leafi.study import cards, coach, controls, corrections, knowledge, miscues, pages
+from leafi.study import cards, coach, controls, corrections, knowledge, miscues, pages, phrases
 from leafi.study.alignment import (
     CandidateCreated,
     CandidateWithdrawn,
@@ -532,6 +533,7 @@ async def read_aloud(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     st = w.state
     start = st.tokens[st.ccur].sentence_id if st.ccur < st.n else None
     sids = [i for i in _range_sids(st, act.params.get("range", "rest")) if start is not None and i >= start]
+    hard = set(act.content.get("hard_sentence_ids", ())) if act.content else set()  # Brain content (D15)
     await io.line("read_aloud_intro")
     said = 0
     for sid in sids:
@@ -539,10 +541,12 @@ async def read_aloud(w: World, act: Activity, aid: int) -> tuple[str, dict]:
             break
         text = coach.sentence_text(w.rev.text, st, sid)
         await io.hub.show(Display("say", text))
-        await io.say(text, provenance=PAGE)
+        await io.say(text, slow=sid in hard, provenance=PAGE)
         s.checkpoint()
         s.take_skip()  # a skip cut this sentence; the next one follows
         said += 1
+    if act.content and act.content.get("translate"):
+        await io.hub.show(Display("say", act.content["translate"]))  # shown, not spoken
     return "completed", {"sentences": said, "page_read_id": w.read_id}
 
 
@@ -582,16 +586,29 @@ async def add_cards(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     s = w.s
     added, flagged, rejected = [], [], {}
     for item_id in act.params["item_ids"]:
-        fields, sentence, prov = cards.stored_text(w.store, item_id)
+        if act.content_owner == "brain":  # the generated card, under the call's provenance (D15)
+            card = (act.content or {}).get("cards", {}).get(item_id)
+            if card is None:
+                rejected[item_id] = "no card was generated for it"
+                continue
+            fields = {"正面": html.escape(card["front"]), "背面": html.escape(card["back"])}
+            sentence, prov = card["sentence"], act.content_provenance
+        else:
+            fields, sentence, prov = cards.stored_text(w.store, item_id)
         verdict, reason = cards.check(w.store, s.learner_id, item_id, fields, sentence)
         if verdict == "reject":
             rejected[item_id] = reason
             continue
         cls, src = learner_store.prov(prov.cls, prov.sources)  # what the card copies (M7 design D15)
-        learner_store.insert(w.store, "anki_outbox", s.learner_id, sources=[s.learner_id], knowledge_item_id=item_id,
-                             op="add", state="pending", updated_at=now_iso(), front=fields["正面"],
-                             back=fields["背面"], sentence=sentence, card_provenance_class=cls,
-                             card_source_learners=src)
+        try:
+            learner_store.insert(w.store, "anki_outbox", s.learner_id, sources=[s.learner_id],
+                                 knowledge_item_id=item_id, op="add", state="pending", updated_at=now_iso(),
+                                 front=fields["正面"], back=fields["背面"], sentence=sentence,
+                                 card_provenance_class=cls, card_source_learners=src)
+        except learner_store.LearnerUnavailable:  # D22: a card quoting a learner being forgotten is not queued
+            log.info("card not queued: a source learner is being forgotten")
+            rejected[item_id] = "a source learner is being forgotten"
+            continue
         added.append(item_id)
         if verdict == "flag":
             flagged.append(item_id)
@@ -600,5 +617,159 @@ async def add_cards(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     return "completed", {"cards": len(added), "flagged": flagged, "rejected": rejected}
 
 
+# ---------------------------------------------------------------- quiz (ADR-0013 → CHECK outcomes; ADR-0017 §3.4)
+
+
+CHECK_ANSWER_S = 20.0  # ADR-0013: a spoken answer's time; typed answers wait `study_idle_s`
+RETRIEVAL_OF = {"correct": "success", "incorrect": "fail"}
+
+
+async def quiz(w: World, act: Activity, aid: int) -> tuple[str, dict]:
+    """Each generated question (its content checked at construction, D15), then the answer in the Coach voice. A
+    counted answer is scored by CHECK; an unconfident spoken one, a skip, silence and every open question are
+    `unavailable` and write no encounter and no retrieval event (§3.4); only `incorrect` writes an encounter."""
+    s, io, cfg = w.s, w.inputs, w.settings
+    w.activity_started = time.monotonic()
+    prov = act.content_provenance
+    results: list[str] = []
+    await io.line("quiz_intro")
+    for i, q in enumerate(act.content["questions"]):
+        if w.activity_over():
+            break
+        owner = ("act", aid, f"q{i}")  # D21: each question its own prompt
+        await io.ask(owner, q["text"], provenance=prov)
+        u = await io.listen(CHECK_ANSWER_S if io.voice else cfg.study_idle_s, owner, accepts_page=True)
+        s.checkpoint()
+        if (late := _late_pages(w, aid)) is not None and s.on_page is not None:
+            s.on_page(late)  # D21: remembered; the next boundary opens it
+        if u is None and not io.voice:
+            s.latch.terminate("idle_session")
+            return "idle_session", {"questions": len(results), "results": results}
+        ctl = controls.parse(u.text) if u is not None else None
+        if ctl is not None and ctl.kind in ("page", "next_page"):
+            _store_utterance(w, u, "control")
+            _page_turn(w, ctl)  # a quiz cannot end `page_turned` (§3.1): the next boundary opens the page
+            return "completed", {"questions": len(results), "results": results}
+        skipped = s.take_skip()
+        if u is not None and not skipped:
+            _store_utterance(w, u, "answer")
+        if q["type"] not in ("completion", "recall", "wh-"):
+            outcome = "unavailable"  # open-ended, distancing: acknowledged, not scored (§3.4)
+            if u is not None and not skipped:
+                await io.line("quiz_thanks")
+        elif u is None or skipped or not _confident(u):
+            outcome = "unavailable"
+        else:
+            outcome = coach.check_outcome(u.text, q["answers"])
+        if outcome == "correct":
+            await io.line("check_correct")
+        elif q["answers"]:
+            await io.line("quiz_answer", provenance=prov, answer=" ".join(q["answers"][0]))
+        if outcome in RETRIEVAL_OF:
+            for item in q["item_ids"]:
+                _retrieval(w, item, aid, RETRIEVAL_OF[outcome], "typed" if u.typed else "heard_confident")
+        if outcome == "incorrect":
+            for item in q["item_ids"]:
+                knowledge.add_encounter(w.store, item, session_id=s.session_id, trigger="check",
+                                        context_sentence=q["evidence"][0])
+        results.append(outcome)
+    return "completed", {"questions": len(results), "results": results}
+
+
+# ---------------------------------------------------------------- learner_questions (§3.1: purpose `answer`)
+
+
+DONE = {"done", "no", "no more", "that's all", "finished", "nothing"}
+
+
+def _answer_sections(w: World, u: Utterance) -> tuple:
+    """What an `answer` call carries: the session's learner context (cached, owner decision 2026-10-24), the
+    sentences read in this cycle (page text) and the learner's question as said (learner text: only on an
+    eligible backend, D10). One turn: earlier questions are not sent."""
+    from leafi.core.ports import Section
+    from leafi.core.provenance import Leaf
+    from leafi.study.brain import generate, kinds
+
+    page = tuple(Leaf(f"{x.rid}: {x.text}", PAGE) for x in kinds.cycle_sentences(w.s))
+    return (generate.learner_context(w.s), Section("page", page),
+            Section("question", (Leaf(u.text, Provenance("learner", (w.s.learner_id,))),)))
+
+
+async def _answer(w: World, u: Utterance, owner):
+    """One `answer` call inside `controls_only` with the filler (D12, D21); None when no backend answered."""
+    from leafi.study.brain import call as bc
+    from leafi.study.brain import generate, prompts, routing, schemas
+    from leafi.study.brain.filler import with_filler
+
+    s, io = w.s, w.inputs
+    if s.brain is None:
+        return None
+    make = prompts.single_request("answer", prompts.ANSWER_SYSTEM, _answer_sections(w, u), schemas.AnswerContent,
+                                  learner_id=s.learner_id, session_id=s.session_id)
+    ctx = generate.context(s, time.monotonic() + routing.moment_s("answer", s.mouth))
+    d = routing.difficulty("answer", question=u.text)
+    async with io.controls_only(owner) as taken:
+        result = await with_filler(
+            bc.brain_call(s.brain, ctx, "answer", make, schemas.AnswerContent.model_validate, d),
+            show=io.hub.show, say=io.say if s.mouth == "pc" else None, epoch=s.epoch)
+    for item in taken:  # D21 inside an activity: a page turned during the wait is remembered; a skip skips this
+        if item.kind == "page" and s.on_page is not None:
+            s.on_page(item.u)
+        elif item.kind == "skip":
+            return None
+    return result
+
+
+async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dict]:
+    """The learner asks; each answer is one `answer` call grounded in the cycle's read sentences, spoken under
+    the call's provenance, a `degraded` one prefaced (D10). Up to `max_turns` questions."""
+    s, io, cfg = w.s, w.inputs, w.settings
+    w.activity_started = time.monotonic()
+    answered = asked = 0
+    await io.line("questions_intro", owner=("act", aid, "q0"))
+    for turn in range(int(act.params.get("max_turns", 5))):
+        if w.activity_over():
+            break
+        owner = ("act", aid, f"q{turn}")
+        if turn:
+            await io.line("questions_next", owner=owner)
+        u = await io.listen(cfg.study_idle_s, owner, accepts_page=True)
+        s.checkpoint()
+        if (late := _late_pages(w, aid)) is not None and s.on_page is not None:
+            s.on_page(late)
+        if u is None:
+            if io.voice:
+                break  # no further question
+            s.latch.terminate("idle_session")
+            return "idle_session", {"questions": asked, "answered": answered}
+        if s.take_skip() or " ".join(u.text.lower().strip(" .!?").split()) in DONE:
+            break
+        ctl = controls.parse(u.text)
+        if ctl is not None:
+            _store_utterance(w, u, "control")
+            if ctl.kind in ("page", "next_page"):
+                _page_turn(w, ctl)  # remembered; the next boundary opens it (§3.1 has no `page_turned` here)
+                break
+            await io.line("noop")
+            continue
+        if not _confident(u):
+            await io.line("questions_again")
+            continue
+        _store_utterance(w, u, "question")
+        asked += 1
+        epoch = s.epoch()
+        result = await _answer(w, u, owner)
+        s.checkpoint()
+        if result is None or not phrases.safe(result.value.answer):
+            await io.line("questions_unavailable")
+            continue
+        if result.degraded:
+            await io.line("degraded")  # ADR-0017 §5.1: a weaker tier's answer says so
+        await io.say(result.value.answer, provenance=result.provenance, epoch=epoch)  # D12
+        answered += 1
+    return "completed", {"questions": asked, "answered": answered}
+
+
 KINDS = {"read_listen": read_listen, "practise_errors": practise_errors, "review_anki": review_anki,
-         "read_aloud": read_aloud, "add_cards": add_cards, "break": break_, "wait": wait, "end": end}
+         "read_aloud": read_aloud, "add_cards": add_cards, "break": break_, "wait": wait, "end": end, "quiz": quiz,
+         "learner_questions": learner_questions}

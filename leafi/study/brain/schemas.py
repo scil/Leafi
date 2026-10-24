@@ -191,6 +191,91 @@ class Decision(_Closed):
     turn: str
 
 
+# ---------------------------------------------------------------- generate kinds (ADR-0017 §3.1; M7 design D15)
+#
+# One fixed schema per kind. Ids are the rendered ids the request showed (`i<item>`, `s<page_read>.<sentence>`,
+# `a<activity>`); `generate.py`'s checks bind them. Lengths and counts are Pydantic's: the API schema drops them.
+
+
+class TeachItem(_Closed):
+    item_id: str
+    method: Literal["explain", "example", "contrast", "picture_free_story"]
+    explanation: str = Field(max_length=300)
+    prompt: str = Field(max_length=150)
+    expect: Literal["item_said", "item_used", "cloze_word"]
+
+
+class TeachItemsContent(_Closed):
+    items: list[TeachItem] = Field(max_length=10)
+
+
+QUESTION_TYPES = ("completion", "recall", "open-ended", "wh-", "distancing")  # CROWD
+
+
+class QuizQuestion(_Closed):
+    text: str = Field(max_length=200)
+    type: Literal["completion", "recall", "open-ended", "wh-", "distancing"]
+    answers: list[list[str]] = Field(max_length=5)  # keyword sets; empty for open-ended and distancing
+    item_ids: list[str] = Field(max_length=5)
+    evidence: list[str] = Field(max_length=5)       # cited sentence ids
+
+
+class QuizContent(_Closed):
+    questions: list[QuizQuestion] = Field(max_length=10)
+
+
+class ReadAloudContent(_Closed):
+    translate: str = Field(max_length=1200)                 # the range in the learner's language, "" for none
+    hard_sentence_ids: list[str] = Field(max_length=3)      # read slowly
+
+
+class CardContent(_Closed):
+    item_id: str
+    front: str = Field(max_length=100)
+    back: str = Field(max_length=200)
+    sentence: str  # a cited sentence id: the card's sentence is the page's text, never the model's
+
+
+class AddCardsContent(_Closed):
+    cards: list[CardContent] = Field(max_length=10)
+
+
+class Note(_Closed):
+    text: str = Field(max_length=200)
+    activity_ids: list[str] = Field(max_length=10)
+
+
+class NotesContent(_Closed):
+    notes: list[Note] = Field(max_length=5)
+
+
+class BookNoteContent(_Closed):
+    topic: str = Field(max_length=100)
+    characters: str = Field(max_length=200)
+    summary: str = Field(max_length=200)
+
+
+GENERATE_KINDS: dict[str, type[BaseModel]] = {
+    "teach_items": TeachItemsContent, "quiz": QuizContent, "read_aloud": ReadAloudContent,
+    "add_cards": AddCardsContent, "notes": NotesContent, "book_note": BookNoteContent}
+
+
+# ---------------------------------------------------------------- answer, judge (ADR-0017 §3.1, §3.4)
+
+
+class AnswerContent(_Closed):
+    """A reply to the learner's question in `learner_questions` (purpose `answer`)."""
+
+    answer: str = Field(max_length=400)
+    grounded: bool  # false: the page does not say; the reply says so instead of guessing
+
+
+class Judgement(_Closed):
+    """`judge` for `item_used` (D16)."""
+
+    verdict: Literal["yes", "no", "cannot_tell"]
+
+
 ACTIVITY = TypeAdapter(ActivitySpec)
 RECORD = TypeAdapter(Record)
 

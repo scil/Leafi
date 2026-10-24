@@ -47,6 +47,19 @@ async def test_the_request_is_rendered_prepared_and_parsed(claude):
     assert rec.transmissions == 1 and rec.sent == body and rec.received is not None
 
 
+async def test_the_learner_context_ends_with_its_own_cache_breakpoint_on_the_wire(claude):
+    """Owner decision 2026-10-24: the session-level learner context is cached after the system text."""
+    w, brain = claude
+    w.server.replies.append((200, _MESSAGE(json.dumps({"evidence": "e", "strategy": "s", "intention": "i"})), {}))
+    turns = (Turn("user", (Section("learner_context", (Leaf("difficulty 'fox' 1.0", Provenance("page")),),
+                                   cache=True),
+                           Section("page", (Leaf("The fox ran home.", Provenance("page")),)))),)
+    assert (await brain.call(_req(w, [], turns=turns))).outcome == "ok"
+    blocks = json.loads(w.server.requests[0]["body"])["messages"][0]["content"]
+    marked = [b["text"] for b in blocks if "cache_control" in b]
+    assert marked == ["</learner_context>"]  # with the system text's: two breakpoints in all
+
+
 async def test_a_learners_words_are_replaced_by_their_substitute_when_they_may_not_leave(claude):
     w, brain = claude
     privacy.write(w.store, w.rocco, "cloud.text", False)

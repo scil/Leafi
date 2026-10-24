@@ -75,7 +75,9 @@ def _selection(s: Session, spec: Spec) -> dict | Rejected:
     if k == "learner_questions":
         return {"max_turns": min(int(p.get("max_turns", 5)), 5)}
     if k == "quiz":
-        return {"evidence_sentence_ids": list(p.get("evidence_sentence_ids", []))}
+        if s.cycle_id is None or s.ledger.cycle_quiz_left(s.cycle_id) <= 0:
+            return Rejected("no questions left in this cycle")
+        return {"evidence_sentence_ids": [r for r in p.get("evidence_sentence_ids", []) if isinstance(r, str)]}
     return p
 
 

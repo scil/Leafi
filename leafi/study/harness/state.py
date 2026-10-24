@@ -105,6 +105,7 @@ class Session:
     previous_boundary_was_wait: bool = False
     brain: Any = None  # M7: the composition root's `Brain` (tiers, routes, backends); None = no Brain content
     mouth: str = "pc"  # M7 D12: the primary Mouth kind the moments are sized for (`pc`, `camera`)
+    learner_context: Any = None  # M7 D15: (inputs, Section) of the cached learner context block
     pending_rows: list = field(default_factory=list)  # §7.3: activity ends a busy store could not take yet
     on_page: Callable[[Utterance], None] | None = None  # D21: a page turn heard at a boundary (the World's)
     pending_audit_brain: list = field(default_factory=list)  # D8: brain_calls rows a busy store kept back

@@ -96,7 +96,8 @@ def to_spec(spec, obs) -> Spec | None:
     if k in ("recall_items", "teach_items", "add_cards"):
         return Spec(k, {"item_ids": _ids(obs, spec.item_ids, "item")}, source="brain")
     if k == "quiz":
-        return Spec(k, {"evidence_sentence_ids": _ids(obs, spec.evidence_sentence_ids, "sentence")}, source="brain")
+        rendered = [r for r in dict.fromkeys(spec.evidence_sentence_ids) if obs.ids.get(r, ("",))[0] == "sentence"]
+        return Spec(k, {"evidence_sentence_ids": rendered}, source="brain")  # kept rendered: quiz binds them
     if k == "review_anki":
         return Spec(k, {"max_cards": spec.max_cards}, source="brain")
     if k == "learner_questions":

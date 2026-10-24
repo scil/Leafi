@@ -64,6 +64,13 @@ LINES: dict[str, list[str]] = {
     "wait_start": ["I'll wait a moment. Say what you'd like to do."],
     "read_aloud_intro": ["I'll read this one to you. Follow along."],
     "cards_added": ["I made {count} card(s) for you."],
+    "quiz_intro": ["A few quick questions about what we read."],
+    "quiz_answer": ["It was: {answer}."],
+    "quiz_thanks": ["Thanks - nice thinking.", "I like that idea."],  # an open question: acknowledged only
+    "questions_intro": ["Ask me anything about what we read. Say \"done\" when you're finished."],
+    "questions_next": ["Another question? Or say \"done\"."],
+    "questions_unavailable": ["I can't answer that one right now."],
+    "questions_again": ["I didn't quite catch that. Can you ask again?"],
     "review_prompt_eases": ["Remember this one? \"{front}\" (again / hard / good / easy)"],
 }
 

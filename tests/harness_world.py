@@ -42,7 +42,8 @@ def make_world(tmp_path, settings, script, *, page=PAGE_1, number=1, values=None
     return w
 
 
-async def run(w: World, kind: str, params: dict | None = None, *, continuation: bool = False):
+async def run(w: World, kind: str, params: dict | None = None, *, continuation: bool = False, **activity):
+    """`activity`: further `Activity` fields (Brain content: `content`, `content_owner`, `content_provenance`)."""
     params = dict(params or {})
     if continuation:
         params["continuation"] = True
@@ -57,7 +58,7 @@ async def run(w: World, kind: str, params: dict | None = None, *, continuation: 
                 w.inputs.start()
                 try:
                     with anyio.fail_after(10):
-                        result = await activities.KINDS[kind](w, Activity(kind, params, "default"), aid)
+                        result = await activities.KINDS[kind](w, Activity(kind, params, "default", **activity), aid)
                 finally:
                     latch.tg.cancel_scope.cancel()
     except* Terminal:

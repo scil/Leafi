@@ -12,6 +12,7 @@ import uuid
 from collections import defaultdict
 
 from leafi.core import learner_store
+from leafi.core.provenance import Provenance
 from leafi.core.storage import Store, dumps, now_iso
 from leafi.core.text import norm
 
@@ -41,16 +42,20 @@ def upsert_item(store: Store, learner_id: int, kind: str, key: str, language: st
 
 def add_encounter(store: Store, item_id: int, *, session_id: int | None, trigger: str,
                   context_sentence: str = "", revision_id: int | None = None, explanation_en: str | None = None,
-                  explanation_zh: str | None = None, example: str | None = None) -> int:
-    """The context sentence is page text; an explanation answers the learner, so it derives from them
-    (ADR-0018 §3). The owner is the item's learner."""
+                  explanation_zh: str | None = None, example: str | None = None,
+                  explanation_provenance: Provenance | None = None) -> int:
+    """The context sentence is page text. An explanation carries the provenance of the content it came from (M7
+    design D15: a Brain explanation the call's `of_output`, naming every learner whose text the backend saw);
+    without one it answers the learner, so it derives from them (ADR-0018 §3). The owner is the item's
+    learner."""
     learner_id = store.one("SELECT learner_id FROM knowledge_items WHERE id=?", (item_id,))["learner_id"]
     explained = any(x for x in (explanation_en, explanation_zh, example))
     ctx = learner_store.prov("page")
-    exp = learner_store.prov("derived_from_learner", [learner_id]) if explained else learner_store.prov("system")
+    given = explanation_provenance or Provenance("derived_from_learner", (learner_id,))
+    exp = learner_store.prov(given.cls, given.sources) if explained else learner_store.prov("system")
     with store.transaction():  # the encounter and the Difficulties it feeds change together (review 1 #17)
         enc = learner_store.insert(
-            store, "encounters", learner_id, sources=[learner_id] if explained else (), knowledge_item_id=item_id,
+            store, "encounters", learner_id, sources=given.sources if explained else (), knowledge_item_id=item_id,
             session_id=session_id, page_revision_id=revision_id, context_sentence=context_sentence,
             context_provenance_class=ctx[0], context_source_learners=ctx[1], explanation_en=explanation_en,
             explanation_zh=explanation_zh, example=example, explanation_provenance_class=exp[0],

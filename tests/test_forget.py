@@ -197,6 +197,44 @@ def test_a_derived_write_naming_the_learner_is_refused_while_forgetting_and_afte
         learner_store.insert(store, "learner_notes", ben, sources=[ada, ben], **note)
 
 
+def test_brain_content_naming_a_forgotten_learner_is_never_written_under_another(store, settings):
+    """M7 design D15, D22: the writers of Brain-owned content take its provenance, so an explanation or a card
+    whose call saw Ada's text names Ada, and the fence refuses it once Ada is being forgotten."""
+    from leafi.core.provenance import Provenance
+
+    ada, ben = seed.learner(store, "Ada"), seed.learner(store, "Ben")
+    item = knowledge.upsert_item(store, ben, "word", "fox")
+    seen = Provenance("derived_from_learner", (ada, ben))
+    enc = knowledge.add_encounter(store, item, session_id=None, trigger="explain", context_sentence="The fox.",
+                                  explanation_en="a wild dog", explanation_provenance=seen)
+    row = store.one("SELECT explanation_source_learners FROM encounters WHERE id=?", (enc,))
+    assert row[0] == dumps(sorted((ada, ben)))
+    store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (ada,))
+    with pytest.raises(learner_store.LearnerUnavailable):
+        knowledge.add_encounter(store, item, session_id=None, trigger="explain", context_sentence="The fox.",
+                                explanation_en="a wild dog", explanation_provenance=seen)
+    records.forget_learner(store, ada, settings.data_dir)
+    assert store.one("SELECT COUNT(*) FROM encounters WHERE explanation_source_learners LIKE ?",
+                     (f"%{ada}%",))[0] == 0
+
+
+async def test_a_brain_card_quoting_a_learner_being_forgotten_is_reported_not_queued(settings):
+    from leafi.core.provenance import Provenance
+    from tests.harness_world import make_world, run
+
+    w = make_world(settings, settings, [])
+    other = seed.learner(w.store, "Ada")
+    item = knowledge.upsert_item(w.store, w.s.learner_id, "word", "fox")
+    knowledge.add_encounter(w.store, item, session_id=w.s.session_id, trigger="explain",
+                            context_sentence="The fox ran home.", explanation_en="a wild animal")
+    w.store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (other,))
+    content = {"cards": {item: {"front": "fox", "back": "a small wild dog", "sentence": "The fox ran home."}}}
+    status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]}, content=content, content_owner="brain",
+                                   content_provenance=Provenance("derived_from_learner", (other, w.s.learner_id)))
+    assert status == "completed" and outcome["rejected"] == {item: "a source learner is being forgotten"}
+    assert w.store.one("SELECT COUNT(*) FROM anki_outbox WHERE front IS NOT NULL")[0] == 0
+
+
 def test_the_final_rescan_removes_a_copy_written_between_batches(store, settings, monkeypatch):
     ada, ben = seed.learner(store, "Ada"), seed.learner(store, "Ben")
     calls = []

@@ -1,4 +1,4 @@
-"""Answer scores (ADR-0017 §3.4; M7 design D16): pure, local, no model.
+"""Answer scores (ADR-0017 §3.4; M7 design D16): pure and local, except `item_used`, which is one `judge` call.
 
 A spoken answer counts only when it was confidently recognised (every word ≥ `ANSWER_MIN_CONF`); otherwise the
 outcome is `unavailable`, whatever it seems to say (owner decision 6). Typed answers always count.
@@ -6,15 +6,17 @@ outcome is `unavailable`, whatever it seems to say (owner decision 6). Typed ans
   `exact` or `phones` ("through", "it's through" succeed; "I don't know what through means" does not).
 - `cloze_word`: success when the answer's content words are exactly the cloze word by the same classes (a
   homophone or the same phones counts: ADR-0013 v2's real-word rule).
-- `item_used` is a `judge` call, not here.
+- `item_used`: one `judge` call with fixed few-shot examples (`prompts.JUDGE_SYSTEM`); only on an eligible backend.
 Silence or an empty answer is `unavailable`: no retrieval event, no encounter.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
-from leafi.core.ports import Utterance
+from leafi.core.ports import Section, Utterance
+from leafi.core.provenance import Leaf, Provenance
 from leafi.core.text import norm, words
 from leafi.core.wordinfo import NullWordInfo, WordInfo
 from leafi.study.alignment import EXACT, PHONES, Tok, pair_class
@@ -51,3 +53,30 @@ def cloze_word(u: Utterance | None, cloze: str, info: WordInfo | None = None) ->
     if u is None or not u.text.strip() or not confident(u):
         return "unavailable"
     return "success" if _same_words(_content(u.text), [norm(cloze)], info or NullWordInfo()) else "fail"
+
+
+VERDICT = {"yes": "success", "no": "fail", "cannot_tell": "unavailable"}
+
+
+def judge_sections(u: Utterance, item_key: str, prompt: str, learner_id: int) -> tuple[Section, ...]:
+    """What a `judge` call carries: the item's key (page text), the prompt Leafi asked (its own line), and the
+    learner's answer — learner text, so the call needs an eligible backend (D10, ADR-0018 §2)."""
+    return (Section("item", (Leaf(f"word '{item_key}'", Provenance("page")),)),
+            Section("prompt", (Leaf(prompt),)),
+            Section("answer", (Leaf(u.text, Provenance("learner", (learner_id,))),)))
+
+
+async def item_used(s, u: Utterance | None, item_key: str, prompt: str) -> Outcome:
+    """`item_used`: one `judge` call (`yes | no | cannot_tell`). An unconfident or empty answer, no eligible
+    backend, a timeout or `cannot_tell` → `unavailable` (§3.4)."""
+    if u is None or not u.text.strip() or not confident(u) or s.brain is None:
+        return "unavailable"
+    from leafi.study.brain import call as bc
+    from leafi.study.brain import generate, prompts, routing, schemas
+
+    sections = (generate.learner_context(s), *judge_sections(u, item_key, prompt, s.learner_id))
+    make = prompts.single_request("judge", prompts.JUDGE_SYSTEM, sections, schemas.Judgement,
+                                  learner_id=s.learner_id, session_id=s.session_id)
+    ctx = generate.context(s, time.monotonic() + routing.moment_s("feedback", s.mouth))
+    result = await bc.brain_call(s.brain, ctx, "judge", make, schemas.Judgement.model_validate)
+    return "unavailable" if result is None else VERDICT[result.value.verdict]

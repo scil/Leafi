@@ -106,6 +106,31 @@ def test_an_unsupported_construct_fails_here_not_in_a_session():
         sch.api_schema(Tagged)
 
 
+PURPOSES = [sch.Decision, *sch.GENERATE_KINDS.values(), sch.AnswerContent, sch.Judgement]
+
+
+@pytest.mark.parametrize("model", PURPOSES, ids=lambda m: m.__name__)
+def test_every_purposes_schema_is_accepted_stable_and_inside_the_limits(model):
+    """M7 design D6, D15: each generate kind, `answer` and `judge` have their own fixed schema."""
+    s = sch.api_schema(model)
+    assert _keys(s) - sch.KEEP - set(_names(s)) == set()
+    assert all(obj.get("additionalProperties") is False for obj in _objects(s))
+    assert sch.schema_bytes(model) == sch.schema_bytes(model)
+    optional, unions = sch.limits(s)
+    assert optional <= 24 and unions <= 16, (model.__name__, optional, unions)
+
+
+def test_a_generate_reply_over_a_dropped_limit_is_rejected_by_pydantic():
+    q = {"text": "Who ran home?", "type": "wh-", "answers": [["fox"]], "item_ids": [], "evidence": ["s1.1"]}
+    assert sch.QuizContent.model_validate({"questions": [q]})
+    with pytest.raises(ValidationError):
+        sch.QuizContent.model_validate({"questions": [{**q, "text": "x" * 201}]})
+    with pytest.raises(ValidationError):
+        sch.ReadAloudContent.model_validate({"translate": "", "hard_sentence_ids": ["s1.1"] * 4})
+    with pytest.raises(ValidationError):
+        sch.Judgement.model_validate({"verdict": "maybe"})
+
+
 def test_the_schema_round_trips_as_json_unchanged():
     s = sch.api_schema(sch.Decision)
     assert json.loads(json.dumps(s, ensure_ascii=False)) == s

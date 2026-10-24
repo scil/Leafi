@@ -20,7 +20,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from leafi.core.ports import SYSTEM, Provenance, Section
+from leafi.core.provenance import Leaf
 from leafi.privacy import settings as privacy_settings
+from leafi.study import knowledge
 from leafi.study.brain import call as bc
 from leafi.study.brain import prompts, routing
 from leafi.study.brain.filler import with_filler
@@ -92,6 +94,33 @@ async def boundary_wait(s, call):
     return result
 
 
+PAGE = Provenance("page")
+
+
+def learner_context(s) -> Section:
+    """The session-level block every `generate`, `answer` and `judge` request starts with, after the system text
+    and marked for prompt caching (owner decision 2026-10-24, "give Claude enough information"): the learner's
+    Difficulties and this cycle's errors, expected and heard (learner notes join in M7d). Byte-stable: a fixed
+    order and fixed formatting, rebuilt only when its inputs change (another learner, another cycle, a new
+    error); heard words carry D3's substitute, so with `cloud.text` off they leave as expected word + category."""
+    weights = sorted(knowledge.word_weights(s.store, s.learner_id).items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+    errors = () if s.cycle_id is None else tuple(tuple(r) for r in s.store.all(
+        "SELECT id, expected, heard, origin FROM miscues WHERE cycle_id=? AND status='candidate' ORDER BY id",
+        (s.cycle_id,)))
+    inputs = (s.learner_id, s.cycle_id, tuple((w, f"{x:.1f}") for w, x in weights), errors)
+    if s.learner_context is not None and s.learner_context[0] == inputs:
+        return s.learner_context[1]
+    leaves = [Leaf(f"difficulty '{w}' {x}", PAGE) for w, x in inputs[2]]
+    for _mid, expected, heard, origin in errors:
+        leaves.append(Leaf(f"error '{expected}' {origin}", PAGE))
+        if heard:
+            leaves.append(Leaf(f"heard '{heard}' for '{expected}'", Provenance("learner", (s.learner_id,)),
+                               substitute=f"'{expected}': a {origin} (words withheld)"))
+    section = Section("learner_context", tuple(leaves or [Leaf("nothing recorded yet")]), cache=True)
+    s.learner_context = (inputs, section)
+    return section
+
+
 def _key(kind: str, sel: dict) -> tuple[str, str]:
     return kind, json.dumps(sel, sort_keys=True, default=str)
 
@@ -120,7 +149,7 @@ async def _generate(s, gen: Generator, kind: str, sel: dict, deadline: float) ->
     sections = gen.sections(s, sel)
     if isinstance(sections, Rejected):
         return sections
-    make = prompts.generate_request(kind, sections, gen.model, policy=prompts.policy_text(
+    make = prompts.generate_request(kind, (learner_context(s), *sections), gen.model, policy=prompts.policy_text(
         autonomy=s.autonomy, age_band=None), learner_id=s.learner_id, session_id=s.session_id)
     result = await boundary_wait(s, bc.brain_call(s.brain, context(s, deadline), "generate", make,
                                                   gen.model.model_validate, gen.difficulty(s, sel)))
@@ -130,3 +159,7 @@ async def _generate(s, gen: Generator, kind: str, sel: dict, deadline: float) ->
     if isinstance(checked, Rejected):
         return checked
     return Content(checked, result.provenance or SYSTEM, result.degraded)
+
+
+# The D15 generators register themselves; kinds imports this module's names, so it is imported last.
+from leafi.study.brain import kinds  # noqa: E402, F401
