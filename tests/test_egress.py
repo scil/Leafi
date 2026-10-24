@@ -494,3 +494,18 @@ async def test_the_detector_settles_off_at_once_and_never_loads_on_the_loop_in_a
     assert broken.detector_state == "failed" and broken.detector() is None  # list-only, like a missing model
     e.close()
     broken.close()
+
+
+async def test_the_sdk_sends_the_decide_schema_exactly_as_prepared(world):
+    """M7 design D6: `messages.create(**prepared.json)` with `output_config` and the real `decide` schema (nested
+    $defs, anyOf, non-ASCII) is accepted by the mediator's body comparison and arrives unchanged."""
+    from leafi.study.brain import schemas
+
+    w = world
+    body = {**_brain_body(w, "Rocco read “the fox” — twice."),
+            "output_config": {"format": {"type": "json_schema", "schema": schemas.api_schema(schemas.Decision)},
+                              "effort": "low"}}
+    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=body), learner_id=w.rocco)
+    await _sdk(w).messages.create(**p.json, extra_headers={eg.TOKEN_HEADER: p.token_id})
+    (req,) = w.server.requests
+    assert json.loads(req["body"]) == p.json
