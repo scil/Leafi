@@ -9,14 +9,12 @@ A decision whose echoed turn is not the observation's, or no decision at all, is
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 
 from leafi.core.ports import SYSTEM, Provenance
-from leafi.privacy import settings as privacy_settings
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
-from leafi.study.brain import prompts, routing, schemas
+from leafi.study.brain import generate, prompts, schemas
 from leafi.study.brain.filler import with_filler
 from leafi.study.brain.observe import Candidate, Item, ObservationInput, observe
 from leafi.study.harness.menu import MENU_ORDER
@@ -108,15 +106,11 @@ def to_spec(spec, obs) -> Spec | None:
     return Spec(k, {}, source="brain")
 
 
-async def sequence(s, w, brain: bc.Brain, menu: set[str], chain: list[str], *, mouth: str = "pc"):
+async def sequence(s, w, brain: bc.Brain, menu: set[str], chain: list[str]):
     """One `decide` (§3.3). Returns a Proposal, None (the default chain decides), or REOBSERVE_PAGE."""
     obs = observe(gather(s, w, menu, chain))
-    privacy = privacy_settings.read(s.store, s.learner_id)
-    ctx = bc.CallContext(store=s.store, session_id=s.session_id, learner_id=s.learner_id,
-                         deadline=time.monotonic() + routing.moment_s("next_activity", mouth),
-                         budget_for=lambda tier: bc.SessionBudget(s.ledger, tier),
-                         may_use_cloud_text=privacy.cloud_text_allowed, prompt_version=prompts.PROMPT_VERSION,
-                         pending_audit=s.pending_audit_brain)
+    ctx = generate.context(s, generate.moment(s))  # D14: decide and construction share the boundary's moment
+    mouth = s.mouth
     policy = prompts.policy_text(autonomy=s.autonomy, age_band=None)
     make = prompts.decide_request(obs.sections, policy=policy, learner_id=s.learner_id, session_id=s.session_id)
     inputs = w.inputs

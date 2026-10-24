@@ -79,7 +79,7 @@ def _selection(s: Session, spec: Spec) -> dict | Rejected:
     return p
 
 
-def construct(s: Session, spec: Spec, menu: set[str] | None = None) -> Activity | Rejected:
+async def construct(s: Session, spec: Spec, menu: set[str] | None = None) -> Activity | Rejected:
     if spec.kind in INTERNAL:
         return Activity(spec.kind, dict(spec.params), spec.source)
     if spec.kind not in (menu if menu is not None else allowed(s)):
@@ -88,19 +88,23 @@ def construct(s: Session, spec: Spec, menu: set[str] | None = None) -> Activity 
     if isinstance(sel, Rejected):
         return sel
     owner = s.settings[f"policy.content.{spec.kind}"]
-    content = None
-    if owner == "brain":
-        # Until M7c's validated generation (design D14) a Brain-owned kind is never built from unvalidated
-        # content, whatever a spec carries (M7 design S6).
-        return Rejected("not available now")
-    if _has_url(sel) or _has_url(content):
+    if owner != "brain":  # `code`: built from stored data at run time; a spec's content fields are discarded
+        return Rejected("no URLs") if _has_url(sel) else Activity(spec.kind, sel, spec.source, content_owner=owner)
+    from leafi.study.brain import generate  # lazy: the brain package imports the harness state
+
+    # M7 D14: only the generated, checked content is used — never content a spec carries
+    made = await generate.content(s, spec.kind, sel)
+    if isinstance(made, Rejected):
+        return made
+    if _has_url(sel) or _has_url(made.value):
         return Rejected("no URLs")
-    return Activity(spec.kind, sel, spec.source, content=content, content_owner=owner)
+    return Activity(spec.kind, sel, spec.source, content=made.value, content_owner=owner,
+                    content_provenance=made.provenance, degraded=made.degraded)
 
 
-def first_constructible(s: Session, specs: list[Spec], menu: set[str]) -> Activity | None:
+async def first_constructible(s: Session, specs: list[Spec], menu: set[str]) -> Activity | None:
     for spec in specs:
-        a = construct(s, spec, menu)
+        a = await construct(s, spec, menu)
         if isinstance(a, Activity):
             return a
     return None

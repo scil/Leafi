@@ -8,7 +8,7 @@ ends only after a second wait.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from leafi.core.ports import SYSTEM, Provenance, Utterance
 from leafi.study import controls
@@ -124,12 +124,12 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
     st = s.settings
     while True:
         if b.wanted:
-            a = first_constructible(s, [learner_spec(s, b.wanted)], menu)
+            a = await first_constructible(s, [learner_spec(s, b.wanted)], menu)
             s.checkpoint()
             if s.epoch() != epoch:
                 return REOBSERVE
             if a is not None:
-                return Run(Activity(a.kind, a.params, "learner", a.content, a.content_owner, "learner_choice"))
+                return Run(replace(a, decided_by="learner", override="learner_choice"))
             await talk.say(f"I can't {DESCRIBE.get(b.wanted, b.wanted)} right now.")
             b.excluded.add(b.wanted)
             b.wanted = None
@@ -143,7 +143,7 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
             chain = default_chain(s, m - {"end"})
             listed = {p.kind for p in props} | {c.kind for c in chain}
             cands = [p for p in props if p.kind in m] + chain + other_allowed(s, m, listed - {"end"})
-            a = first_constructible(s, cands, m)
+            a = await first_constructible(s, cands, m)
             s.checkpoint()
             if s.epoch() != epoch:
                 return REOBSERVE

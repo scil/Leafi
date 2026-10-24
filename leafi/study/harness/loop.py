@@ -13,7 +13,7 @@ import logging
 import random
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import anyio
@@ -172,8 +172,7 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
 
     w.inputs.activity_started_at = time.monotonic()  # an Ear switch after this ends the activity (D21)
     try:
-        status, outcome = await KINDS[act.kind](w, Activity(act.kind, params, act.decided_by, act.content,
-                                                            act.content_owner, act.override), aid)
+        status, outcome = await KINDS[act.kind](w, replace(act, params=params), aid)
     except StaleInput:
         return finish_now(ActivityStatus.ABORTED_STALE)
     except (Terminal, anyio.get_cancelled_exc_class()):
@@ -279,7 +278,7 @@ async def run_session(env: Env) -> int:
         inputs = Inputs(hub=env.hub, latch=latch, store=store, listener=listener, control_source=env.control_source,
                         page_tracker=env.page_tracker, page_poll_s=cfg.page_poll_s, lease=lease)
         s = Session(store=store, latch=latch, ledger=Ledger(store, sid, lst.limits()), settings=lst, talk=inputs,
-                    session_id=sid, learner_id=guest)
+                    session_id=sid, learner_id=guest, brain=env.brain)
         w = World(s=s, inputs=inputs, settings=cfg, word_info=env.word_info, anki=env.anki, pron=env.pron,
                   page_tracker=env.page_tracker)
         s.facts_fn = w.facts
@@ -365,6 +364,7 @@ async def _body(s: Session, w: World, env: Env) -> None:
     await identify_book(s, w, env)
     while True:
         s.checkpoint()
+        s.boundary.content.clear()  # M7 D14: a Reobserve discards the boundary's generated content
         _drain_late(w)
         await w.refresh()
         menu = allowed(s)

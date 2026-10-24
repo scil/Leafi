@@ -10,10 +10,10 @@ from leafi.study.harness.state import Activity, Spec
 from tests.harness_helpers import make_session, past_soft_deadline
 
 
-def test_end_constructs_with_the_generation_budget_spent_and_after_the_soft_deadline(tmp_path):
+async def test_end_constructs_with_the_generation_budget_spent_and_after_the_soft_deadline(tmp_path):
     s = past_soft_deadline(make_session(tmp_path, values={"limits.brain_calls_per_session": 0}))
     s.ledger.brain_spent = 100
-    a = construct(s, Spec("end"))
+    a = await construct(s, Spec("end"))
     assert isinstance(a, Activity) and a.kind == "end"
 
 

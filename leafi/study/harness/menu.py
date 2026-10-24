@@ -14,7 +14,9 @@ def allowed(s: Session) -> set[str]:
         return {"end"}
     f = s.facts()
     m = {"end", "break"}
-    gen = s.generate is not None and s.ledger.can_afford("standard")
+    from leafi.study.brain.generate import routable  # lazy: the brain package imports the harness state
+
+    gen = routable(s, "generate") and s.ledger.can_afford("standard")
     if f.anki_reachable and f.anki_due > 0 and not f.reviews_goal_met:
         m.add("review_anki")
     if f.has_book and (f.unread_current or f.can_acquire_next_page or f.familiar_pages):
@@ -29,7 +31,7 @@ def allowed(s: Session) -> set[str]:
             m.add("teach_items")
         if f.read_sentences and s.ledger.cycle_quiz_left(cyc) > 0 and gen:
             m.add("quiz")
-        if f.read_sentences and s.routable_answer:
+        if f.read_sentences and routable(s, "answer"):
             m.add("learner_questions")
         if f.cardable_items and s.ledger.cards_left() > 0:
             m.add("add_cards")

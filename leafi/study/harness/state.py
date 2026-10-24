@@ -62,6 +62,8 @@ class Activity:
     content: dict | None = None
     content_owner: str = "code"
     override: str | None = None
+    content_provenance: Provenance = SYSTEM  # M7 D15: what the content's writers store and its lines carry
+    degraded: bool = False                   # M7 D10: the content came from a weaker tier than its route's
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,9 @@ class Boundary:
     offers: int = 0
     silences: int = 0
     override: str | None = None
+    content: dict = field(default_factory=dict)  # M7 D14: (kind, selection) -> generated content or Rejected
+    content_epoch: tuple | None = None           # the epoch `content` was made under; another epoch clears it
+    moment: float | None = None                  # the `next_activity` moment every Brain call here shares
 
 
 @dataclass
@@ -98,8 +103,8 @@ class Session:
     soft_deadline: float = float("inf")  # time.monotonic() clock
     boundary: Boundary = field(default_factory=Boundary)
     previous_boundary_was_wait: bool = False
-    generate: Callable[..., Any] | None = None  # M7: the Brain's `generate`; None = no Brain-owned content
-    routable_answer: bool = False                 # M7: an eligible `answer` backend exists
+    brain: Any = None  # M7: the composition root's `Brain` (tiers, routes, backends); None = no Brain content
+    mouth: str = "pc"  # M7 D12: the primary Mouth kind the moments are sized for (`pc`, `camera`)
     pending_rows: list = field(default_factory=list)  # §7.3: activity ends a busy store could not take yet
     on_page: Callable[[Utterance], None] | None = None  # D21: a page turn heard at a boundary (the World's)
     pending_audit_brain: list = field(default_factory=list)  # D8: brain_calls rows a busy store kept back

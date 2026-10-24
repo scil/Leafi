@@ -31,13 +31,13 @@ def test_a_reordered_policy_is_followed_and_has_its_own_version(tmp_path):
     assert policy.policy_version(order) != policy.policy_version(policy.BUILT_IN)
 
 
-def test_a_step_that_cannot_be_constructed_falls_through_to_the_next_not_to_end(tmp_path):
+async def test_a_step_that_cannot_be_constructed_falls_through_to_the_next_not_to_end(tmp_path):
     # read_listen is owned by the Brain here and there is no Brain: the chain goes on to read_aloud, not end
     order = [{"kind": "read_listen", "when": "unread"}, {"kind": "read_aloud", "when": "unread"},
              {"kind": "end", "when": "always"}]
     s = make_session(tmp_path, facts=ALL, values={"policy.default_order": order,
                                                   "policy.content.read_listen": "brain"})
-    a = first_constructible(s, policy.default_chain(s, allowed(s)), allowed(s))
+    a = await first_constructible(s, policy.default_chain(s, allowed(s)), allowed(s))
     assert a is not None and a.kind == "read_aloud"
 
 
