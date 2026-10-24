@@ -10,7 +10,8 @@ import pytest
 
 from leafi.core.ports import ListenerLost
 from leafi.core.text import typed_utterance
-from leafi.study.harness.inputs import StaleInput, _Switched
+from leafi.study.harness.activities import _hint_reply
+from leafi.study.harness.inputs import StaleInput, _Item, _Switched
 from tests.test_controls import make, run_with
 
 
@@ -90,3 +91,22 @@ async def test_an_ear_lost_at_a_boundary_is_absorbed_and_inside_an_activity_ends
 
     out = await run_with(inputs, body)
     assert out == ["typed on the console", "mic_lost"]
+
+
+def test_an_activity_takes_only_its_own_late_items(tmp_path):
+    inputs = make(tmp_path, Stamped([]))
+    inputs.late = [_Item("page", typed_utterance("/page 4"), ("offer", 1, 1)),
+                   _Item("skip", typed_utterance("skip"), ("act", 7, "card.0")),
+                   _Item("page", typed_utterance("/page 5"), ("act", 7, "card.1"))]
+    mine = inputs.take_late(lambda o: o[:2] == ("act", 7))
+    assert [it.u.text for it in mine] == ["skip", "/page 5"]
+    assert [it.u.text for it in inputs.take_late()] == ["/page 4"]  # the boundary's, left for the boundary
+
+
+@pytest.mark.parametrize("text, reply", [("yes", "yes"), ("Yes please!", "yes"), ("please", "yes"),
+                                         ("no", "no"), ("No, thank you.", "no"), ("not now", "no"),
+                                         ("skip", None), ("/page 5", None), ("/fix fox box", None),
+                                         ("The fox ran home", None)])
+def test_the_hint_offer_answers_only_yes_and_no(text, reply):
+    """D21 / round 8 #5: anything else is handed back to read_listen's dispatch, never read as reading here."""
+    assert _hint_reply(typed_utterance(text)) == reply

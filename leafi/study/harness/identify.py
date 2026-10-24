@@ -4,6 +4,7 @@ adopted: one conditional transaction re-keys the session, deletes the empty gues
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 
@@ -24,6 +25,7 @@ log = logging.getLogger("leafi.harness.identify")
 ASK_S = 8.0
 MATCH_AT = 85  # fuzzy ≥ 0.85 (ADR-0018 §1)
 DECLINE = "\x00declined"
+_CONFIRMS = itertools.count(1)
 _PREFIX = re.compile(r"^(?:hi|hello|hey)?[ ,]*(?:i'm|i am|im|my name is|it's|it is|this is|me)\s+", re.IGNORECASE)
 _DECLINE = re.compile(r"^(?:don'?t|do not) remember me$", re.IGNORECASE)
 
@@ -75,8 +77,9 @@ def adopt(s: Session, learner_id: int) -> bool:
 
 async def _confirm(s: Session, question: str) -> bool:
     # the question holds a name the learner said: `learner` text until adoption (M5 design D13)
-    await s.talk.say(question, provenance=Provenance("learner", (s.learner_id,)))
-    u = await s.talk.listen(ASK_S)
+    owner = ("setup", "confirm", next(_CONFIRMS))  # each question its own prompt; never the name (it is logged)
+    await s.talk.ask(owner, question, provenance=Provenance("learner", (s.learner_id,)))
+    u = await s.talk.listen(ASK_S, owner)
     s.checkpoint()
     ctl = controls.parse(u.text) if u is not None else None
     return ctl is not None and ctl.kind == "yes"
@@ -111,8 +114,8 @@ async def ask_school(s: Session, learner_id: int) -> None:
     """ADR-0018 §3: every learner has a school name or an explicit "no school" (design D10). One question; no
     usable answer leaves it unset, which keeps this learner's own words off the cloud until the household sets it
     (`python -m leafi privacy learner <name> school …`); `doctor` shows what was heard for the owner to confirm."""
-    await s.talk.say("Do you go to a school? Tell me its name, or say no school.")
-    answer = parse_school(await s.talk.listen(ASK_S))
+    await s.talk.ask(("setup", "school"), "Do you go to a school? Tell me its name, or say no school.")
+    answer = parse_school(await s.talk.listen(ASK_S, ("setup", "school")))
     s.checkpoint()
     if answer is None:
         return
@@ -138,20 +141,21 @@ async def identify(s: Session, *, keep_days: int, preset: str | None = None) -> 
 
 async def _identify(s: Session, keep_days: int) -> int:
     store, talk = s.store, s.talk
+    owner = ("setup", "name")  # D21: the greeting and its re-ask are one prompt
     enrolled = learner_store.enrolled(store)
     voice = bool(getattr(talk, "voice", False))
     if enrolled and not voice:
         picks = ", ".join(f"{i}. {r['display_name']}" for i, r in enumerate(enrolled, 1))
-        await talk.say(f"Hello! Who's reading today? {picks} - or type your name.",
+        await talk.ask(owner, f"Hello! Who's reading today? {picks} - or type your name.",
                        provenance=Provenance("learner", tuple(r["id"] for r in enrolled)))
     else:
-        await talk.say("Hello! Who's reading today?")
-    name = parse_name(await talk.listen(ASK_S), enrolled)
+        await talk.ask(owner, "Hello! Who's reading today?")
+    name = parse_name(await talk.listen(ASK_S, owner), enrolled)
     s.checkpoint()
     for _attempt in (1, 2):
         if name is None:
-            await talk.say("What's your name?")
-            name = parse_name(await talk.listen(ASK_S), enrolled)
+            await talk.ask(owner, "What's your name?")
+            name = parse_name(await talk.listen(ASK_S, owner), enrolled)
             s.checkpoint()
         if name == DECLINE:
             guests.set_guest(store, s.learner_id, "declined")

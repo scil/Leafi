@@ -100,9 +100,10 @@ async def _open(w: World, act: Activity, aid: int) -> bool | None:
     return w.open_page_read(pid, act.params.get("range", "rest"), familiar=page == "familiar")
 
 
-async def _announce(w: World) -> None:
+async def _announce(w: World, owner) -> None:
     printed = w.store.one("SELECT printed_number FROM pages WHERE id=?", (w.page_id,))["printed_number"]
-    await w.inputs.line("page_ready" if w.inputs.voice else "page_ready_text", page=printed if printed else "")
+    await w.inputs.line("page_ready" if w.inputs.voice else "page_ready_text", page=printed if printed else "",
+                        owner=owner)
 
 
 def _persist(w: World, uid: int, obs, events, st: ReadingState) -> None:
@@ -208,17 +209,38 @@ async def _correct(w: World, ctl: controls.Control, uid: int, typed: bool) -> No
     await w.inputs.line("correction_thanks", provenance=Provenance("learner", (w.s.learner_id,)), new=ctl.text)
 
 
-async def _offer_hint(w: World) -> None:
-    """§6.1 `stuck_only`: "Want a hint?"; on yes Leafi says the word and the token becomes `supplied`."""
+_HINT_YES = {"yes please", "please", "ok please", "okay please", "sure please"}
+_HINT_NO = {"no thank you", "not now", "no thanks"}
+
+
+def _hint_reply(u: Utterance) -> str | None:
+    """"yes" or "no" (also "yes please", "no thank you", "not now"); None: not an answer to the hint offer."""
+    flat = " ".join(u.text.lower().replace(",", " ").replace("’", "'").strip(" .!?").split())
+    if flat in _HINT_YES:
+        return "yes"
+    if flat in _HINT_NO:
+        return "no"
+    ctl = controls.parse(u.text)
+    return ctl.kind if ctl is not None and ctl.kind in ("yes", "no") else None
+
+
+async def _offer_hint(w: World, owner) -> Utterance | None:
+    """§6.1 `stuck_only`: "Want a hint?"; on yes Leafi says the word and the token becomes `supplied`. Asked under
+    the page read's prompt (D21); only yes and no are its answers: any other reply is returned for `read_listen` to
+    dispatch, so a control is never read as reading and a posted skip is never dropped."""
     st = w.state
     if st.pcur >= st.n:
-        return
-    await w.inputs.line("hint_offer")
-    u = await w.inputs.listen(float(w.s.settings["negotiation.ask_s"]))
+        return None
+    await w.inputs.line("hint_offer", owner=owner)
+    u = await w.inputs.listen(float(w.s.settings["negotiation.ask_s"]), owner, accepts_page=True)
     w.s.checkpoint()
-    ctl = controls.parse(u.text) if u is not None else None
-    if ctl is None or ctl.kind != "yes":
-        return
+    if u is None:
+        return None
+    reply = _hint_reply(u)
+    if reply is None:
+        return u
+    if reply != "yes":
+        return None
     i = st.pcur
     await w.inputs.line("hint_word", word=st.tokens[i].text)
     w.seq += 1
@@ -226,6 +248,16 @@ async def _offer_hint(w: World) -> None:
     new, events = supply(st, i, w.seq)
     _persist(w, uid, [], events, new)
     _complete_reached(w, events)
+    return None
+
+
+def _late_pages(w: World, aid: int) -> Utterance | None:
+    """D21: the newest page turn of this activity's ended prompts; their skips are dropped (the question is past)."""
+    page = None
+    for item in w.inputs.take_late(lambda o: isinstance(o, tuple) and o[:2] == ("act", aid)):
+        if item.kind == "page":
+            page = item.u
+    return page
 
 
 def _self_corrections(w: World) -> int:
@@ -240,7 +272,8 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     if opened is None:
         s.latch.terminate("idle_session")
         return "idle_session", {}
-    await _announce(w)
+    owner = ("page", w.read_id)  # D21: one prompt for the whole page read, the hint offer included
+    await _announce(w, owner)
     target = _range_sids(w.state, act.params.get("range", "rest"))
     before = set(w.state.completed)
     interrupt = s.settings["reading.interrupt"]
@@ -252,7 +285,7 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
         return {"page_read_id": w.read_id, "sentences": len(w.state.completed - before)}
 
     try:
-        idle, cued, hinted = 0.0, False, None
+        idle, cued, hinted, handed = 0.0, False, None, None
         while True:
             if set(target) <= w.state.completed:
                 if (w.state.page_complete() and not encouraged and s.settings["reading.encourage"] != "none"
@@ -261,7 +294,10 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                     encouraged = True
                 return "completed", outcome()
             timeout = cfg.sentence_pause_s if io.voice else cfg.study_idle_s
-            u = await io.listen(timeout)
+            if handed is not None:  # the hint offer's reply that was not yes or no (D21)
+                u, handed = handed, None
+            else:
+                u = await io.listen(timeout, owner, accepts_page=True)
             s.checkpoint()
             if u is None:
                 if not io.voice:
@@ -280,7 +316,9 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                     cued = True
                 if interrupt != "never" and idle >= back_s + prompt_s and hinted != w.state.pcur:
                     hinted = w.state.pcur
-                    await _offer_hint(w)
+                    handed = await _offer_hint(w, owner)
+                    if handed is not None:
+                        continue
                 if idle >= cfg.study_idle_s:
                     s.latch.terminate("idle_session")
                     return "idle_session", outcome()
@@ -386,11 +424,17 @@ async def practise_errors(w: World, act: Activity, aid: int) -> tuple[str, dict]
             await io.line("practice_intro", provenance=PAGE, word=word)
             await io.say(word, slow=True, provenance=PAGE)
         while attempt < 2:
-            await io.line("practice_retry" if attempt == 0 else "practice_again", provenance=PAGE, word=word)
+            owner = ("act", aid, f"{mid}.{attempt}")  # D21: each try is its own question
+            await io.line("practice_retry" if attempt == 0 else "practice_again", provenance=PAGE, word=word,
+                          owner=owner)
             if attempt:
                 await io.say(word, slow=True, provenance=PAGE)
-            u = await io.listen(cfg.practice_retry_s if io.voice else None)
+            u = await io.listen(cfg.practice_retry_s if io.voice else None, owner, accepts_page=True)
             s.checkpoint()
+            if (late := _late_pages(w, aid)) is not None:  # a page turned during an earlier try
+                _store_utterance(w, late, "control")
+                _page_turn(w, controls.parse(late.text))
+                return "page_turned", {"practised": done}
             if u is None:
                 miscues.record_practice(w.store, mid, attempt + 1, "idle")
                 break
@@ -443,14 +487,18 @@ async def review_anki(w: World, act: Activity, aid: int) -> tuple[str, dict]:
         return "completed", {"cards": 0, "unavailable": True}
     answered = 0
     await io.line("review_intro", count=len(cards))
-    for card in cards:
+    for i, card in enumerate(cards):
         if w.activity_over():
             break
         # a card's text may hold the learner's own words; its provenance is not known here: `learner` (M5 D13)
-        await io.line("review_prompt_eases", provenance=Provenance("learner", (s.learner_id,)), front=card.front)
+        owner = ("act", aid, f"card.{i}")  # D21: each card its own question
+        await io.line("review_prompt_eases", provenance=Provenance("learner", (s.learner_id,)), front=card.front,
+                      owner=owner)
         while True:
-            u = await io.listen(cfg.study_idle_s)
+            u = await io.listen(cfg.study_idle_s, owner, accepts_page=True)
             s.checkpoint()
+            if (late := _late_pages(w, aid)) is not None and s.on_page is not None:
+                s.on_page(late)  # D21: remembered; the next boundary opens it
             if u is None:
                 s.latch.terminate("idle_session")
                 return "idle_session", {"cards": answered}
@@ -498,13 +546,14 @@ async def read_aloud(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     return "completed", {"sentences": said, "page_read_id": w.read_id}
 
 
-async def _pause(w: World, seconds: float, line: str, *, any_input_ends: bool) -> str:
+async def _pause(w: World, aid: int, seconds: float, line: str, *, any_input_ends: bool) -> str:
     s, io = w.s, w.inputs
-    await io.line(line, seconds=int(seconds))
+    owner = ("act", aid, "pause")  # D21; a page still ends a wait, as in M6
+    await io.line(line, seconds=int(seconds), owner=owner)
     await io.hub.show(Display("status", f"{int(seconds)} s"))
     end = time.monotonic() + seconds
     while (left := end - time.monotonic()) > 0:
-        u = await io.listen(left)
+        u = await io.listen(left, owner, accepts_page=True)
         s.checkpoint()
         if s.take_skip():
             return "skipped"
@@ -514,12 +563,12 @@ async def _pause(w: World, seconds: float, line: str, *, any_input_ends: bool) -
 
 
 async def break_(w: World, act: Activity, aid: int) -> tuple[str, dict]:
-    return await _pause(w, float(act.params.get("seconds", 60)), "break_start", any_input_ends=False), {}
+    return await _pause(w, aid, float(act.params.get("seconds", 60)), "break_start", any_input_ends=False), {}
 
 
 async def wait(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     """A harness-internal break of `negotiation.wait_s`: any input ends it, so the learner can choose."""
-    return await _pause(w, float(act.params.get("seconds", 30)), "wait_start", any_input_ends=True), {}
+    return await _pause(w, aid, float(act.params.get("seconds", 30)), "wait_start", any_input_ends=True), {}
 
 
 async def end(w: World, act: Activity, aid: int) -> tuple[str, dict]:

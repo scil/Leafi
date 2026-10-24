@@ -125,9 +125,12 @@ class World:
         if self.page_tracker is not None:
             found = await self.page_tracker.find(self.book_id, req.number)
             if found.status == "uncertain":
-                await self.inputs.say(found.message)
-                u = await self.inputs.listen(self.settings.study_idle_s)
+                await self.inputs.ask(("world", "confirm_page"), found.message)
+                u = await self.inputs.listen(self.settings.study_idle_s, ("world", "confirm_page"), accepts_page=True)
                 ctl = controls.parse(u.text) if u is not None else None
+                if ctl is not None and ctl.kind == "page" and self.s.on_page is not None:
+                    self.s.on_page(u)  # another page named instead of a yes: acquire that one (D21)
+                    return None
                 if ctl is not None and ctl.kind == "yes":
                     found = self.page_tracker.confirm(found, found.page_id)
             if found.status == "ready":
@@ -149,9 +152,12 @@ class World:
             pid = await self._from_request(req)
             if pid is not None:
                 return pid
+            if self.pending is not None:
+                continue
+            owner = ("world", "page_text")
             if self.page_tracker is None:
-                await self.inputs.line("ask_page_text")
-            u = await self.inputs.listen(self.settings.study_idle_s)
+                await self.inputs.line("ask_page_text", owner=owner)
+            u = await self.inputs.listen(self.settings.study_idle_s, owner, accepts_page=True)
             if u is None:
                 return None
             ctl = controls.parse(u.text)

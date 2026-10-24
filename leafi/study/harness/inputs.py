@@ -19,6 +19,7 @@ import contextlib
 import logging
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import anyio
@@ -130,9 +131,14 @@ class Inputs:
     def current_owner(self):
         return self._owners[-1][1] if self._owners else None
 
-    def take_late(self) -> list[_Item]:
-        """Pages and skips whose prompt had ended when they arrived (D21): drained by the boundary or activity."""
-        late, self.late = self.late, []
+    def take_late(self, match: Callable[[object], bool] | None = None) -> list[_Item]:
+        """Pages and skips whose prompt had ended when they arrived (D21): drained by the boundary (all of them) or
+        by the running activity (`match`: its own prompts'; the others stay for the next boundary)."""
+        if match is None:
+            late, self.late = self.late, []
+            return late
+        late = [i for i in self.late if match(i.owner)]
+        self.late = [i for i in self.late if not match(i.owner)]
         return late
 
     # ---- readers
@@ -309,9 +315,14 @@ class Inputs:
     def _will_play(self) -> bool:
         return self.hub.policy != "none" and bool(self.hub.mouths) and self.hub.synthesizer is not None
 
-    async def line(self, key: str, *, provenance: Provenance = SYSTEM, **kw) -> None:
-        """A phrase; `provenance` is that of the most restrictive value filled into it (`system` for counts)."""
-        await self.say(phrases.say(key, **kw), provenance=provenance)
+    async def line(self, key: str, *, provenance: Provenance = SYSTEM, owner=_UNOWNED, **kw) -> None:
+        """A phrase; `provenance` is that of the most restrictive value filled into it (`system` for counts).
+        With `owner` the phrase is a prompt (`ask`, D21)."""
+        text = phrases.say(key, **kw)
+        if owner is _UNOWNED:
+            await self.say(text, provenance=provenance)
+        else:
+            await self.ask(owner, text, provenance=provenance)
 
     # ---- watchers
     async def _watch_page(self) -> None:

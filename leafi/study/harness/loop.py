@@ -95,15 +95,15 @@ async def identify_book(s: Session, w: World, env: Env) -> None:
     if not title and env.ocr is not None and env.hub.eye() is not None:
         guess = await books.identify(env.hub.eye(), env.ocr, env.catalog)
         if guess.title:
-            await io.line("confirm_title", title=guess.title)
-            u = await io.listen(env.settings.study_idle_s)
+            await io.line("confirm_title", title=guess.title, owner=("setup", "confirm_title"))
+            u = await io.listen(env.settings.study_idle_s, ("setup", "confirm_title"))
             s.checkpoint()
             ctl = controls.parse(u.text) if u is not None else None
             if ctl is not None and ctl.kind == "yes":
                 title, isbn = guess.title, guess.isbn
     while not title:
-        await io.line("ask_title")
-        u = await io.listen(env.settings.study_idle_s)
+        await io.line("ask_title", owner=("setup", "title"))
+        u = await io.listen(env.settings.study_idle_s, ("setup", "title"))
         s.checkpoint()
         if u is None:
             s.latch.terminate("idle_session")
@@ -120,8 +120,8 @@ async def identify_book(s: Session, w: World, env: Env) -> None:
     if prev is None:
         return
     printed = s.store.one("SELECT printed_number FROM pages WHERE id=?", (prev["page_id"],))["printed_number"]
-    await io.line("continue_offer", page=printed or prev["page_id"])
-    u = await io.listen(env.settings.study_idle_s)
+    await io.line("continue_offer", page=printed or prev["page_id"], owner=("setup", "continue"))
+    u = await io.listen(env.settings.study_idle_s, ("setup", "continue"))
     s.checkpoint()
     ctl = controls.parse(u.text) if u is not None else None
     if ctl is not None and ctl.kind == "yes":
