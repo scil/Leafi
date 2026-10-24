@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from leafi.core.storage import Store
+from leafi.core.provenance import Provenance, join
+from leafi.core.storage import Store, loads
 from leafi.core.text import norm, words
 from leafi.study import knowledge
 
@@ -35,8 +36,19 @@ def check(store: Store, learner_id: int, item_id: int, fields: dict[str, str], s
     return "pass", ""
 
 
-def stored_text(store: Store, item_id: int) -> tuple[dict[str, str], str]:
-    """The `code` content owner's card text: `knowledge.card_fields` and the latest context sentence."""
-    enc = store.one("SELECT context_sentence FROM encounters WHERE knowledge_item_id=? AND context_sentence != '' "
-                    "ORDER BY id DESC LIMIT 1", (item_id,))
-    return knowledge.card_fields(store, item_id), enc["context_sentence"] if enc else ""
+def stored_text(store: Store, item_id: int) -> tuple[dict[str, str], str, Provenance]:
+    """The `code` content owner's card text: `knowledge.card_fields`, the latest context sentence, and the
+    provenance of what was copied (M7 design D15, round 7 #6): the item's learner joined with the chosen
+    encounters' explanation and context provenance, so a card copying a Brain explanation that quoted another
+    learner keeps that learner as a source (fenced, and removed with them)."""
+    enc = store.one("SELECT context_sentence, context_provenance_class, context_source_learners FROM encounters "
+                    "WHERE knowledge_item_id=? AND context_sentence != '' ORDER BY id DESC LIMIT 1", (item_id,))
+    exp = store.one("SELECT explanation_provenance_class, explanation_source_learners FROM encounters WHERE "
+                    "knowledge_item_id=? ORDER BY (explanation_en IS NULL), id DESC LIMIT 1", (item_id,))
+    owner = store.one("SELECT learner_id FROM knowledge_items WHERE id=?", (item_id,))["learner_id"]
+    provs = [Provenance("derived_from_learner", (owner,))]
+    if exp is not None:
+        provs.append(Provenance(exp[0], tuple(loads(exp[1], []))))
+    if enc is not None:
+        provs.append(Provenance(enc[1], tuple(loads(enc[2], []))))
+    return knowledge.card_fields(store, item_id), enc["context_sentence"] if enc else "", join(provs)

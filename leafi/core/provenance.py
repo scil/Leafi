@@ -50,6 +50,20 @@ class Leaf:
     #                                its expected word and category); None: the leaf is dropped
 
 
+CLASS_ORDER = ("system", "page", "parent", "derived_from_learner", "learner")
+
+
+def join(provs: Iterable[Provenance]) -> Provenance:
+    """Text built by copying other texts as they are (a payload, a card made of stored fields): the strongest class
+    with every source, `PARENT_SOURCE` added when parent text sits beside a learner's (D2)."""
+    provs = list(provs) or [SYSTEM]
+    cls = max((p.cls for p in provs), key=CLASS_ORDER.index)
+    sources = {s for p in provs for s in p.sources}
+    if cls in LEARNER_CLASSES and any(p.cls == "parent" for p in provs):
+        sources.add(PARENT_SOURCE)
+    return Provenance(cls, tuple(sorted(sources)))
+
+
 def of_output(sent: Iterable[Provenance]) -> Provenance:
     """The provenance of a Brain output from the provenance of every leaf actually sent to that backend: never
     weaker than `derived_from_learner` when any sent leaf came from a learner (a model output quoting a learner is

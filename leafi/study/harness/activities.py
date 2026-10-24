@@ -533,12 +533,12 @@ async def add_cards(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     s = w.s
     added, flagged, rejected = [], [], {}
     for item_id in act.params["item_ids"]:
-        fields, sentence = cards.stored_text(w.store, item_id)
+        fields, sentence, prov = cards.stored_text(w.store, item_id)
         verdict, reason = cards.check(w.store, s.learner_id, item_id, fields, sentence)
         if verdict == "reject":
             rejected[item_id] = reason
             continue
-        cls, src = learner_store.prov("derived_from_learner", [s.learner_id])
+        cls, src = learner_store.prov(prov.cls, prov.sources)  # what the card copies (M7 design D15)
         learner_store.insert(w.store, "anki_outbox", s.learner_id, sources=[s.learner_id], knowledge_item_id=item_id,
                              op="add", state="pending", updated_at=now_iso(), front=fields["正面"],
                              back=fields["背面"], sentence=sentence, card_provenance_class=cls,

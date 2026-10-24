@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from leafi.core import learner_store
 from leafi.core.ports import BrainBackend, CallAttempt, CallRecord, Leaf, ModelRequest
-from leafi.core.provenance import PARENT_SOURCE, SYSTEM, Provenance, of_output
+from leafi.core.provenance import Provenance, join, of_output
 from leafi.core.storage import Store, dumps, now_iso
 from leafi.study.brain import routing
 from leafi.study.harness import busy
@@ -37,7 +37,6 @@ log = logging.getLogger("leafi.brain.call")
 AUDIT_S = 0.3
 RESET_S = 0.5
 MAX_CODES = 8
-CLASS_ORDER = ("system", "page", "parent", "derived_from_learner", "learner")
 
 
 # ---------------------------------------------------------------- budgets (D7)
@@ -228,12 +227,7 @@ def leaves_of(req: ModelRequest) -> list[Leaf]:
 
 def payload_provenance(leaves: list[Leaf]) -> Provenance:
     """The strongest class among the leaves sent, with every source (the payload holds them as they are)."""
-    provs = [leaf.prov for leaf in leaves] or [SYSTEM]
-    cls = max((p.cls for p in provs), key=CLASS_ORDER.index)
-    sources = sorted({s for p in provs for s in p.sources})
-    if cls in ("learner", "derived_from_learner") and any(p.cls == "parent" for p in provs):
-        sources = sorted({*sources, PARENT_SOURCE})
-    return Provenance(cls, tuple(sources))
+    return join(leaf.prov for leaf in leaves)
 
 
 def _row(ctx: CallContext, purpose: str, d: str, tier: str, backend: BrainBackend, req: ModelRequest,
