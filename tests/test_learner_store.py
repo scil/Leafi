@@ -161,3 +161,47 @@ def test_choose_picks_names_or_the_only_learner(store):
         learner_store.choose(store, None)
     with pytest.raises(learner_store.LearnerChoice, match="no learner called"):
         learner_store.choose(store, "Cy", enrol=False)
+
+
+def test_the_named_writers_fence_every_learner_they_name(store, two):
+    """M7 design D22: `insert_named` and `update_named` refuse a row naming a learner being forgotten, in the same
+    statement; `update_named` fences the row's own learner (its session's) too."""
+    from leafi.core.storage import now_iso
+    from leafi.study.harness import rows
+
+    ada, ben = two
+    sid = seed.session(store, None, learner_id=ada)
+    aid = rows.start_activity(store, session_id=sid, kind="break", cycle_id=None)
+    quoted = learner_store.prov("derived_from_learner", [ben])
+    store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (ben,))
+    with pytest.raises(learner_store.LearnerUnavailable):
+        learner_store.update_named(store, "activities", aid, outcome_provenance_class=quoted[0],
+                                   outcome_source_learners=quoted[1])
+    with pytest.raises(learner_store.LearnerUnavailable):
+        learner_store.insert_named(store, "utterances", session_id=sid, text="ben said", kind="reading",
+                                   created_at=now_iso(), provenance_class=quoted[0], source_learners=quoted[1])
+    with pytest.raises(ValueError):  # a learner-owned table goes through insert()
+        learner_store.insert_named(store, "learner_notes", text="x")
+    store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (ada,))
+    with pytest.raises(learner_store.LearnerUnavailable):  # the row's own learner
+        rows.finish_activity(store, aid, "completed", {"n": 1}, learner_id=ada)
+
+
+def test_adopt_session_moves_the_session_and_the_guests_attempts(store):
+    from leafi.core.storage import now_iso
+
+    guest = learner_store.create(store, "guest", kind="guest")
+    ada = learner_store.create(store, "Ada")
+    sid = seed.session(store, None, learner_id=guest)
+    store.execute("INSERT INTO egress_log(destination, purpose, learner_id, session_id, payload_size, body_hmac, "
+                  "status, created_at, updated_at) VALUES('x', 'generate', ?, ?, 1, 'h', 'sent', ?, ?)",
+                  (guest, sid, now_iso(), now_iso()))
+    with store.transaction():
+        assert learner_store.adopt_session(store, sid, guest, ada)
+    assert store.one("SELECT learner_id FROM reading_sessions WHERE id=?", (sid,))[0] == ada
+    assert store.one("SELECT learner_id FROM egress_log")[0] == ada
+    assert learner_store.get(store, guest) is None  # the empty guest row is gone
+    ben = learner_store.create(store, "Ben")
+    store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (ben,))
+    with store.transaction():
+        assert not learner_store.adopt_session(store, sid, ada, ben)  # never to a learner being forgotten

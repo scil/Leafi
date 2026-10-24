@@ -145,3 +145,54 @@ def test_no_environment_reads_outside_core_config():
         if "os.environ" in text or "os.getenv" in text:
             bad.append(rel)
     assert bad == []
+
+
+# M7 design D22: no row that names a learner is written except through `learner_store`'s fenced writers. The
+# functions below write learner columns without naming a new learner; each says why.
+_WRITE_EXEMPT = {
+    "leafi/study/records.py:_purge_derived": "clears provenance to `system` / `[]` for a learner being forgotten",
+    "leafi/study/records.py:forget_learner": "clears `source_learner_id` to NULL for the learner being forgotten",
+    "leafi/study/harness/guests.py:discard": "moves a discarded guest's rows to the permanent `anonymous` row",
+}
+_INSERT = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\{\}|\w+)", re.IGNORECASE)
+_UPDATE = re.compile(r"UPDATE\s+(\{\}|\w+)\s+SET\s+(.*?)(?:\s+WHERE\b|$)", re.IGNORECASE | re.DOTALL)
+_NAMES_LEARNER = re.compile(r"learner_id|source_learners|provenance_class")
+
+
+def _sql(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):  # an f-string: its placeholders read as "{}"
+        return "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in node.values)
+    return None
+
+
+def test_every_write_that_names_a_learner_goes_through_the_fence():
+    """(a) any INSERT into a learner-owned or provenance table — a literal `INSERT INTO t`, a dynamic `INSERT INTO
+    {…}`, or `store.insert("t", …)` — and (b) any UPDATE whose SET names `learner_id`, `*_source_learners` or
+    `*_provenance_class` (or is dynamic on such a table) must live in `leafi/core/learner_store.py`."""
+    from leafi.core import learner_store as ls
+
+    fenced = set(ls.DIRECT) | set(ls.PROVENANCE_TABLES)
+    bad = []
+    for f in LEAFI.rglob("*.py"):
+        rel = f.relative_to(ROOT).as_posix()
+        if rel in ("leafi/core/learner_store.py", "leafi/core/storage.py"):
+            continue
+        for fn in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef) or f"{rel}:{fn.name}" in _WRITE_EXEMPT:
+                continue
+            for node in ast.walk(fn):
+                sql = _sql(node)
+                if sql:
+                    m = _INSERT.search(sql)
+                    if m and (m.group(1) in fenced or m.group(1) == "{}"):
+                        bad.append(f"{rel}:{node.lineno} {fn.name}: INSERT INTO {m.group(1)}")
+                    m = _UPDATE.search(sql)
+                    if m and (_NAMES_LEARNER.search(m.group(2))
+                              or ("{}" in m.group(2) and (m.group(1) in fenced or m.group(1) == "{}"))):
+                        bad.append(f"{rel}:{node.lineno} {fn.name}: UPDATE {m.group(1)} SET {m.group(2)[:40]}")
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "insert"
+                        and node.args and _sql(node.args[0]) in fenced):
+                    bad.append(f"{rel}:{node.lineno} {fn.name}: store.insert({_sql(node.args[0])!r})")
+    assert sorted(set(bad)) == []

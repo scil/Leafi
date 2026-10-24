@@ -48,8 +48,8 @@ OUTCOME_OF = {"pass": "matched", "fail": "disagreed", "unclear": "unclear"}
 
 
 def _store_utterance(w: World, u: Utterance, kind: str) -> int:
-    return w.store.insert(
-        "utterances", page_read_id=w.read_id, page_revision_id=w.rev.id if w.rev else None,
+    return learner_store.insert_named(  # fenced: it names the learner (M7 design D22)
+        w.store, "utterances", page_read_id=w.read_id, page_revision_id=w.rev.id if w.rev else None,
         session_id=w.s.session_id, text=u.text, kind=kind, created_at=now_iso(),
         words=dumps([[x.text, x.start_s, x.end_s, x.conf] for x in u.words]),
         provenance_class="learner", source_learners=dumps([w.s.learner_id]))

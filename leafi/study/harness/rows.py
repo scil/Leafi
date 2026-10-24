@@ -24,8 +24,8 @@ def start_activity(store: Store, *, session_id: int, kind: str, cycle_id: int | 
                    autonomy: int | None = None, epoch: int = 0) -> int:
     check(kind, ActivityStatus.COMPLETED)  # a known kind
     none = learner_store.prov("system")
-    return store.insert(
-        "activities", session_id=session_id, cycle_id=cycle_id, kind=kind, continuation=int(continuation),
+    return learner_store.insert_named(
+        store, "activities", session_id=session_id, cycle_id=cycle_id, kind=kind, continuation=int(continuation),
         params=dumps(params or {}), arm=arm, propensity=propensity, policy_version=policy_version,
         decided_by=decided_by, override=override, autonomy=autonomy, epoch=epoch, status=ActivityStatus.RUNNING,
         started_at=now_iso(), outcome_provenance_class=none[0], outcome_source_learners=none[1],
@@ -42,9 +42,9 @@ def finish_activity(store: Store, activity_id: int, status: str, outcome: dict |
         raise ValueError(f"activity {activity_id} already ended {row['status']}")
     pc, src = learner_store.prov("derived_from_learner", [learner_id]) if outcome and learner_id else \
         learner_store.prov("system")
-    store.execute("UPDATE activities SET status=?, ended_at=?, outcome=?, outcome_provenance_class=?, "
-                  "outcome_source_learners=? WHERE id=?",
-                  (st, now_iso(), dumps(outcome) if outcome is not None else None, pc, src, activity_id))
+    learner_store.update_named(store, "activities", activity_id, status=st, ended_at=now_iso(),
+                               outcome=dumps(outcome) if outcome is not None else None,
+                               outcome_provenance_class=pc, outcome_source_learners=src)
     return st
 
 

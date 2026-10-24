@@ -58,16 +58,8 @@ def adopt(s: Session, learner_id: int) -> bool:
     guest = s.learner_id
     try:
         with store.transaction():
-            moved = store.execute(
-                "UPDATE reading_sessions SET learner_id=? WHERE id=? AND EXISTS(SELECT 1 FROM learners WHERE id=? "
-                "AND kind='learner' AND forgetting=0)", (learner_id, s.session_id, learner_id)).rowcount
-            if not moved:
+            if not learner_store.adopt_session(store, s.session_id, guest, learner_id):
                 return False
-            if guest != learner_id:
-                # the guest's attempts so far belong to the learner now (M5 design D5); then the empty row goes
-                store.execute("UPDATE egress_log SET learner_id=? WHERE learner_id=?", (learner_id, guest))
-                store.execute("DELETE FROM learners WHERE id=? AND kind='guest' AND NOT EXISTS(SELECT 1 FROM "
-                              "reading_sessions WHERE learner_id=?)", (guest, guest))
     except Exception:  # busy: "let's try that again"
         log.warning("adopt failed", exc_info=True)
         return False

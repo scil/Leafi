@@ -4,6 +4,10 @@
 Every row of a direct-owner table is inserted through `insert`, which is a conditional insert: it writes only while
 the owner and every source learner of its text exist and are not being forgotten, so a write that races
 `forget --learner` is refused instead of leaving a copy behind (the fence of ADR-0018 §1).
+
+M7 design D22 extends the fence to every write that names a learner: `insert_named` for tables with provenance
+columns but no owner column, `update_named` for an UPDATE that sets provenance columns, and `adopt_session` for the
+one write that moves a session to another learner. `tests/test_architecture.py` refuses such a write anywhere else.
 """
 
 from __future__ import annotations
@@ -77,6 +81,73 @@ def insert(store: Store, table: str, learner_id: int, *, sources: Iterable[int] 
     if cur.rowcount != 1:
         raise LearnerUnavailable(f"{table}: learner(s) {ids} missing or being forgotten")
     return int(cur.lastrowid)
+
+
+def _fence(ids: list[int]) -> tuple[str, tuple]:
+    marks = ", ".join("?" for _ in ids)
+    return f"(SELECT COUNT(*) FROM learners WHERE id IN ({marks}) AND forgetting = 0) = ?", (*ids, len(ids))
+
+
+PROVENANCE_TABLES = frozenset(t for t, _, _ in PROVENANCE)
+# The learner a row belongs to, for a provenance table without its own `learner_id` (its session's learner).
+_OWNER_SQL = {
+    "activities": "SELECT rs.learner_id FROM activities a JOIN reading_sessions rs ON rs.id = a.session_id "
+                  "WHERE a.id = ?",
+    "utterances": "SELECT rs.learner_id FROM utterances u JOIN reading_sessions rs ON rs.id = u.session_id "
+                  "WHERE u.id = ?",
+}
+
+
+def insert_named(store: Store, table: str, *, sources: Iterable[int] = (), **cols) -> int:
+    """Insert a row of a provenance table that has no owner column (`utterances`, `activities`, `brain_calls`):
+    refused unless every learner its provenance columns (and `sources`) name exists and is not being forgotten,
+    checked in the same statement (M7 design D22)."""
+    if table not in PROVENANCE_TABLES or table in DIRECT:
+        raise ValueError(f"{table}: use insert() for a learner-owned table, or it has no provenance")
+    ids = sorted({*sources, *stated_sources(cols)} - {PARENT_SOURCE})
+    names, marks = ", ".join(cols), ", ".join("?" for _ in cols)
+    fence, args = _fence(ids)
+    cur = store.execute(f"INSERT INTO {table}({names}) SELECT {marks} WHERE {fence}", (*cols.values(), *args))
+    if cur.rowcount != 1:
+        raise LearnerUnavailable(f"{table}: learner(s) {ids} missing or being forgotten")
+    return int(cur.lastrowid)
+
+
+def row_owner(store: Store, table: str, row_id: int) -> int | None:
+    sql = _OWNER_SQL.get(table) or (f"SELECT learner_id FROM {table} WHERE id = ?" if table in DIRECT else None)
+    if sql is None:
+        return None
+    row = store.one(sql, (row_id,))
+    return row[0] if row else None
+
+
+def update_named(store: Store, table: str, row_id: int, **cols) -> None:
+    """An UPDATE of one row that sets provenance columns: refused unless the row's own learner and every learner
+    the new columns name exist and are not being forgotten, in the same statement (M7 design D22)."""
+    if table not in PROVENANCE_TABLES:
+        raise ValueError(f"{table} has no provenance columns")
+    owner = row_owner(store, table, row_id)
+    ids = sorted((({owner} if owner else set()) | stated_sources(cols)) - {PARENT_SOURCE})
+    sets = ", ".join(f"{k}=?" for k in cols)
+    fence, args = _fence(ids)
+    cur = store.execute(f"UPDATE {table} SET {sets} WHERE id = ? AND {fence}", (*cols.values(), row_id, *args))
+    if cur.rowcount != 1:
+        raise LearnerUnavailable(f"{table} #{row_id}: learner(s) {ids} missing or being forgotten")
+
+
+def adopt_session(store: Store, session_id: int, guest: int, learner: int) -> bool:
+    """Move a session (and the guest's egress attempts so far, M5 design D5) to an enrolled learner who is not being
+    forgotten, then delete the guest row once it owns nothing: one transaction, the caller's (ADR-0018 §1)."""
+    moved = store.execute(
+        "UPDATE reading_sessions SET learner_id=? WHERE id=? AND EXISTS(SELECT 1 FROM learners WHERE id=? "
+        "AND kind='learner' AND forgetting=0)", (learner, session_id, learner)).rowcount
+    if not moved:
+        return False
+    if guest != learner:
+        store.execute("UPDATE egress_log SET learner_id=? WHERE learner_id=?", (learner, guest))
+        store.execute("DELETE FROM learners WHERE id=? AND kind='guest' AND NOT EXISTS(SELECT 1 FROM "
+                      "reading_sessions WHERE learner_id=?)", (guest, guest))
+    return True
 
 
 # ---------------------------------------------------------------- learners
