@@ -11,7 +11,7 @@ Study needs speech recognition, speech synthesis, page OCR, pronunciation scorin
 
 ## Decision drivers
 
-- Red lines: images and audio local; cloud receives text only.
+- Red lines: images and audio local; cloud receives text only (amended by ADR-0018: that text is pseudonymised and leaves only through `leafi.privacy.egress`; media goes to the remote teacher only with a consumed consent, ADR-0018 §4, not built before M9).
 - Latency budgets (performance.md): feedback within 1.5 s of the end of an utterance.
 - Windows + RTX 50-series: CUDA 12.8 torch is installed; PaddlePaddle GPU needs a special wheel; ONNX Runtime is the safe common path.
 - Testability: every service needs a mock.

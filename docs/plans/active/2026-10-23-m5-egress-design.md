@@ -1,8 +1,11 @@
 ---
-status: proposed
+status: implemented
 date: 2026-10-23
 revision: 4.1
+implemented: 2026-10-24 (M5a 0b0c174, M5b 0ca1734 and 8247aca, M5c 8ef9a11, M5d 3711fb6, M5e)
 ---
+
+> As built, the plan's Decision log (2026-10-24 M5c and M5d calls) records where the code departs from this note: provenance at `say` is a keyword with default `system`; the Hugging Face and RapidOCR downloads and edge-tts `mediated` mode are not built (refused); the settings page warns instead of restarting services; the HF child adapter of D15 was not needed yet.
 
 # M5 egress and privacy: implementation design
 

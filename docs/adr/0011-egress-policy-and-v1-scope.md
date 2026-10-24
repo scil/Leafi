@@ -2,7 +2,10 @@
 status: accepted
 date: 2026-10-19
 amends: 0003
+superseded-in-part-by: 0018
 ---
+
+> Superseded in part by [ADR-0018](0018-learners-and-privacy-v2.md) (built in plan M5, 2026-10-24) for the study track (`leafi/`): every outbound call goes through `leafi.privacy.egress`; a learner's own words may leave pseudonymised when that learner allows it; `REDACT_TERMS` became `household_terms`; the TTS `local_only` flag became provenance routing; the parent notification names the learner by a surrogate. Still in force: the habit track (`agent/`) with its `NOTIFY_WITH_SNAPSHOT` opt-in, and the v1 scope decisions below.
 
 # One egress policy for every network call; v1 is the smallest loop that tutors
 

@@ -7,8 +7,9 @@ Curated; every path below exists or is created by the active plan (marked *plann
 | `AGENTS.md`, `CLAUDE.md` | agent instruction map (layer 0) | — |
 | `GLOSSARY.md` | domain vocabulary | — |
 | `docs/` | plans, product, architecture, ADRs, engineering, research, ownership map, archive | `docs/ownership-map.md` |
-| `leafi/` | the hardware-agnostic agent; `app.py` = composition root, `runner.py` = study entry, `doctor.py` | `python -m leafi {study,devices,doctor,export,forget,setup}` (`cli.py`) |
-| `leafi/core/` | ports, hub (+ devices.yml parsing, listening gate), config, storage (schema), text, audio, speech lease, no-network guard | `hub.Hub(...)`, `storage.Store(path)` |
+| `leafi/` | the hardware-agnostic agent; `app.py` = composition root, `bootstrap.py` = process start (the socket guard, the offline environment), `runner.py` = study entry, `doctor.py` | `python -m leafi {study,devices,doctor,export,forget,privacy,setup,migrate,backup}` (`cli.py`) |
+| `leafi/core/` | ports, hub (+ devices.yml parsing, listening gate), config, storage (schema, migrations), text, audio, speech lease, `learner_store`, the socket guard (`netguard`) | `hub.Hub(...)`, `storage.Store(path)` |
+| `leafi/privacy/` | the one way out (ADR-0018): `egress` (prepare + mediating transport), `destinations`, `pseudonym` (lists, surrogates), `detector` (Presidio + spaCy), `settings` (learner privacy keys, schools, household terms), `versions`, `secret` (`data/egress.key`), `runtime` (the process's Egress, attribution) | `runtime.get(settings).prepare(destination, purpose, Outgoing(...))` |
 | `leafi/devices/` | adapters: go2rtc camera (Eye+Mouth), local PC (Ear, Mouth), console (Listener, Face), notifiers; later Frigate presence, xiaozhi, Wyoming | registry in `devices/__init__.py` |
 | `leafi/services/{asr,tts,ocr,pronunciation,brain,catalog}/` | model services with backend registries and mocks (`vision` stays in `agent/` for now) | `services.<name>.REGISTRY.create(name, settings)` |
 | `leafi/study/` | book-study track: alignment, pages, corrections, lexicon, knowledge, cards, anki, coach, controls, phrases, page_tracker, books, records; `harness/` is the study harness (ADR-0017: loop, latch, menu, policy, negotiate, activities, inputs, identify, guests) | `study.harness.loop.run_session(Env(...))` |

@@ -76,3 +76,5 @@ Page text and learner text are data: quoted in a delimited block, the Brain's re
 ## Retention
 
 See data-model.md → Retention. Parent deletion: `python -m leafi forget --session <id>` and `--book <id>`, defined in ADR-0010 §9, and `--learner <id> --yes` (a learner and every text derived from them), defined in ADR-0018 §1.
+
+ADR-0018 §4.3: a learner's records, consents and study rows of `egress_log` are kept until `forget`; guest records per the guest end state (`GUEST_KEEP_DAYS`); `ops` rows of `egress_log` for `PRIVACY_OPS_LOG_DAYS` (30); page images 7 days, learner audio not stored, the TTS cache 90 days (each entry records its provenance), evaluation transcripts opt-in 30 days, no raw text in logs at INFO. `data/egress.key` (the HMAC and surrogate secret) is copied by `leafi backup` beside each backup.

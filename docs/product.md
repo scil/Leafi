@@ -8,14 +8,14 @@ Leafi is a household AI agent. It does family tasks through whatever hardware th
 
 ## Users
 
-- **Learner**: the child, age 10, learning English. Reads aloud, answers questions, corrects Leafi.
+- **Learner**: a child of the household learning English, each with their own records; siblings share one Leafi (ADR-0018 §1). Reads aloud, answers questions, corrects Leafi. A child who is not enrolled reads as a **guest**.
 - **Parent**: sets up devices and books, reads summaries, receives notifications, curates Anki.
 - **Agents**: Claude Code / Codex sessions that build and maintain Leafi; the docs are written for them first.
 
 ## Principles (non-negotiable)
 
-1. Images, faces and poses never leave the LAN. Book-page images are images. Vision runs locally.
-2. The learner's voice stays local by default. ASR and pronunciation scoring run locally; the cloud Brain receives text only (page excerpts, miscue words, session summaries), never audio, never identity.
+1. Images, faces and poses never leave the LAN, except one item a learner agreed to show the remote teacher, under a consent used once (ADR-0018 §4; not built before M9). Book-page images are images. Vision runs locally.
+2. The learner's voice stays local. ASR and pronunciation scoring run locally; the cloud receives text only, through one gate (`leafi.privacy.egress`): every household name, school and listed term is replaced, and a learner's own words leave only when that learner's `cloud.text` allows it (ADR-0018 §2–§3). Never audio, never identity.
 3. Cameras never enter the bathroom. For study, the camera looks at the desk and the book.
 4. Transparent to the child: Leafi is a coach and teammate, not surveillance. Coach voice everywhere.
 5. Hardware is a configuration, not a dependency. Zero mouths, one mouth or three mouths must all work; the study loop must run with typed text and no camera.
@@ -62,7 +62,7 @@ Leafi is a household AI agent. It does family tasks through whatever hardware th
 
 ## Non-goals
 
-- No cloud vision, no cloud ASR, no face recognition in the cloud, ever.
+- No cloud vision for Leafi's own work, no cloud ASR, no face recognition in the cloud, ever; the remote teacher's consented item (principle 1) is the one exception (ADR-0018 §4).
 - No full-duplex barge-in voice pipeline in v1; turns are explicit.
 - No model fine-tuning in v1; improvement is data (ADR-0006).
 - No grading or scores shown to the child as judgement; numbers are for the parent and for Practice ordering. No "wrong" without acoustic or practice evidence; the default is "let's hear it once more".

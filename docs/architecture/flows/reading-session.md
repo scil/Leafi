@@ -80,4 +80,4 @@ The `quiz` activity asks ≤ `quiz.max_questions` per cycle over the cycle's rea
 
 ## Wrap
 
-`finalize` (one local transaction): close the running activity and the open cycle, write the summary counts, set `ended_at`, apply the guest end state. `deliver`: closing line while the speech lease is held; Anki outbox processed (dedupe by `leafi-id::<key>`, add/update, ack; failures stay `pending`). `extract_notes`: learner notes with citations, skipped for guests. The lease is released whatever happened.
+`finalize` (one local transaction): close the running activity and the open cycle, write the summary counts, set `ended_at`. `deliver`: closing line while the speech lease is held; the parent notification (counts and the learner's surrogate, through egress); Anki outbox processed (dedupe by `leafi-id::<key>`, add/update, ack; failures stay `pending`). `extract_notes`: learner notes with citations, skipped for guests. Then the session's egress is over: the guest end state is applied and `post_done_at` is set (only now may the guest sweep or `forget` act on it, ADR-0018 §1, M5 design D5). The lease is released whatever happened.

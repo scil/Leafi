@@ -8,6 +8,7 @@ flowchart TB
             Study["study track<br/>(session, alignment, coach, knowledge)"]
             Habits["habits track<br/>(agent/ legacy)"]
             Svc["services<br/>asr · tts · ocr · pronunciation · brain · vision"]
+            Egress["privacy.egress<br/>+ core.netguard (socket guard)"]
             DB[("SQLite data/leafi.db<br/>+ data/sessions.db (habits)")]
             Cache[("cache/tts, cache/pages")]
         end
@@ -28,7 +29,8 @@ flowchart TB
     end
     Xiaomi["Xiaomi camera (cs2 P2P)"]
     ESP32["ESP32 (xiaozhi ws) — planned"]
-    Cloud["Claude API"]
+    Cloud["Claude API · edge-tts · Open Library"]
+    Magpie["magpie gateway — planned (ADR-0017 §5.1)"]
     HC["Healthchecks.io<br/>(heartbeat)"]
     TG["Telegram"]
 
@@ -42,8 +44,12 @@ flowchart TB
     Go2rtc --> Xiaomi
     FrigateC -- rtsp relay --> Go2rtc
     FrigateC -- events --> Mqtt -- frigate/events --> Hub
-    Svc -- /api/chat (images stay local) --> OllamaC
-    Svc -- messages (text only) --> Cloud
+    Svc -- "vision /api/chat (images stay local)" --> OllamaC
+    Svc --> Egress
+    Hub -- "parent notification" --> Egress
+    Egress -- "/v1/chat/completions (gateway port, granted)" --> OllamaC
+    Egress -- "pseudonymised text only, one grant per connection" --> Cloud
+    Egress -. "planned" .-> Magpie
     Study -- addNote / findCards / answerCards --> AnkiC
     Hub -- ws: opus + json --> ESP32
 
@@ -58,8 +64,9 @@ flowchart TB
     Study -- "study-mic / study-lease rows" --> DB
     Sup -- "alert outbox" --> DB
     Sup -- "catalog sentence" --> Toast
-    Sup -- "catalog sentence (text only)" --> TG
-    Sup -- "bodyless GET every minute" --> HC
+    Sup -- "catalog sentence, bodyless heartbeat (purpose ops)" --> Egress
+    Egress -- "alerts, parent notification" --> TG
+    Egress -- "bodyless GET every minute" --> HC
     HC -. "alarm when pings stop" .-> TG
 ```
 

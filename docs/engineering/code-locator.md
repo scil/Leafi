@@ -90,5 +90,11 @@ Search this file for the symptom or the user's words; read only the matching ent
 - Check: `tests/test_speaker_lease.py`.
 
 ## "something went to the cloud" / privacy
-- Start: `docs/architecture/quality-attributes/security.md` (egress table), `leafi/services/brain/__init__.py::BrainRequest`, `leafi/study/coach.py` (redaction, page window), `leafi/core/netguard.py`.
-- Check: `tests/test_privacy.py` (canaries + `LEAFI_NO_NETWORK=1` subprocess), `tests/test_architecture.py`.
+- Start: `docs/architecture/quality-attributes/security.md` (egress table, privacy settings), `data/leafi.db` table `egress_log` (one row per attempt: destination, purpose, learner, status, transmissions; an HMAC, never a body), `leafi/privacy/egress.py` (`prepare`, the mediating transport), `leafi/privacy/destinations.py`, `leafi/privacy/pseudonym.py` (lists, surrogates), `leafi/privacy/detector.py`, `leafi/core/netguard.py` + `leafi/bootstrap.py` (the socket guard).
+- A refusal: the caller got a 403 `{"refused": reason}` or `egress.Refused`; the reason names the rule (no school answer, `cloud.text` off, a version changed, the `.env` fingerprint changed: restart).
+- A spoken line went to edge-tts / stayed local: `leafi/services/tts/__init__.py::TtsService._must_stay_local` (provenance, protected names).
+- Check: `tests/test_privacy.py` (the wire beneath egress, canaries, `LEAFI_NO_NETWORK=1` subprocess), `tests/test_egress.py`, `tests/test_netguard.py`, `tests/test_pseudonym.py`, `tests/test_architecture.py`.
+
+## "a child's school / a protected name"
+- Start: `python -m leafi privacy schools`, `python -m leafi privacy terms`; `leafi/privacy/settings.py` (the learner privacy writer, `household_terms` helpers); enrolment's question in `leafi/study/harness/identify.py::ask_school`.
+- Check: `tests/test_privacy_settings.py`, `tests/test_identify.py`.

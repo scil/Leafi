@@ -103,7 +103,7 @@ Restarts cannot fix a setting that is wrong. The supervisor also runs a list of 
 | `active-hours` | Windows Update active hours cover `ACTIVE_HOURS` (default 7–21), so updates do not reboot the PC while the household uses it |
 | `disk` | at least `MIN_FREE_GB` (default 5) free on the data drive |
 | `models` | `leafi doctor` reports no backend as missing or error |
-| `redact-terms` | `REDACT_TERMS` is set (the names removed from cloud payloads) |
+| `household-terms` | every enrolled learner has a school answer, so their own words may leave pseudonymised (ADR-0018 §3; `redact-terms` until 2026-10-24, when `REDACT_TERMS` became `household_terms`) |
 | `telegram` | `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set (only while `telegram` is in `REQUIRED_CHANNELS`, default `telegram,heartbeat`: the owner chose both; toast-only is a supported choice by removing it) |
 | `heartbeat` | `HEARTBEAT_URL` is set (only while `heartbeat` is in `REQUIRED_CHANNELS`) |
 | `devices` | `config/devices.yml` parses |
@@ -157,6 +157,8 @@ keep.ps1 rolls `keep-supervisor.log` at 1 MB. `health.ps1` prints each service's
 ## Egress (amends ADR-0011)
 
 The Telegram row of the egress table gains operational alerts: text only, produced by `render()`. The session's wrap summary stays the one other Telegram sender. A new row adds the heartbeat: `GET HEARTBEAT_URL` to Healthchecks.io (`hc-ping.com`), no body, the URL holding only the check's id. Gatus is local (`127.0.0.1`) and has no outbound provider.
+
+Amended by ADR-0018 (2026-10-24): the alerts, the heartbeat and the Ollama health probe go through `leafi.privacy.egress` with purpose `ops` (a fixed request, no learner data, logged in `egress_log` and pruned after `PRIVACY_OPS_LOG_DAYS`). magpie as a supervised child, started with `DO_NOT_TRACK=1`, is planned with the Brain tiers (ADR-0017 §5.1) and not built yet.
 
 Enforcement:
 - `tests/test_architecture.py` allows `NotifierDevice.send` only in `leafi/ops/alerts.py`.
