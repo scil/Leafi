@@ -21,6 +21,7 @@
 | Xiaomi cloud | P2P keys, by go2rtc, outside Leafi | — | — |
 | Model downloads | only `python -m leafi doctor --download` | `leafi/doctor.py` | explicit |
 | Word-list downloads (SCOWL size 60 from `raw.githubusercontent.com/en-wl/wordlist-diff`, CYP-LEX CSVs from `osf.io`; the Cambridge YLE PDF from `cambridgeenglish.org` only when named) | a `GET` of fixed file URLs; nothing sent | `leafi/doctor.py::download_wordlists`, `download_yle` | explicit: `doctor --download` (word lists), `--only yle` (the PDF) |
+| Name-detector model download (spaCy `en_core_web_sm-3.8.0` wheel from `github.com/explosion/spacy-models` releases, MIT; unpacked to `models/spacy/`, never pip-installed) | a `GET` of a fixed release URL; nothing sent. The detector itself never connects (tested under `LEAFI_NO_NETWORK`) | `leafi/doctor.py::download_spacy` | explicit: `doctor --download` (`--only names`) |
 | Evaluation data downloads (OpenSLR SLR101 speechocean762, public CC BY 4.0 audio) | a `GET` of a fixed archive URL; nothing sent | `leafi/doctor.py::download_speechocean762` | explicit, only `doctor --download --only speechocean762` |
 
 Everything else stays on the LAN. OpenPronounce is configured with an offline reference voice (Kokoro) and pre-provisioned checkpoints; gTTS is off.

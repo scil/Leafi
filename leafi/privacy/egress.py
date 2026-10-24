@@ -16,9 +16,12 @@ before any byte leaves). Each transmission resolves and connects under a `netgua
 response stream is closed. Refusals are a synthetic 403 (`{"refused": reason}`); a text request is retried once
 on a connect error or a 5xx; a redirect is never followed.
 
+A learner's own words are also run through the name detector (`leafi.privacy.detector`) before they reach a
+cloud destination.
+
 M5b: nothing calls this yet (M5c moves every caller). Not here yet, each landing with its callers in M5c: the
 synchronous transport and the `ops` download hops of D16 (doctor, the HF adapter), the WebSocket client (edge-tts
-`mediated`), the detector.
+`mediated`).
 """
 
 from __future__ import annotations
@@ -299,9 +302,15 @@ class Egress:
         words = {w.casefold() for t in texts for w in re.findall(r"\w+", t.value)}
         words |= {w.casefold() for s in _plain_strings(out) for w in re.findall(r"\w+", s)}
 
+        det = self.detector() if cloud and any(t.provenance in CLOUD_TEXT_CLASSES for t in texts) else None
+
         def fill(v: Text | str) -> str:
-            s = v.value if isinstance(v, Text) else v
-            return p.apply(s, mapping, payload_words=words) if p is not None else s
+            if p is None:
+                return v.value if isinstance(v, Text) else v
+            if isinstance(v, Text):
+                own = v.provenance in CLOUD_TEXT_CLASSES
+                return p.apply(v.value, mapping, payload_words=words, detector=det if own else None)
+            return p.apply(v, mapping, payload_words=words)
 
         path = out.path.format(**{k: quote(fill(v), safe="") for k, v in out.path_fields.items()})
         query = urlencode(sorted((k, fill(v)) for k, v in out.query.items()))
@@ -333,6 +342,15 @@ class Egress:
         for gone in self.tokens.add(tok):
             self._finish(gone, "failed")
         return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping)
+
+    def detector(self):
+        """The name detector for a learner's own words (design D11), loaded on first need (spaCy takes seconds);
+        None when it is off or its model is missing (list-only, warned by `detector.load`)."""
+        if not hasattr(self, "_detector"):
+            from leafi.privacy import detector
+
+            self._detector = detector.load(self.settings)
+        return self._detector
 
     # ---- clients
     def client(self, destination: str, **kw) -> httpx2.AsyncClient:

@@ -419,7 +419,8 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("doctor", help="backend and model status")
     d.add_argument("--download", action="store_true", help="fetch the missing models under MODELS_DIR")
     d.add_argument("--only", nargs="*",
-                   choices=["asr", "vad", "tts en", "pronunciation", "ocr", "wordlists", "yle", "speechocean762"],
+                   choices=["asr", "vad", "tts en", "pronunciation", "ocr", "wordlists", "names", "yle",
+                            "speechocean762"],
                    help="restrict --download to these; the YLE PDF and evaluation data (speechocean762) only when "
                         "named")
     d.set_defaults(fn=cmd_doctor)

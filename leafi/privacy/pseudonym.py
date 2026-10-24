@@ -177,14 +177,33 @@ class Pseudonymizer:
     def __post_init__(self) -> None:
         self._pattern = self.lists.pattern()
 
-    def apply(self, text: str, mapping: Mapping, *, payload_words: set[str] | None = None) -> str:
+    def apply(self, text: str, mapping: Mapping, *, payload_words: set[str] | None = None, detector=None) -> str:
         """Replace every listed term in `text`; record the person surrogates used in `mapping`. `payload_words`
         (casefolded words of the whole request) makes a surrogate already present in the payload a one-off
-        alternate."""
+        alternate. `detector` (a learner's own words, design D11) runs on the original text first; a listed term
+        wins where the two overlap, so an inserted surrogate is never detected again."""
         text = norm(text)
-        if self._pattern is None:
+        found = detector.spans(text) if detector is not None else []
+        if self._pattern is None and not found:
             return text
         words = payload_words if payload_words is not None else {w.casefold() for w in re.findall(r"\w+", text)}
+        listed = list(self._pattern.finditer(text)) if self._pattern is not None else []
+        taken = [(m.start(), m.end()) for m in listed]
+        extra = [s for s in found if not any(s.start < e and b < s.end for b, e in taken)]
+        if extra:
+            out, at = [], 0
+            for s in sorted(extra, key=lambda s: s.start):
+                if s.start < at:
+                    continue
+                out += [self._replace_listed(text[at:s.start], mapping, words), s.replacement]
+                at = s.end
+            out.append(self._replace_listed(text[at:], mapping, words))
+            return "".join(out)
+        return self._replace_listed(text, mapping, words)
+
+    def _replace_listed(self, text: str, mapping: Mapping, words: set[str]) -> str:
+        if self._pattern is None or not text:
+            return text
 
         def sub(m: re.Match) -> str:
             e = self.lists.lookup(m.group(0))

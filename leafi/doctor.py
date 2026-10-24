@@ -47,6 +47,8 @@ PURPOSE = {
     "brain local fallback": "a local Ollama model used when Claude is unreachable; serves the learner",
     "book lookup": "finds a book's title from its ISBN on Open Library; serves the owner adding books",
     "sqlite": "the database of sessions, miscues and progress (data/leafi.db); serves the owner and every session",
+    "names": ("finds people, schools and places nobody listed in a learner's own words before they reach a cloud "
+              "service (ADR-0018 §3); without its model only listed names are replaced; serves each child's privacy"),
     "schools": ("every learner's school name or \"no school\", replaced before any text leaves (ADR-0018 §3); a "
                 "learner without an answer keeps their own words off the cloud; serves each child's privacy"),
     "wordlists": ("tells a misread real word (a candidate error to practise) from a garbled one (only observed); "
@@ -112,6 +114,19 @@ def sqlite_line(settings: Settings) -> str:
             "replace the Python install's DLLs\\sqlite3.dll with 3.51.3+ (ADR-0019 §2)")
 
 
+def names_line(settings: Settings) -> str:
+    """The name detector's effective state, apart from the configured value (M5 design D11)."""
+    from leafi.privacy import detector
+
+    st = detector.state(settings)
+    if st == "on":
+        return f"{'names':<22}{'presidio+spacy':<16}{'ok':<16}{detector.MODEL}"
+    if st == "off":
+        return f"{'names':<22}{'presidio+spacy':<16}{'off':<16}PRIVACY_NAME_DETECTOR is off: listed names only"
+    return (f"{'names':<22}{'presidio+spacy':<16}{'missing model':<16}only listed names are replaced; "
+            "python -m leafi doctor --download --only names")
+
+
 def schools_line(settings: Settings) -> str:
     """Learners without a school answer (design D10), read-only so it works on a file not yet migrated."""
     import json
@@ -157,6 +172,7 @@ def report(settings: Settings) -> str:
     for label, backend, state, detail in rows(settings):
         add(label, f"{label:<22}{backend:<16}{state:<16}{detail}")
     add("sqlite", sqlite_line(settings))
+    add("names", names_line(settings))
     add("schools", schools_line(settings))
     add("wordlists", wordlist_line(settings))
     if not settings.redact_list():
@@ -310,6 +326,44 @@ def download_yle(settings: Settings) -> str:
     return "downloaded"
 
 
+SPACY_MODEL = "en_core_web_sm-3.8.0"
+SPACY_WHEEL = ("https://github.com/explosion/spacy-models/releases/download/"
+               f"{SPACY_MODEL}/{SPACY_MODEL}-py3-none-any.whl")  # MIT; a wheel is a zip, unpacked, never pip-installed
+
+
+def spacy_model_dir(settings: Settings) -> Path:
+    return Path(settings.models_dir) / "spacy" / SPACY_MODEL
+
+
+def download_spacy(settings: Settings) -> str:
+    """The name detector's English model (ADR-0018 §3, M5 design D11): the wheel's model folder only, so spaCy
+    loads it from a path and never resolves or downloads a package by name."""
+    import zipfile
+
+    d = spacy_model_dir(settings)
+    if (d / "meta.json").exists():
+        return "present"
+    prefix = f"en_core_web_sm/{SPACY_MODEL}/"
+    with tempfile.TemporaryDirectory(prefix="leafi-spacy-") as tmp:
+        wheel = Path(tmp) / "model.whl"
+        _fetch(SPACY_WHEEL, wheel)
+        part = d.with_name(d.name + ".part")
+        shutil.rmtree(part, ignore_errors=True)
+        with zipfile.ZipFile(wheel) as z:
+            for name in z.namelist():
+                if not name.startswith(prefix) or name.endswith("/") or ".." in name:
+                    continue
+                target = part / name[len(prefix):]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(name) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)
+        if not (part / "meta.json").exists():
+            raise RuntimeError(f"{SPACY_WHEEL} holds no {prefix}meta.json")
+        shutil.rmtree(d, ignore_errors=True)
+        part.replace(d)
+    return "downloaded"
+
+
 SPEECHOCEAN762 = "https://www.openslr.org/resources/101/speechocean762.tar.gz"  # SLR101, CC BY 4.0
 
 
@@ -346,7 +400,8 @@ def download_speechocean762(settings: Settings) -> str:
 
 
 DOWNLOADS = [("asr", download_asr), ("vad", download_vad), ("tts en", download_tts),
-             ("pronunciation", download_pronunciation), ("ocr", download_ocr), ("wordlists", download_wordlists)]
+             ("pronunciation", download_pronunciation), ("ocr", download_ocr), ("wordlists", download_wordlists),
+             ("names", download_spacy)]
 # Evaluation data and the YLE PDF: fetched only when named in `--only`, never by a plain `--download`.
 OPTIONAL_DOWNLOADS = [("yle", download_yle), ("speechocean762", download_speechocean762)]
 

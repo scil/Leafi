@@ -10,6 +10,10 @@ portalocker[win32]==4.4.1  # process exclusion on data/leafi.db.users (ADR-0018 
 pillow>=12.0             # page fixtures, frame-diff settle
 numpy>=2.0
 anthropic==1.17.0        # Brain (cloud, text only); last 1.x, 2.x changes the API version (TD-1)
+presidio-analyzer==2.2.364  # name detector (ADR-0018 §3, M5 D11); built offline on Leafi's own spaCy load
+spacy==3.8.16            # its NER (MIT); model en_core_web_sm 3.8.0 from `doctor --download`, never pip
+# spacy needs click>=8.2.1; gtts (pulled by openpronounce) declares click<8.2 but imports click only in its CLI,
+# which Leafi never runs (gTTS is never called, ADR-0011), so `uv pip check` reporting gtts is expected.
 sherpa-onnx==1.13.8      # ASR (Parakeet TDT v2 int8) + Silero VAD   [S3, lazy]
 kokoro-onnx==0.6.1       # TTS en                                    [S3, lazy]
 onnxruntime==1.31.0
