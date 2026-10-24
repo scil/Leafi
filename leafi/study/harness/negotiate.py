@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from leafi.core.ports import Utterance
+from leafi.core.ports import SYSTEM, Provenance, Utterance
 from leafi.study import controls
 from leafi.study.harness.construct import first_constructible
 from leafi.study.harness.menu import other_allowed
@@ -91,11 +91,23 @@ def _exclude(s: Session, kind: str) -> None:
         s.boundary.excluded.add(kind)
 
 
-def rationale_line(prop, a: Activity) -> str:
-    """The Brain's reason only for the activity it proposed (M7 design D13); any other offer gets the static line."""
+def _brain_line(prop, a: Activity, field: str) -> tuple[str | None, Provenance]:
+    """The Brain's `field` only for the activity it proposed (M7 design D13), with the call's provenance (D2)."""
     proposed = getattr(prop, "activity", None) if prop else None
-    reason = getattr(prop, "rationale", None) if proposed is not None and proposed.kind == a.kind else None
-    return reason or f"I think we should {describe(a)} next."
+    text = getattr(prop, field, None) if proposed is not None and proposed.kind == a.kind else None
+    return (text, getattr(prop, "provenance", SYSTEM)) if text else (None, SYSTEM)
+
+
+def rationale_line(prop, a: Activity) -> tuple[str, Provenance]:
+    """The Brain's reason for the activity it proposed; any other offer gets the static line."""
+    reason, prov = _brain_line(prop, a, "rationale")
+    return (reason, prov) if reason else (f"I think we should {describe(a)} next.", SYSTEM)
+
+
+def announcement(prop, a: Activity) -> tuple[str, Provenance]:
+    """At `bands.announce` (D13): the Brain's `say_before` when `a` is its activity, else the static line."""
+    say, prov = _brain_line(prop, a, "say_before")
+    return (say, prov) if say else (f"Let's {describe(a)}.", SYSTEM)
 
 
 def describe_choices(s: Session, a: Activity, m: set[str], n: int) -> str:
@@ -143,17 +155,19 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         m = menu - b.excluded
         autonomy = s.autonomy
         if autonomy >= st["bands.announce"]:
-            await talk.say(f"Let's {describe(a)}.")
+            line, prov = announcement(prop, a)
+            await talk.say(line, provenance=prov)
             s.checkpoint()
             if s.take_skip():
                 _exclude(s, a.kind)
                 continue
             return REOBSERVE if s.epoch() != epoch else Run(a)
         owner = ("offer", s.latch.epoch.turn_id, b.offers)  # D21: the offer's lines and its answer, one prompt
+        reason, prov = rationale_line(prop, a)
         if autonomy >= st["bands.argue"]:
-            await talk.ask(owner, rationale_line(prop, a))
+            await talk.ask(owner, reason, provenance=prov)
         elif autonomy >= st["bands.ask"]:
-            await talk.ask(owner, rationale_line(prop, a))
+            await talk.ask(owner, reason, provenance=prov)
             await talk.ask(owner, f"Shall we {describe(a)}? Or something else?")
         else:
             await talk.ask(owner, f"Would you like to {describe_choices(s, a, m, st['negotiation.choices'])}?")

@@ -93,6 +93,7 @@ class Result:
     tier: str
     degraded: bool
     record: CallRecord
+    provenance: Provenance | None = None  # D2: `of_output` over the leaves sent; every use of `value` carries it
 
 
 @dataclass
@@ -189,7 +190,8 @@ async def brain_call(brain: Brain, ctx: CallContext, purpose: str, make_request:
                         rec.outcome, rejection = "invalid", rejection_codes(e)
                         rec.detail = "; ".join(rejection)
                         break  # the next tier, with the codes
-                    return Result(value, step.tier, step.degraded, rec)
+                    return Result(value, step.tier, step.degraded, rec,
+                                  of_output(leaf.prov for leaf in leaves_of(req)))
                 if rec.outcome == "invalid":
                     rejection = [rec.detail or "type at ."]
                     break

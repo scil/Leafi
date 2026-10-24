@@ -12,6 +12,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from leafi.core.ports import SYSTEM, Provenance
 from leafi.privacy import settings as privacy_settings
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
@@ -33,6 +34,7 @@ class Proposal:
     rationale: str | None = None
     say_before: str | None = None
     records: list = field(default_factory=list)
+    provenance: Provenance = SYSTEM  # D2: of the rationale and `say_before` (the call's output provenance)
 
 
 REOBSERVE_PAGE = "page"  # sequence() saw a page turn during its wait: the boundary re-observes
@@ -133,4 +135,4 @@ async def sequence(s, w, brain: bc.Brain, menu: set[str], chain: list[str], *, m
     d = result.value
     rationale = d.rationale.strategy if d.rationale is not None and d.rationale.strategy.strip() else None
     return Proposal(to_spec(d.activity, obs), to_spec(d.alternative, obs) if d.alternative else None,
-                    rationale, d.say_before, d.records)
+                    rationale, d.say_before, d.records, result.provenance or SYSTEM)

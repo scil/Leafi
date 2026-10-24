@@ -29,8 +29,8 @@ async def test_at_announce_a_skip_after_the_announcement_moves_to_the_next_candi
     s = make_session(tmp_path, facts=READING, values={"autonomy": 9})
 
     class SkipAfterFirst(type(s.talk)):
-        async def say(self, text):
-            await super().say(text)
+        async def say(self, text, **kw):
+            await super().say(text, **kw)
             if len(self.said) == 1:
                 s.latch.post_skip()
 

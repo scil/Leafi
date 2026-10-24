@@ -21,14 +21,17 @@ class ScriptedTalk:
     def __init__(self, replies, latch: Latch | None = None) -> None:
         self.replies = list(replies)
         self.said: list[str] = []
+        self.provenances: list = []  # each line's provenance (M5 D13, M7 D2)
         self.listens = 0
         self.latch = latch
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str, **kw) -> None:
         self.said.append(text)
+        self.provenances.append(kw.get("provenance"))
 
     async def ask(self, owner, text: str, **kw) -> None:  # M7 design D21: a prompt, recorded like a line
         self.said.append(text)
+        self.provenances.append(kw.get("provenance"))
 
     async def listen(self, timeout_s, owner=None, *, accepts_page=True):
         self.listens += 1
