@@ -188,8 +188,8 @@ async def test_a_whole_session_writes_as_its_learner(settings):
     e = env(settings, [None, "The cat sat on the mat by the door.", None, "hat", "/stop"], page=P1, learner="Ben")
     sid = await run(e)
     assert store.one("SELECT learner_id FROM reading_sessions WHERE id=?", (sid,))["learner_id"] == ben
-    for table in ("utterances",):
-        assert {loads(r["source_learners"])[0] for r in store.all(f"SELECT source_learners FROM {table}")} == {ben}
+    assert {r["learner_id"] for r in store.all("SELECT rs.learner_id FROM utterances u JOIN reading_sessions rs "
+                                               "ON rs.id = u.session_id")} == {ben}
     assert {r["learner_id"] for r in store.all("SELECT learner_id FROM retrieval_events")} <= {ben}
 
 

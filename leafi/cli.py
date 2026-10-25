@@ -115,15 +115,17 @@ def _forget_learner(args: argparse.Namespace, settings: Settings, store) -> int:
     sessions = store.one("SELECT COUNT(*) AS n FROM reading_sessions WHERE learner_id=?", (args.learner,))["n"]
     if not args.yes:
         print(f"would forget learner #{args.learner} {row['display_name']}: {sessions} session(s), their items, "
-              "notes, cards and every text derived from them; the name stays replaced in shared page text. "
-              "Run again with --yes to do it.")
+              f"notes, cards and spoken-line cache. {records.KEPT_NOTICE} Run again with --yes to do it.")
         return 1
     try:
-        rep = records.forget_learner(store, args.learner, settings.data_dir, settings.anki_deck)
+        rep = records.forget_learner(store, args.learner, settings.data_dir, settings.anki_deck,
+                                     cache_dir=Path(settings.cache_dir))
     except records.LearnerBusy as e:
         print(e)
         return 1
-    print(f"forgot learner #{args.learner}: {rep.sessions} session(s), {rep.derived_removed} derived text(s)")
+    print(f"forgot learner #{args.learner}: {rep.sessions} session(s). {records.KEPT_NOTICE}")
+    if rep.cache_left:
+        print("Some spoken-line cache files were in use; the next study session start deletes them.")
     if rep.anki_notes:
         print(f"{len(rep.anki_notes)} card(s) are already in Anki deck {rep.deck!r} (note ids "
               f"{', '.join(map(str, rep.anki_notes[:20]))}{' …' if len(rep.anki_notes) > 20 else ''}); "
@@ -322,12 +324,16 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     except (storage.SchemaError, ValueError, FileNotFoundError) as e:
         print(f"not migrated: {e}")
         return 1
+    cleanup = ("cleanup complete" if res.cleaned else
+               "cleanup NOT complete (another process held the file); run python -m leafi migrate again")
     if res.from_version == storage.SCHEMA_VERSION:
-        print(f"{path.name} is already at schema {storage.SCHEMA_VERSION}")
+        print(f"{path.name} is already at schema {storage.SCHEMA_VERSION}; {cleanup}")
         return 0
     first = f"; first learner #{res.learner_id} {args.learner.strip()}" if res.learner_id is not None else ""
     print(f"migrated {path.name} from schema {res.from_version} to {storage.SCHEMA_VERSION}{first}; rebuilt "
-          f"{len(res.rebuilt)} table(s), created {len(res.created)}; backup {res.backup}")
+          f"{len(res.rebuilt)} table(s), created {len(res.created)}; backup {res.backup}; {cleanup}")
+    print("A backup made before this migration is at the old schema and needs python -m leafi migrate again if "
+          "restored; a backup older than a forget brings that learner back (ADR-0019 §8).")
     return 0
 
 

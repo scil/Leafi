@@ -49,11 +49,10 @@ OUTCOME_OF = {"pass": "matched", "fail": "disagreed", "unclear": "unclear"}
 
 
 def _store_utterance(w: World, u: Utterance, kind: str) -> int:
-    return learner_store.insert_named(  # fenced: it names the learner (M7 design D22)
+    return learner_store.insert_named(  # fenced by the session's learner (ADR-0021 E9)
         w.store, "utterances", page_read_id=w.read_id, page_revision_id=w.rev.id if w.rev else None,
         session_id=w.s.session_id, text=u.text, kind=kind, created_at=now_iso(),
-        words=dumps([[x.text, x.start_s, x.end_s, x.conf] for x in u.words]),
-        provenance_class="learner", source_learners=dumps([w.s.learner_id]))
+        words=dumps([[x.text, x.start_s, x.end_s, x.conf] for x in u.words]))
 
 
 def _confident(u: Utterance) -> bool:
@@ -592,22 +591,20 @@ async def add_cards(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                 rejected[item_id] = "no card was generated for it"
                 continue
             fields = {"正面": html.escape(card["front"]), "背面": html.escape(card["back"])}
-            sentence, prov = card["sentence"], act.content_provenance
+            sentence = card["sentence"]
         else:
-            fields, sentence, prov = cards.stored_text(w.store, item_id)
+            fields, sentence = cards.stored_text(w.store, item_id)
         verdict, reason = cards.check(w.store, s.learner_id, item_id, fields, sentence)
         if verdict == "reject":
             rejected[item_id] = reason
             continue
-        cls, src = learner_store.prov(prov.cls, prov.sources)  # what the card copies (M7 design D15)
         try:
-            learner_store.insert(w.store, "anki_outbox", s.learner_id, sources=[s.learner_id],
-                                 knowledge_item_id=item_id, op="add", state="pending", updated_at=now_iso(),
-                                 front=fields["正面"], back=fields["背面"], sentence=sentence,
-                                 card_provenance_class=cls, card_source_learners=src)
-        except learner_store.LearnerUnavailable:  # D22: a card quoting a learner being forgotten is not queued
-            log.info("card not queued: a source learner is being forgotten")
-            rejected[item_id] = "a source learner is being forgotten"
+            learner_store.insert(w.store, "anki_outbox", s.learner_id, knowledge_item_id=item_id, op="add",
+                                 state="pending", updated_at=now_iso(), front=fields["正面"], back=fields["背面"],
+                                 sentence=sentence)
+        except learner_store.LearnerUnavailable:  # ADR-0021 E9: the learner is being forgotten
+            log.info("card not queued: the learner is being forgotten")
+            rejected[item_id] = "the learner is being forgotten"
             continue
         added.append(item_id)
         if verdict == "flag":

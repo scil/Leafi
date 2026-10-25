@@ -40,6 +40,38 @@ async def test_push_creates_note_with_leafi_id_tag_and_acks(store):
     assert "anki_note_id" not in store.one("SELECT * FROM knowledge_items").keys()
 
 
+async def test_a_learner_being_forgotten_is_not_synced(store):
+    """ADR-0021 E9 (X4): another learner's `deliver` runs the sync; a forgetting learner's rows are skipped."""
+    fake = FakeAnki()
+    item = _item(store)
+    store.execute("UPDATE learners SET forgetting=1")
+    rep = await anki.sync_outbox(store, _client(fake))
+    assert rep.acked == 0 and fake.notes == {}
+    assert store.one("SELECT state FROM anki_outbox WHERE knowledge_item_id=?", (item,))["state"] == "pending"
+
+
+async def test_a_note_added_while_its_row_was_forgotten_is_listed_for_removal(store, monkeypatch):
+    """Y4: `forget` deletes the outbox row while `addNote` is awaited; the note id is listed for the household."""
+    from leafi.core import learner_store
+
+    fake = FakeAnki()
+    item = _item(store)
+    learner = store.one("SELECT learner_id FROM knowledge_items WHERE id=?", (item,))["learner_id"]
+    real = anki.AnkiClient.invoke
+
+    async def invoke(self, action, **params):
+        out = await real(self, action, **params)
+        if action == "addNote":  # forget runs here: marks the learner and deletes the outbox row
+            store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (learner,))
+            store.execute("DELETE FROM anki_outbox WHERE learner_id=?", (learner,))
+        return out
+
+    monkeypatch.setattr(anki.AnkiClient, "invoke", invoke)
+    await anki.sync_outbox(store, _client(fake))
+    (nid,) = fake.notes
+    assert loads(learner_store.get(store, learner)["settings"])["forget.anki_notes"] == [nid]
+
+
 async def test_idempotent_re_push(store):
     fake = FakeAnki()
     _item(store)

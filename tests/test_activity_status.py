@@ -60,15 +60,20 @@ def test_an_activity_row_is_never_left_running_twice_or_ends_outside_its_table(s
     rows.finish_activity(store, aid, "skipped")
     with pytest.raises(ValueError):
         rows.finish_activity(store, aid, "completed")
-    row = store.one("SELECT status, ended_at, outcome_provenance_class FROM activities WHERE id=?", (aid,))
-    assert (row["status"], row["outcome_provenance_class"]) == ("skipped", "system") and row["ended_at"]
+    row = store.one("SELECT status, ended_at FROM activities WHERE id=?", (aid,))
+    assert row["status"] == "skipped" and row["ended_at"]
 
 
-def test_an_outcome_about_the_learner_carries_their_provenance(store):
+def test_an_activity_of_a_learner_being_forgotten_is_neither_started_nor_finished(store):
+    """ADR-0021 E9: the fence checks the session's learner inside each statement."""
+    from leafi.core import learner_store
+
     book, page, rev = seed.book_page(store, "The fox ran.")
     s = seed.session(store, book)
     learner = seed.learner(store)
     aid = rows.start_activity(store, session_id=s, kind="read_listen", cycle_id=None)
-    rows.finish_activity(store, aid, "completed", {"sentences": 1}, learner_id=learner)
-    row = store.one("SELECT outcome_provenance_class, outcome_source_learners FROM activities WHERE id=?", (aid,))
-    assert row["outcome_provenance_class"] == "derived_from_learner" and row["outcome_source_learners"] == f"[{learner}]"
+    store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (learner,))
+    with pytest.raises(learner_store.LearnerUnavailable):
+        rows.finish_activity(store, aid, "completed", {"sentences": 1})
+    with pytest.raises(learner_store.LearnerUnavailable):
+        rows.start_activity(store, session_id=s, kind="read_listen", cycle_id=None)

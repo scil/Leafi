@@ -112,13 +112,10 @@ def test_every_row_is_kept_and_owned_by_the_first_learner(old):
         for table in ("reading_sessions", "knowledge_items", "encounters", "difficulties", "anki_outbox",
                       "review_answers"):
             assert {r["learner_id"] for r in store.all(f"SELECT learner_id FROM {table}")} == {ada["id"]}, table
-        # provenance (ADR-0018 §3): learner text of the first learner, page-derived fields `page`
-        u = store.all("SELECT session_id, provenance_class, source_learners FROM utterances ORDER BY id")
-        assert [tuple(r) for r in u] == [(1, "learner", "[1]"), (1, "learner", "[1]")]  # NULL session from its read
-        e = store.one("SELECT * FROM encounters")
-        assert (e["context_provenance_class"], e["context_source_learners"]) == ("page", "[]")
-        assert (e["explanation_provenance_class"], e["explanation_source_learners"]) == ("learner", "[1]")
-        assert store.one("SELECT card_provenance_class FROM anki_outbox")[0] == "learner"
+        # a NULL session filled from its read (step 5); the provenance columns step 5 wrote are gone after step 7
+        u = store.all("SELECT session_id FROM utterances ORDER BY id")
+        assert [tuple(r) for r in u] == [(1,), (1,)]
+        assert "provenance_class" not in {r[1] for r in store.all("PRAGMA table_info(encounters)")}
         # corrections: the learner's own, the parent's stays without one
         c = {r["id"]: (r["source_learner_id"], r["forgotten"]) for r in store.all("SELECT * FROM corrections")}
         assert c == {1: (1, 0), 2: (None, 0)}

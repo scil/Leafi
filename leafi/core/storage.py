@@ -156,10 +156,10 @@ LEGACY_STEPS: list[str] = [
     """,
 ]
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
-# Provenance of a stored text (ADR-0018 §3): a class and the json list of source learner ids, both NOT NULL with
-# no default, so every writer states them.
+# Provenance of a stored text (ADR-0018 §3) in the frozen schemas 5 and 6 only: a class and the json list of source
+# learner ids. Migration 7 drops these columns (ADR-0021 E8); keep `_PROV` for `SCHEMA_V5` / `SCHEMA_V6`.
 _PROV = "IN ('page','system','learner','derived_from_learner','parent')"
 
 # 5 — learners, the session records of ADR-0017 §7.2, egress and consent (ADR-0018), the ADR-0013 v2 columns.
@@ -411,6 +411,50 @@ SCHEMA += "".join(f"    CREATE TRIGGER {name} AFTER {event} ON {table} {_BUMP};\
     ("household_terms_protected_update", "UPDATE", "household_terms"),
     ("household_terms_protected_delete", "DELETE", "household_terms"),
 ])
+
+# Frozen: migration 6 brings a version-5 file to exactly this, and migration 7 runs after it.
+SCHEMA_V6 = SCHEMA
+
+# 7 — content-only egress (ADR-0021 E8): the provenance columns go; egress redacts by content, `forget` and the
+# write fence go by the owning learner.
+for _old, _new in [
+    (f"        ended_at TEXT, outcome TEXT,\n"
+     f"        outcome_provenance_class TEXT NOT NULL CHECK(outcome_provenance_class {_PROV}),\n"
+     f"        outcome_source_learners TEXT NOT NULL, assessment TEXT,\n"
+     f"        assessment_provenance_class TEXT NOT NULL CHECK(assessment_provenance_class {_PROV}),\n"
+     f"        assessment_source_learners TEXT NOT NULL);",
+     "        ended_at TEXT, outcome TEXT, assessment TEXT);"),
+    (f"prompt_version TEXT, payload TEXT NOT NULL,\n"
+     f"        payload_provenance_class TEXT NOT NULL CHECK(payload_provenance_class {_PROV}),\n"
+     f"        payload_source_learners TEXT NOT NULL, response TEXT,\n"
+     f"        response_provenance_class TEXT NOT NULL CHECK(response_provenance_class {_PROV}),\n"
+     f"        response_source_learners TEXT NOT NULL, latency_ms INTEGER,",
+     "prompt_version TEXT, payload TEXT NOT NULL, response TEXT, latency_ms INTEGER,"),
+    (f"\n        provenance_class TEXT NOT NULL CHECK(provenance_class {_PROV}), source_learners TEXT NOT NULL,\n"
+     f"        created_at TEXT NOT NULL);\n    CREATE TABLE observations(",
+     "\n        created_at TEXT NOT NULL);\n    CREATE TABLE observations("),
+    (f"        context_sentence TEXT NOT NULL DEFAULT '',\n"
+     f"        context_provenance_class TEXT NOT NULL CHECK(context_provenance_class {_PROV}),\n"
+     f"        context_source_learners TEXT NOT NULL, explanation_en TEXT, explanation_zh TEXT, example TEXT,\n"
+     f"        explanation_provenance_class TEXT NOT NULL CHECK(explanation_provenance_class {_PROV}),\n"
+     f"        explanation_source_learners TEXT NOT NULL,\n",
+     "        context_sentence TEXT NOT NULL DEFAULT '', explanation_en TEXT, explanation_zh TEXT, example TEXT,\n"),
+    (f"text TEXT NOT NULL,\n"
+     f"        provenance_class TEXT NOT NULL CHECK(provenance_class {_PROV}), source_learners TEXT NOT NULL,\n"
+     f"        created_at TEXT NOT NULL);\n    CREATE TABLE learner_note_citations(",
+     "text TEXT NOT NULL,\n        created_at TEXT NOT NULL);\n    CREATE TABLE learner_note_citations("),
+    (f"topic TEXT, characters TEXT, text TEXT NOT NULL,\n"
+     f"        provenance_class TEXT NOT NULL CHECK(provenance_class {_PROV}), source_learners TEXT NOT NULL,\n",
+     "topic TEXT, characters TEXT, text TEXT NOT NULL,\n"),
+    (f"front TEXT, back TEXT, sentence TEXT,\n"
+     f"        card_provenance_class TEXT NOT NULL CHECK(card_provenance_class {_PROV}),\n"
+     f"        card_source_learners TEXT NOT NULL);",
+     "front TEXT, back TEXT, sentence TEXT);"),
+]:
+    SCHEMA = _edit(SCHEMA, _old, _new)
+del _old, _new
+if "provenance_class" in SCHEMA or "source_learners" in SCHEMA:
+    raise AssertionError("schema 7 still holds a provenance column")
 
 SEEDS = "INSERT OR IGNORE INTO privacy_state(key, value) VALUES('protected_version', 0)"
 
@@ -724,6 +768,7 @@ class MigrationResult:
     learner_id: int | None
     rebuilt: list[str] = field(default_factory=list)
     created: list[str] = field(default_factory=list)
+    cleaned: bool = False  # VACUUM and a TRUNCATE checkpoint completed after the steps (ADR-0021 E8)
 
 
 def _normal_sql(sql: str) -> str:
@@ -771,17 +816,21 @@ def migrate_file(path: Path | str, learner_name: str | None = None, *, backup_di
     """`python -m leafi migrate [--learner <name>]`: exclusive lock, a backup, then each pending step in its own
     transaction; a failure rolls that step back and leaves the file at the last completed version (ADR-0018 §7.2).
     Step 5 (a version-4 file) writes the first learner and needs `learner_name`; step 6 needs nothing but imports
-    `legacy_terms` (the household's old `REDACT_TERMS`) as names to protect. `_hook(table)` runs before each
-    rebuild, for the failure-injection test."""
+    `legacy_terms` (the household's old `REDACT_TERMS`) as names to protect; step 7 drops the provenance columns
+    (ADR-0021 E8). After the steps, still under the lock, `_cleanup` runs `VACUUM` and a TRUNCATE checkpoint so
+    dropped values leave the file; on a file already at the latest version it runs again, so a cleanup cut off by
+    a crash is completed by rerunning the command. `_hook(table)` runs before each rebuild, for the
+    failure-injection test."""
     path = Path(path)
     name = (learner_name or "").strip()
     lock = _FileLock(path, exclusive=True)
     conn = sqlite3.connect(str(path), isolation_level=None)
     try:
         conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA secure_delete = ON")  # a raw connection: Store sets this per connection
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == SCHEMA_VERSION:
-            return MigrationResult(version, None, None)
+            return MigrationResult(version, None, None, cleaned=_cleanup(conn))
         if version > SCHEMA_VERSION:
             raise SchemaError(f"{path.name} is at schema {version}, newer than this Leafi ({SCHEMA_VERSION})")
         if version == 0 and _is_empty(conn):
@@ -819,11 +868,28 @@ def migrate_file(path: Path | str, learner_name: str | None = None, *, backup_di
             _step(conn, 5, SCHEMA_V5, _V5_COPY, result, _hook, before=first_learner)
             version = 5
         if version == 5:
-            _step(conn, 6, SCHEMA, {}, result, _hook, after=lambda c: _v6_data(c, legacy_terms))
+            _step(conn, 6, SCHEMA_V6, {}, result, _hook, after=lambda c: _v6_data(c, legacy_terms))
+            version = 6
+        if version == 6:
+            _step(conn, 7, SCHEMA, {}, result, _hook)
+            version = 7
+        result.cleaned = _cleanup(conn)
         return result
     finally:
         conn.close()
         lock.release()
+
+
+def _cleanup(conn: sqlite3.Connection) -> bool:
+    """`VACUUM`, then a TRUNCATE checkpoint, outside any transaction and under the migration's exclusive lock:
+    rows and columns removed by the steps leave the file's free pages and its -wal (ADR-0019 §7, ADR-0021 E8).
+    False when either could not complete; the file stays valid and a rerun of `leafi migrate` retries."""
+    try:
+        conn.execute("VACUUM")
+        return _truncate(conn)
+    except sqlite3.Error:
+        log.warning("migration cleanup did not complete; rerun python -m leafi migrate", exc_info=True)
+        return False
 
 
 def _step(conn: sqlite3.Connection, number: int, schema: str, copies: dict[str, dict[str, str]],

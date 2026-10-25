@@ -44,22 +44,14 @@ def add_encounter(store: Store, item_id: int, *, session_id: int | None, trigger
                   context_sentence: str = "", revision_id: int | None = None, explanation_en: str | None = None,
                   explanation_zh: str | None = None, example: str | None = None,
                   explanation_provenance: Provenance | None = None) -> int:
-    """The context sentence is page text. An explanation carries the provenance of the content it came from (M7
-    design D15: a Brain explanation the call's `of_output`, naming every learner whose text the backend saw);
-    without one it answers the learner, so it derives from them (ADR-0018 §3). The owner is the item's
-    learner."""
+    """The owner is the item's learner, and the write is fenced by them (ADR-0021 E9). `explanation_provenance`
+    is accepted for older callers and no longer stored."""
     learner_id = store.one("SELECT learner_id FROM knowledge_items WHERE id=?", (item_id,))["learner_id"]
-    explained = any(x for x in (explanation_en, explanation_zh, example))
-    ctx = learner_store.prov("page")
-    given = explanation_provenance or Provenance("derived_from_learner", (learner_id,))
-    exp = learner_store.prov(given.cls, given.sources) if explained else learner_store.prov("system")
     with store.transaction():  # the encounter and the Difficulties it feeds change together (review 1 #17)
         enc = learner_store.insert(
-            store, "encounters", learner_id, sources=given.sources if explained else (), knowledge_item_id=item_id,
-            session_id=session_id, page_revision_id=revision_id, context_sentence=context_sentence,
-            context_provenance_class=ctx[0], context_source_learners=ctx[1], explanation_en=explanation_en,
-            explanation_zh=explanation_zh, example=example, explanation_provenance_class=exp[0],
-            explanation_source_learners=exp[1], trigger=trigger, created_at=now_iso())
+            store, "encounters", learner_id, knowledge_item_id=item_id, session_id=session_id,
+            page_revision_id=revision_id, context_sentence=context_sentence, explanation_en=explanation_en,
+            explanation_zh=explanation_zh, example=example, trigger=trigger, created_at=now_iso())
         store.execute("UPDATE knowledge_items SET updated_at=? WHERE id=?", (now_iso(), item_id))
         if trigger in ("explain", "check"):
             recompute_difficulties(store, learner_id)

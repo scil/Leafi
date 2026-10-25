@@ -14,7 +14,6 @@ walk at once and is re-raised: the caller's mapping to the latch's status stays 
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 import time
@@ -27,7 +26,7 @@ from pydantic import ValidationError
 
 from leafi.core import learner_store
 from leafi.core.ports import BrainBackend, CallAttempt, CallRecord, Leaf, ModelRequest
-from leafi.core.provenance import Provenance, join, of_output
+from leafi.core.provenance import Provenance, of_output
 from leafi.core.storage import Store, dumps, now_iso
 from leafi.study.brain import routing
 from leafi.study.harness import busy
@@ -220,23 +219,13 @@ def leaves_of(req: ModelRequest) -> list[Leaf]:
     return [leaf for t in req.turns for s in t.sections for leaf in s.leaves]
 
 
-def payload_provenance(leaves: list[Leaf]) -> Provenance:
-    """The strongest class among the leaves sent, with every source (the payload holds them as they are)."""
-    return join(leaf.prov for leaf in leaves)
-
-
 def _row(ctx: CallContext, purpose: str, d: str, tier: str, backend: BrainBackend, req: ModelRequest,
          rec: CallRecord) -> dict:
-    leaves = leaves_of(req)
-    pay, resp = payload_provenance(leaves), of_output(leaf.prov for leaf in leaves)
-    pc, ps = learner_store.prov(pay.cls, pay.sources)
-    rc, rs = learner_store.prov(resp.cls, resp.sources)
     return dict(session_id=ctx.session_id, activity_id=ctx.activity_id, purpose=purpose, difficulty=d, tier=tier,
                 backend=getattr(backend, "name", "?"), endpoint_host=getattr(backend, "host", None),
                 model=rec.model or req.model, effective_provider=rec.provider, effective_model=rec.model,
                 prompt_version=ctx.prompt_version, payload=dumps(rec.sent if rec.sent is not None else {}),
-                payload_provenance_class=pc, payload_source_learners=ps, response=rec.received,
-                response_provenance_class=rc, response_source_learners=rs, latency_ms=rec.latency_ms,
+                response=rec.received, latency_ms=rec.latency_ms,
                 transmitted_attempts=rec.transmissions, tokens_in=rec.tokens_in, tokens_out=rec.tokens_out,
                 tokens_cached=rec.tokens_cached,
                 estimated_cost=routing.estimated_cost(rec.model or req.model, rec.tokens_in, rec.tokens_out,
@@ -244,22 +233,15 @@ def _row(ctx: CallContext, purpose: str, d: str, tier: str, backend: BrainBacken
                 outcome=rec.outcome, created_at=now_iso())
 
 
-def _withheld(row: dict) -> dict:
-    """D22's refusal rule for an audit row: the payload's leaves name a learner being forgotten, so the row is
-    kept without any text (stricter than re-rendering: a cloud payload held surrogates, a re-render could not
-    reproduce them) and the response — a Brain output naming that learner — is dropped, never relabelled."""
-    none = learner_store.prov("system")
-    return {**row, "payload": json.dumps({"withheld": "a source learner is being forgotten"}),
-            "payload_provenance_class": none[0], "payload_source_learners": none[1], "response": None,
-            "response_provenance_class": none[0], "response_source_learners": none[1]}
-
-
 def _insert(store: Store, row: dict) -> None:
+    """Fenced by the session's learner (ADR-0021 E9). A row refused because that learner is being forgotten (or
+    the session is gone) is logged without text and dropped, so it never raises into a Brain call or `finalize`
+    and leaves `pending_audit` (U8)."""
     try:
         learner_store.insert_named(store, "brain_calls", **row)
     except learner_store.LearnerUnavailable:
-        log.info("brain_calls row written without its text: a source learner is being forgotten")
-        learner_store.insert_named(store, "brain_calls", **_withheld(row))
+        log.info("brain_calls row dropped: session %s's learner is being forgotten (purpose %s, outcome %s)",
+                 row.get("session_id"), row.get("purpose"), row.get("outcome"))
 
 
 async def write_audit(ctx: CallContext, purpose: str, d: str, records) -> None:

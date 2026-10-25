@@ -23,28 +23,23 @@ def start_activity(store: Store, *, session_id: int, kind: str, cycle_id: int | 
                    policy_version: str | None = None, decided_by: str | None = None, override: str | None = None,
                    autonomy: int | None = None, epoch: int = 0) -> int:
     check(kind, ActivityStatus.COMPLETED)  # a known kind
-    none = learner_store.prov("system")
     return learner_store.insert_named(
         store, "activities", session_id=session_id, cycle_id=cycle_id, kind=kind, continuation=int(continuation),
         params=dumps(params or {}), arm=arm, propensity=propensity, policy_version=policy_version,
         decided_by=decided_by, override=override, autonomy=autonomy, epoch=epoch, status=ActivityStatus.RUNNING,
-        started_at=now_iso(), outcome_provenance_class=none[0], outcome_source_learners=none[1],
-        assessment_provenance_class=none[0], assessment_source_learners=none[1])
+        started_at=now_iso())
 
 
 def finish_activity(store: Store, activity_id: int, status: str, outcome: dict | None = None,
                     learner_id: int | None = None) -> ActivityStatus:
-    """Close a running row with a status its kind may end in. An outcome that reports what the learner did is
-    `derived_from_learner`."""
+    """Close a running row with a status its kind may end in; fenced by the session's learner (ADR-0021 E9).
+    `learner_id` is accepted for older callers and no longer used."""
     row = store.one("SELECT kind, status FROM activities WHERE id=?", (activity_id,))
     st = check(row["kind"], status)
     if row["status"] != ActivityStatus.RUNNING:
         raise ValueError(f"activity {activity_id} already ended {row['status']}")
-    pc, src = learner_store.prov("derived_from_learner", [learner_id]) if outcome and learner_id else \
-        learner_store.prov("system")
     learner_store.update_named(store, "activities", activity_id, status=st, ended_at=now_iso(),
-                               outcome=dumps(outcome) if outcome is not None else None,
-                               outcome_provenance_class=pc, outcome_source_learners=src)
+                               outcome=dumps(outcome) if outcome is not None else None)
     return st
 
 
@@ -119,11 +114,16 @@ def recover(store: Store) -> list[int]:
     and ends the session with `summary.interrupted`."""
     stale = [r["id"] for r in store.all("SELECT id FROM reading_sessions WHERE ended_at IS NULL")]
     for sid in stale:
-        with store.transaction():
-            store.execute("UPDATE activities SET status=?, ended_at=? WHERE session_id=? AND status=?",
-                          (ActivityStatus.INTERRUPTED, now_iso(), sid, ActivityStatus.RUNNING))
-            for c in store.all("SELECT id FROM cycles WHERE session_id=? AND status='open'", (sid,)):
-                close_cycle(store, c["id"], "interrupted")
+        try:
+            with store.transaction():
+                if not records.owner_live(store, sid):  # ADR-0021 E9: `forget` deletes it; no write here
+                    continue
+                store.execute("UPDATE activities SET status=?, ended_at=? WHERE session_id=? AND status=?",
+                              (ActivityStatus.INTERRUPTED, now_iso(), sid, ActivityStatus.RUNNING))
+                for c in store.all("SELECT id FROM cycles WHERE session_id=? AND status='open'", (sid,)):
+                    close_cycle(store, c["id"], "interrupted")
+        except learner_store.LearnerUnavailable:
+            log.info("recovery: session %s skipped, its learner is being forgotten", sid)
     records.close_stale_sessions(store)  # also recomputes each learner's Difficulties
     # With the speech lease held no other session runs, so every session without `post_done_at` is a dead
     # process's: its egress is over (M5 design D5), and the guest sweep and `forget` may now act on it.

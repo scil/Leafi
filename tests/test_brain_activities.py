@@ -214,21 +214,17 @@ async def test_read_aloud_with_brain_content_reads_hard_sentences_slowly_and_sho
     assert a.content == {"translate": "狐狸跑回家。", "hard_sentence_ids": [sents[1].sid]}
 
 
-async def test_brain_written_cards_store_the_calls_provenance(settings):
-    """D15: a writer of Brain-owned content takes its provenance, not a fixed one."""
+async def test_brain_written_cards_store_the_brain_text(settings):
+    """D15: a Brain-owned card stores the Brain's text; ADR-0021 E9: no source learners are kept with it."""
     w = make_world(settings, settings, [])
     item = knowledge.upsert_item(w.store, w.s.learner_id, "word", "fox")
     enc = knowledge.add_encounter(w.store, item, session_id=w.s.session_id, trigger="explain",
                                   context_sentence="The fox ran home.", explanation_en="a wild animal")
-    other = learner_store.create(w.store, "Ben")
     content = {"cards": {item: {"front": "fox", "back": "a small wild dog", "sentence": "The fox ran home."}}}
-    prov = Provenance("derived_from_learner", (w.s.learner_id, other))
     status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]}, content=content, content_owner="brain",
-                                   content_provenance=prov)
+                                   content_provenance=Provenance("derived_from_learner", (w.s.learner_id,)))
     assert outcome["cards"] == 1
-    row = w.store.one("SELECT back, card_provenance_class, card_source_learners FROM anki_outbox")
-    assert row["back"] == "a small wild dog" and row["card_provenance_class"] == "derived_from_learner"
-    assert row["card_source_learners"] == f"[{min(w.s.learner_id, other)}, {max(w.s.learner_id, other)}]"
+    assert w.store.one("SELECT back FROM anki_outbox")["back"] == "a small wild dog"
     assert enc
 
 

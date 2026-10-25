@@ -161,26 +161,24 @@ async def test_answer_and_judge_may_use_a_cloud_backend_for_any_learner(ctx, sca
     assert brain.routable("answer", ctx) and brain.eligible("fast", "judge", ctx) == [(a, "m")]
 
 
-async def test_an_audit_row_naming_a_forgotten_learner_keeps_no_text(ctx, scaled):
-    """D22: the call's leaves cite learner B, who is marked forgetting before the row is written: the row is kept
-    (the call happened and was charged) without its payload text and without the response."""
+async def test_an_audit_row_of_a_learner_being_forgotten_is_dropped_without_raising(ctx, scaled):
+    """ADR-0021 E9 (U8): the session's learner is marked forgetting before the row is written; the fenced insert
+    refuses it, the row is logged without text and dropped, and it leaves `pending_audit` (no raise into the call
+    or into `finalize`)."""
     import time
 
     ctx.deadline = time.monotonic() + 3
-    ben = learner_store.create(ctx.store, "Ben")
-    leaves = (Leaf("Ben likes rockets", Provenance("derived_from_learner", (ben,))),)
+    owner = learner_store.session_learner(ctx.store, ctx.session_id)
 
     class Forgetting(Fake):
         async def call(self, req):
-            ctx.store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (ben,))
+            ctx.store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (owner,))
             return await super().call(req)
 
-    got = await bc.brain_call(_brain([(Forgetting("a", [("ok", {"note": "Ben likes rockets"})]), "m")]), ctx,
-                              "decide", _req(leaves), lambda v: v)
+    got = await bc.brain_call(_brain([(Forgetting("a", [("ok", {"note": "x"})]), "m")]), ctx, "decide", _req(),
+                              lambda v: v)
     assert got is not None
-    row = ctx.store.one("SELECT payload, response, payload_source_learners, outcome FROM brain_calls")
-    assert "Ben" not in row["payload"] and row["response"] is None and row["payload_source_learners"] == "[]"
-    assert row["outcome"] == "ok"
+    assert ctx.store.one("SELECT COUNT(*) AS n FROM brain_calls")["n"] == 0 and ctx.pending_audit == []
 
 
 def test_rejection_codes_name_paths_never_values():

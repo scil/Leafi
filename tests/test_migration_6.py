@@ -46,16 +46,16 @@ def v5(tmp_path):
     return path
 
 
-def test_v5_to_v6_needs_no_learner_and_equals_a_fresh_file(v5, tmp_path):
+def test_v5_to_the_latest_needs_no_learner_and_equals_a_fresh_file(v5, tmp_path):
     res = storage.migrate_file(v5)
     assert (res.from_version, res.learner_id) == (5, None)
     assert set(res.created) == {"pseudonyms", "privacy_state"}
-    assert set(res.rebuilt) == {"reading_sessions", "egress_log"}
+    assert {"reading_sessions", "egress_log"} <= set(res.rebuilt)  # step 6; step 7 rebuilds more (ADR-0021)
     fresh = Store(tmp_path / "fresh.db")
     migrated = sqlite3.connect(str(v5))
     assert storage.schema_of(migrated) == storage.schema_of(fresh.conn)
     assert _rows(migrated, "SELECT * FROM privacy_state") == _rows(fresh.conn, "SELECT * FROM privacy_state")
-    assert migrated.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 6
+    assert migrated.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 7
     assert migrated.execute("PRAGMA foreign_key_check").fetchall() == []
     assert _rows(migrated, "SELECT COUNT(*) FROM learners") == [(2,)]  # no learner created
     migrated.close()
@@ -135,15 +135,15 @@ def test_a_failure_in_step_6_leaves_version_5_and_reruns(v5):
     assert _version(v5) == 5
     assert _counts(v5) == before
     storage.migrate_file(v5)
-    assert _version(v5) == 6
+    assert _version(v5) == 7
 
 
-def test_v4_reaches_6_in_one_run_with_the_seed_rows(tmp_path):
+def test_v4_reaches_the_latest_in_one_run_with_the_seed_rows(tmp_path):
     path = tmp_path / "leafi.db"
     v4_file(path)
     res = storage.migrate_file(path, "Ada", legacy_terms=["Ada", "Ben"])
     assert (res.from_version, res.learner_id) == (4, 1)
-    assert _version(path) == 6
+    assert _version(path) == 7
     with Store(path) as store:
         assert store.one("SELECT value FROM privacy_state WHERE key='protected_version'")[0] == 1
         assert _rows(store.conn, "SELECT term FROM household_terms") == [("Ben",)]
@@ -161,7 +161,7 @@ def test_the_backup_restores_and_migrates_again(v5, tmp_path):
     storage.restore_file(v5, res.backup)
     assert _version(v5) == 5
     storage.migrate_file(v5)
-    assert _version(v5) == 6
+    assert _version(v5) == 7
 
 
 def test_migrate_command_on_a_v5_file(settings, monkeypatch, capsys):
@@ -174,8 +174,8 @@ def test_migrate_command_on_a_v5_file(settings, monkeypatch, capsys):
     monkeypatch.setenv("REDACT_TERMS", "Grandma Rose")  # the retired key, still read once for the import
     assert cli.main(["migrate"]) == 0
     out = capsys.readouterr().out
-    assert "from schema 5 to 6" in out and "first learner" not in out
+    assert "from schema 5 to 7" in out and "first learner" not in out
     with Store(path) as store:
         assert store.one("SELECT term FROM household_terms WHERE kind='name'")[0] == "Grandma Rose"
     assert cli.main(["migrate"]) == 0
-    assert "already at schema 6" in capsys.readouterr().out
+    assert "already at schema 7" in capsys.readouterr().out

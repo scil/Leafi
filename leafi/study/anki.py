@@ -123,11 +123,25 @@ def _item_tags(store: Store, item_id: int, key: str) -> list[str]:
     return tags
 
 
+def _forgotten_while_sent(store: Store, learner_id: int, note_id: int) -> None:
+    """`forget` deleted the outbox row while `addNote` was awaited (ADR-0021 E9, Y4): list the note for the
+    household to remove while the learner row still exists, else only log it."""
+    from leafi.study import records
+
+    log.warning("anki note %s was added for learner #%s while that learner was being forgotten", note_id, learner_id)
+    with store.transaction():
+        if learner_store.get(store, learner_id) is not None:
+            records._remember_notes(store, learner_id, [note_id])
+
+
 async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", model: str = "问答题") -> SyncReport:
-    """Every learner's pending cards, each into that learner's deck (`deck` is the base name, `deck_for`)."""
+    """Every learner's pending cards, each into that learner's deck (`deck` is the base name, `deck_for`). A learner
+    being forgotten is skipped (ADR-0021 E9, X4): their rows are not read, and the claim to `'sent'` checks the
+    owner in its own statement."""
     rep = SyncReport()
     rows = store.all("SELECT o.*, k.anki_item_key FROM anki_outbox o JOIN knowledge_items k ON "
-                     "k.id = o.knowledge_item_id WHERE o.state IN ('pending','sent') ORDER BY o.id")
+                     "k.id = o.knowledge_item_id JOIN learners l ON l.id = o.learner_id "
+                     "WHERE o.state IN ('pending','sent') AND l.forgetting = 0 ORDER BY o.id")
     decks_ready: set[str] = set()
     for row in rows:
         oid, item_id, key = row["id"], row["knowledge_item_id"], row["anki_item_key"]
@@ -140,10 +154,14 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
 
             if cards.check(store, row["learner_id"], item_id, fields, row["sentence"] or "")[0] == "flag":
                 tags.append("leafi-check")  # a flagged card goes with a tag the learner sees (§7.2)
-        store.execute("UPDATE anki_outbox SET state='sent', attempts=attempts+1, updated_at=?, "
-                      "attempted_fields=COALESCE(attempted_fields, ?) WHERE id=?",
-                      (now_iso(), dumps({f: field_hash(v) for f, v in fields.items()}) if row["op"] == "add" else None,
-                       oid))
+        claimed = store.execute(
+            "UPDATE anki_outbox SET state='sent', attempts=attempts+1, updated_at=?, "
+            "attempted_fields=COALESCE(attempted_fields, ?) WHERE id=? AND EXISTS(SELECT 1 FROM learners l "
+            "WHERE l.id = anki_outbox.learner_id AND l.forgetting = 0)",
+            (now_iso(), dumps({f: field_hash(v) for f, v in fields.items()}) if row["op"] == "add" else None,
+             oid)).rowcount
+        if not claimed:  # marked for forgetting since the query: not pushed
+            continue
         try:
             if row["op"] == "add":
                 note_id = None
@@ -164,9 +182,12 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
                         "tags": tags, "options": {"allowDuplicate": False}})
                     acked = {f: field_hash(v) for f, v in fields.items()}
                 cards = await client.find_cards(f"nid:{note_id}")
-                store.execute("UPDATE anki_outbox SET state='acked', anki_note_id=?, card_ids=?, "
-                              "last_acked_fields=?, last_error=NULL, updated_at=? WHERE id=?",
-                              (note_id, dumps(cards), dumps(acked), now_iso(), oid))
+                acked_rows = store.execute("UPDATE anki_outbox SET state='acked', anki_note_id=?, card_ids=?, "
+                                           "last_acked_fields=?, last_error=NULL, updated_at=? WHERE id=?",
+                                           (note_id, dumps(cards), dumps(acked), now_iso(), oid)).rowcount
+                if not acked_rows:
+                    _forgotten_while_sent(store, row["learner_id"], note_id)
+                    continue
                 rep.acked += 1
             else:
                 prev = store.one("SELECT anki_note_id, card_ids, last_acked_fields FROM anki_outbox WHERE "

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 
 from leafi.core import learner_store
-from leafi.core.storage import Store, dumps, now_iso
+from leafi.core.storage import Store, now_iso
 from leafi.core.text import tokenize
 from leafi.study import books, miscues, pages
 
@@ -18,10 +18,8 @@ def learner(store: Store, name: str | None = None) -> int:
 def card(store: Store, item_id: int, op: str = "add") -> int:
     """An outbox row as `add_cards` (or a later update) queues it; fields are built at push time when unstored."""
     learner = store.one("SELECT learner_id FROM knowledge_items WHERE id=?", (item_id,))["learner_id"]
-    cls, src = learner_store.prov("derived_from_learner", [learner])
-    return learner_store.insert(store, "anki_outbox", learner, sources=[learner], knowledge_item_id=item_id, op=op,
-                                state="pending", updated_at=now_iso(), card_provenance_class=cls,
-                                card_source_learners=src)
+    return learner_store.insert(store, "anki_outbox", learner, knowledge_item_id=item_id, op=op, state="pending",
+                                updated_at=now_iso())
 
 
 def book_page(store: Store, text: str, *, title: str = "Fixture", source: str = "ocr", number: int | None = 1):
@@ -42,9 +40,8 @@ def session(store: Store, book_id: int | None, *, days_ago: float = 0.0, learner
 
 def utterance(store: Store, session_id: int, text: str, *, kind: str = "reading",
               page_read_id: int | None = None) -> int:
-    lid = learner_store.session_learner(store, session_id)
     return store.insert("utterances", session_id=session_id, page_read_id=page_read_id, text=text, kind=kind,
-                        provenance_class="learner", source_learners=dumps([lid]), created_at=now_iso())
+                        created_at=now_iso())
 
 
 def page_read(store: Store, session_id: int, page_id: int, rev: int) -> int:

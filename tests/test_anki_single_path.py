@@ -20,10 +20,8 @@ async def test_add_cards_stores_the_card_text_and_push_sends_exactly_it(settings
     assert w.facts().cardable_items == (item,)
     status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]})
     assert status == "completed" and outcome["cards"] == 1
-    row = w.store.one("SELECT op, state, front, back, sentence, card_provenance_class FROM anki_outbox "
-                      "WHERE knowledge_item_id=?", (item,))
+    row = w.store.one("SELECT op, state, front, back, sentence FROM anki_outbox WHERE knowledge_item_id=?", (item,))
     assert (row["op"], row["state"], row["front"], row["sentence"]) == ("add", "pending", "fox", "The fox ran home.")
-    assert row["card_provenance_class"] == "derived_from_learner"
     knowledge.add_encounter(w.store, item, session_id=w.s.session_id, trigger="explain",
                             context_sentence="The fox ran home.", explanation_en="CHANGED LATER")
     fake = FakeAnki()

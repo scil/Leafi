@@ -147,16 +147,40 @@ def test_no_environment_reads_outside_core_config():
     assert bad == []
 
 
-# M7 design D22: no row that names a learner is written except through `learner_store`'s fenced writers. The
-# functions below write learner columns without naming a new learner; each says why.
+# ADR-0021 E9 (M7 design D22 before it): a write of a learner- or session-owned row goes through `learner_store`'s
+# fenced writers, which check the owning learner in the statement. The functions below are exempt; each says why.
 _WRITE_EXEMPT = {
-    "leafi/study/records.py:_purge_derived": "clears provenance to `system` / `[]` for a learner being forgotten",
-    "leafi/study/records.py:forget_learner": "clears `source_learner_id` to NULL for the learner being forgotten",
     "leafi/study/harness/guests.py:discard": "moves a discarded guest's rows to the permanent `anonymous` row",
+}
+# The UPDATEs that stay raw: status, timestamps, counters and ids only (ADR-0021 E9, X5, Y5). Any other column of
+# an owned table — a text, a JSON text, `reading_sessions.learner_id` — goes through `update_named`.
+MAINTENANCE_COLUMNS: dict[str, set[str]] = {
+    "reading_sessions": {"ended_at", "post_done_at", "book_id",
+                         "summary"},  # JSON of counts and enum strings by construction (`records.summary`)
+    "activities": {"status", "ended_at", "cycle_id"},
+    "review_answers": {"state", "sent_at", "acked_at"},
+    "knowledge_items": {"status", "updated_at"},
+    "anki_outbox": {"state", "attempts", "updated_at", "anki_note_id",
+                    "card_ids",  # Anki card ids
+                    "attempted_fields", "last_acked_fields",  # JSON of field hashes
+                    "last_error"},  # an AnkiConnect error string
 }
 _INSERT = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\{\}|\w+)", re.IGNORECASE)
 _UPDATE = re.compile(r"UPDATE\s+(\{\}|\w+)\s+SET\s+(.*?)(?:\s+WHERE\b|$)", re.IGNORECASE | re.DOTALL)
-_NAMES_LEARNER = re.compile(r"learner_id|source_learners|provenance_class")
+
+
+def _set_targets(clause: str) -> list[str]:
+    """The columns a SET clause assigns: `name =` at parenthesis depth 0 (so `COALESCE(?, summary)` is not one)."""
+    out, depth, flat = [], 0, []
+    for ch in clause:
+        depth += ch == "("
+        depth -= ch == ")"
+        flat.append(ch if depth == 0 else " ")
+    for part in "".join(flat).split(","):
+        m = re.match(r"\s*(\w+)\s*=", part)
+        if m:
+            out.append(m.group(1))
+    return out
 
 
 def _sql(node: ast.AST) -> str | None:
@@ -167,32 +191,75 @@ def _sql(node: ast.AST) -> str | None:
     return None
 
 
-def test_every_write_that_names_a_learner_goes_through_the_fence():
-    """(a) any INSERT into a learner-owned or provenance table — a literal `INSERT INTO t`, a dynamic `INSERT INTO
-    {…}`, or `store.insert("t", …)` — and (b) any UPDATE whose SET names `learner_id`, `*_source_learners` or
-    `*_provenance_class` (or is dynamic on such a table) must live in `leafi/core/learner_store.py`."""
+def _owned_write_problems(rel: str, source: str, fenced: set[str]) -> list[str]:
+    """Every write of an owned table in one module (functions and module- or class-level constants) that is not
+    allowed outside `learner_store`: an INSERT (literal, dynamic or `store.insert`), an UPDATE assigning a column
+    outside `MAINTENANCE_COLUMNS`, an UPDATE with a placeholder in the SET of an owned table, or an UPDATE whose
+    table name is not a literal."""
+    tree = ast.parse(source)
+    owner: dict[int, str] = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            for node in ast.walk(fn):
+                owner.setdefault(id(node), fn.name)
+    bad = []
+    for node in ast.walk(tree):
+        where = owner.get(id(node), "<module>")
+        if f"{rel}:{where}" in _WRITE_EXEMPT:
+            continue
+        sql = _sql(node)
+        if sql:
+            m = _INSERT.search(sql)
+            if m and (m.group(1) in fenced or m.group(1) == "{}"):
+                bad.append(f"{rel}:{node.lineno} {where}: INSERT INTO {m.group(1)}")
+            m = _UPDATE.search(sql)
+            if m:
+                table, clause = m.group(1), m.group(2)
+                if table == "{}":
+                    bad.append(f"{rel}:{node.lineno} {where}: UPDATE with a non-literal table name")
+                elif table in fenced:
+                    if "{}" in clause:
+                        bad.append(f"{rel}:{node.lineno} {where}: UPDATE {table} SET with a placeholder")
+                    extra = [c for c in _set_targets(clause) if c not in MAINTENANCE_COLUMNS.get(table, set())]
+                    if extra:
+                        bad.append(f"{rel}:{node.lineno} {where}: UPDATE {table} SET {', '.join(extra)}")
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "insert"
+                and node.args and _sql(node.args[0]) in fenced):
+            bad.append(f"{rel}:{node.lineno} {where}: store.insert({_sql(node.args[0])!r})")
+    return bad
+
+
+def test_every_write_of_an_owned_row_goes_through_the_fence():
+    """ADR-0021 E9: INSERTs into `DIRECT_OWNED | SESSION_OWNED` tables, and UPDATEs of them beyond the maintenance
+    allow-list, live in `leafi/core/learner_store.py`."""
     from leafi.core import learner_store as ls
 
-    fenced = set(ls.DIRECT) | set(ls.PROVENANCE_TABLES)
+    fenced = set(ls.DIRECT_OWNED) | set(ls.SESSION_OWNED)
     bad = []
     for f in LEAFI.rglob("*.py"):
         rel = f.relative_to(ROOT).as_posix()
         if rel in ("leafi/core/learner_store.py", "leafi/core/storage.py"):
             continue
-        for fn in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
-            if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef) or f"{rel}:{fn.name}" in _WRITE_EXEMPT:
-                continue
-            for node in ast.walk(fn):
-                sql = _sql(node)
-                if sql:
-                    m = _INSERT.search(sql)
-                    if m and (m.group(1) in fenced or m.group(1) == "{}"):
-                        bad.append(f"{rel}:{node.lineno} {fn.name}: INSERT INTO {m.group(1)}")
-                    m = _UPDATE.search(sql)
-                    if m and (_NAMES_LEARNER.search(m.group(2))
-                              or ("{}" in m.group(2) and (m.group(1) in fenced or m.group(1) == "{}"))):
-                        bad.append(f"{rel}:{node.lineno} {fn.name}: UPDATE {m.group(1)} SET {m.group(2)[:40]}")
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "insert"
-                        and node.args and _sql(node.args[0]) in fenced):
-                    bad.append(f"{rel}:{node.lineno} {fn.name}: store.insert({_sql(node.args[0])!r})")
+        bad += _owned_write_problems(rel, f.read_text(encoding="utf-8"), fenced)
     assert sorted(set(bad)) == []
+
+
+def test_the_fence_scanner_refuses_text_columns_and_dynamic_tables():
+    from leafi.core import learner_store as ls
+
+    fenced = set(ls.DIRECT_OWNED) | set(ls.SESSION_OWNED)
+    refused = [
+        'def f(s): s.execute("UPDATE encounters SET example=? WHERE id=?", (1, 2))',
+        'def f(s): s.execute("UPDATE utterances SET words=? WHERE id=?", (1, 2))',
+        'def f(s): s.execute("UPDATE book_notes SET characters=? WHERE id=?", (1, 2))',
+        'def f(s): s.execute("UPDATE reading_sessions SET learner_id=? WHERE id=?", (1, 2))',
+        'SQL = "UPDATE learner_notes SET text=? WHERE id=?"',  # a module-level constant
+        'def f(s, t): s.execute(f"UPDATE {t} SET x=?", (1,))',
+        'def f(s): s.execute("INSERT INTO brain_calls(session_id) VALUES(?)", (1,))',
+    ]
+    for src in refused:
+        assert _owned_write_problems("x.py", src, fenced), src
+    allowed = ['def f(s): s.execute("UPDATE activities SET status=?, ended_at=? WHERE id=?", (1, 2, 3))',
+               'def f(s): s.execute("UPDATE reading_sessions SET post_done_at=COALESCE(ended_at, ?)", (1,))']
+    for src in allowed:
+        assert _owned_write_problems("x.py", src, fenced) == [], src

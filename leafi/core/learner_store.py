@@ -1,138 +1,86 @@
 """Learners and the learner-scoped writes (ADR-0018 §1, §3, §7.1). A core module: `leafi.study` and, later,
 `leafi.privacy` import it; it imports nothing from either.
 
-Every row of a direct-owner table is inserted through `insert`, which is a conditional insert: it writes only while
-the owner and every source learner of its text exist and are not being forgotten, so a write that races
-`forget --learner` is refused instead of leaving a copy behind (the fence of ADR-0018 §1).
+The fence of ADR-0018 §1, by the **owning learner** since ADR-0021 E9 (the provenance columns are gone): every
+write of a learner-owned row is a conditional statement that runs only while the row's owner exists and is not
+being forgotten, so a write that races `forget --learner` is refused instead of leaving a copy behind.
 
-M7 design D22 extends the fence to every write that names a learner: `insert_named` for tables with provenance
-columns but no owner column, `update_named` for an UPDATE that sets provenance columns, and `adopt_session` for the
-one write that moves a session to another learner. `tests/test_architecture.py` refuses such a write anywhere else.
+- `insert` for `DIRECT_OWNED` tables (owner in `learner_id`);
+- `insert_named` for `SESSION_OWNED` tables (owner = the learner of the row's `session_id`; a missing session or
+  learner refuses, never a foreign-key error);
+- `update_named` for an UPDATE that writes a column outside `tests/test_architecture.py`'s maintenance allow-list,
+  with the owner check in the UPDATE's own `WHERE`;
+- `adopt_session` for the one write that moves a session to another learner.
+
+`tests/test_architecture.py` refuses such a write anywhere else.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
 
-from leafi.core.provenance import PARENT_SOURCE
 from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.core.text import placeholder_reason
 
-DIRECT = frozenset({"reading_sessions", "knowledge_items", "difficulties", "retrieval_events", "learner_notes",
-                    "book_notes", "review_answers", "anki_outbox", "consents", "encounters"})
-CLASSES = ("page", "system", "learner", "derived_from_learner", "parent")
-# (table, provenance-class column, source-learners column) for every stored text that can reach a payload (§3).
-PROVENANCE = (
-    ("utterances", "provenance_class", "source_learners"),
-    ("activities", "outcome_provenance_class", "outcome_source_learners"),
-    ("activities", "assessment_provenance_class", "assessment_source_learners"),
-    ("brain_calls", "payload_provenance_class", "payload_source_learners"),
-    ("brain_calls", "response_provenance_class", "response_source_learners"),
-    ("learner_notes", "provenance_class", "source_learners"),
-    ("book_notes", "provenance_class", "source_learners"),
-    ("encounters", "context_provenance_class", "context_source_learners"),
-    ("encounters", "explanation_provenance_class", "explanation_source_learners"),
-    ("anki_outbox", "card_provenance_class", "card_source_learners"),
-)
+DIRECT_OWNED = frozenset({"reading_sessions", "knowledge_items", "difficulties", "retrieval_events", "learner_notes",
+                          "book_notes", "review_answers", "anki_outbox", "consents", "encounters"})
+DIRECT = DIRECT_OWNED  # the name M5–M7 code uses
+# Written after `post_done_at` too (the audit flush, post-session steps), so fenced; the other session tables are
+# written only by a live session or by recovery, which checks the owner itself (ADR-0021 E9).
+SESSION_OWNED = frozenset({"activities", "utterances", "brain_calls"})
+
+_LIVE = "EXISTS(SELECT 1 FROM learners WHERE id = ? AND forgetting = 0)"
+_LIVE_SESSION = ("EXISTS(SELECT 1 FROM reading_sessions rs JOIN learners l ON l.id = rs.learner_id "
+                 "WHERE rs.id = {sid} AND l.forgetting = 0)")
 
 
 class LearnerUnavailable(RuntimeError):
-    """The owner or a source learner does not exist or is being forgotten: the write was refused."""
+    """The row's owner does not exist or is being forgotten: the write was refused."""
 
 
 class LearnerChoice(LookupError):
     """No learner could be chosen without the household saying which (the message lists them)."""
 
 
-def prov(cls: str, sources: Iterable[int] = ()) -> tuple[str, str]:
-    """A provenance pair (class, json source ids) for a writer's columns."""
-    if cls not in CLASSES:
-        raise ValueError(f"provenance class {cls!r}")
-    return cls, dumps(sorted(set(sources)))
-
-
-def stated_sources(cols: dict) -> set[int]:
-    """The learner ids a row's own `*source_learners` columns name: what the fence must check (codex M3 #3).
-    `PARENT_SOURCE` names no learner and is left out (M7 design D2)."""
-    out: set[int] = set()
-    for name, value in cols.items():
-        if name.endswith("source_learners"):
-            out.update(int(i) for i in loads(value, []))
-    out.discard(PARENT_SOURCE)
-    return out
-
-
-def insert(store: Store, table: str, learner_id: int, *, sources: Iterable[int] = (), **cols) -> int:
-    """Insert one row owned by `learner_id`; refused (LearnerUnavailable) unless the owner and every source learner
-    (`sources` and every id the row's provenance columns name) exist with `forgetting = 0`, checked in the same
-    statement as the insert."""
-    if table not in DIRECT:
+def insert(store: Store, table: str, learner_id: int, **cols) -> int:
+    """Insert one row owned by `learner_id`; refused (LearnerUnavailable) unless the owner exists with
+    `forgetting = 0`, checked in the same statement as the insert."""
+    if table not in DIRECT_OWNED:
         raise ValueError(f"{table} is not a learner-owned table")
     cols = {"learner_id": learner_id, **cols}
-    ids = sorted({learner_id, *sources, *stated_sources(cols)} - {PARENT_SOURCE})
-    names = ", ".join(cols)
-    marks = ", ".join("?" for _ in cols)
-    idm = ", ".join("?" for _ in ids)
-    cur = store.execute(
-        f"INSERT INTO {table}({names}) SELECT {marks} WHERE "
-        f"(SELECT COUNT(*) FROM learners WHERE id IN ({idm}) AND forgetting = 0) = ?",
-        (*cols.values(), *ids, len(ids)))
-    if cur.rowcount != 1:
-        raise LearnerUnavailable(f"{table}: learner(s) {ids} missing or being forgotten")
-    return int(cur.lastrowid)
-
-
-def _fence(ids: list[int]) -> tuple[str, tuple]:
-    marks = ", ".join("?" for _ in ids)
-    return f"(SELECT COUNT(*) FROM learners WHERE id IN ({marks}) AND forgetting = 0) = ?", (*ids, len(ids))
-
-
-PROVENANCE_TABLES = frozenset(t for t, _, _ in PROVENANCE)
-# The learner a row belongs to, for a provenance table without its own `learner_id` (its session's learner).
-_OWNER_SQL = {
-    "activities": "SELECT rs.learner_id FROM activities a JOIN reading_sessions rs ON rs.id = a.session_id "
-                  "WHERE a.id = ?",
-    "utterances": "SELECT rs.learner_id FROM utterances u JOIN reading_sessions rs ON rs.id = u.session_id "
-                  "WHERE u.id = ?",
-}
-
-
-def insert_named(store: Store, table: str, *, sources: Iterable[int] = (), **cols) -> int:
-    """Insert a row of a provenance table that has no owner column (`utterances`, `activities`, `brain_calls`):
-    refused unless every learner its provenance columns (and `sources`) name exists and is not being forgotten,
-    checked in the same statement (M7 design D22)."""
-    if table not in PROVENANCE_TABLES or table in DIRECT:
-        raise ValueError(f"{table}: use insert() for a learner-owned table, or it has no provenance")
-    ids = sorted({*sources, *stated_sources(cols)} - {PARENT_SOURCE})
     names, marks = ", ".join(cols), ", ".join("?" for _ in cols)
-    fence, args = _fence(ids)
-    cur = store.execute(f"INSERT INTO {table}({names}) SELECT {marks} WHERE {fence}", (*cols.values(), *args))
+    cur = store.execute(f"INSERT INTO {table}({names}) SELECT {marks} WHERE {_LIVE}", (*cols.values(), learner_id))
     if cur.rowcount != 1:
-        raise LearnerUnavailable(f"{table}: learner(s) {ids} missing or being forgotten")
+        raise LearnerUnavailable(f"{table}: learner #{learner_id} missing or being forgotten")
     return int(cur.lastrowid)
 
 
-def row_owner(store: Store, table: str, row_id: int) -> int | None:
-    sql = _OWNER_SQL.get(table) or (f"SELECT learner_id FROM {table} WHERE id = ?" if table in DIRECT else None)
-    if sql is None:
-        return None
-    row = store.one(sql, (row_id,))
-    return row[0] if row else None
+def insert_named(store: Store, table: str, **cols) -> int:
+    """Insert a row of a session-owned table (`activities`, `utterances`, `brain_calls`): refused unless the
+    learner of its `session_id` exists and is not being forgotten, checked in the same statement."""
+    if table not in SESSION_OWNED:
+        raise ValueError(f"{table}: use insert() for a learner-owned table, or it is not fenced")
+    names, marks = ", ".join(cols), ", ".join("?" for _ in cols)
+    cur = store.execute(f"INSERT INTO {table}({names}) SELECT {marks} WHERE {_LIVE_SESSION.format(sid='?')}",
+                        (*cols.values(), cols.get("session_id")))
+    if cur.rowcount != 1:
+        raise LearnerUnavailable(f"{table}: session #{cols.get('session_id')}'s learner missing or being forgotten")
+    return int(cur.lastrowid)
 
 
 def update_named(store: Store, table: str, row_id: int, **cols) -> None:
-    """An UPDATE of one row that sets provenance columns: refused unless the row's own learner and every learner
-    the new columns name exist and are not being forgotten, in the same statement (M7 design D22)."""
-    if table not in PROVENANCE_TABLES:
-        raise ValueError(f"{table} has no provenance columns")
-    owner = row_owner(store, table, row_id)
-    ids = sorted((({owner} if owner else set()) | stated_sources(cols)) - {PARENT_SOURCE})
+    """An UPDATE of one row that writes a non-maintenance column: refused unless the row's owner exists and is not
+    being forgotten, checked in the UPDATE's own `WHERE` (no separate owner read)."""
+    if table in DIRECT_OWNED:
+        owner = f"EXISTS(SELECT 1 FROM learners l WHERE l.id = {table}.learner_id AND l.forgetting = 0)"
+    elif table in SESSION_OWNED:
+        owner = _LIVE_SESSION.format(sid=f"{table}.session_id")
+    else:
+        raise ValueError(f"{table} is not a learner- or session-owned table")
     sets = ", ".join(f"{k}=?" for k in cols)
-    fence, args = _fence(ids)
-    cur = store.execute(f"UPDATE {table} SET {sets} WHERE id = ? AND {fence}", (*cols.values(), row_id, *args))
+    cur = store.execute(f"UPDATE {table} SET {sets} WHERE id = ? AND {owner}", (*cols.values(), row_id))
     if cur.rowcount != 1:
-        raise LearnerUnavailable(f"{table} #{row_id}: learner(s) {ids} missing or being forgotten")
+        raise LearnerUnavailable(f"{table} #{row_id}: its learner is missing or being forgotten")
 
 
 def adopt_session(store: Store, session_id: int, guest: int, learner: int) -> bool:
