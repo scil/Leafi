@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import json
 import sys
@@ -48,7 +49,7 @@ import requests  # noqa: E402
 from opentelemetry import trace  # noqa: E402
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # noqa: E402
 from opentelemetry.sdk.resources import Resource  # noqa: E402
-from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider  # noqa: E402
 from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -75,11 +76,13 @@ def flat(text: str) -> str:
 
 
 # ---------------------------------------------------------------- tracing
-def tracer_provider(sinks: set[str], run_name: str, mlflow_experiment_id: str | None) -> TracerProvider:
+def tracer_provider(sinks: set[str], run_name: str, mlflow_experiment_id: str | None,
+                    lf_experiment: LangfuseExperiment) -> TracerProvider:
     """One provider, one exporter per tool: every tool receives the same spans."""
     resource = Resource.create({"service.name": "leafi-ocr-eval", "openinference.project.name": EXPERIMENT,
                                 "leafi.run": run_name})
     provider = TracerProvider(resource=resource)
+    provider.add_span_processor(lf_experiment)  # adds attributes only; the other tools ignore them
     if "phoenix" in sinks:
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
             endpoint=evalenv.local(evalenv.PHOENIX_URL) + "/v1/traces")))
@@ -94,6 +97,27 @@ def tracer_provider(sinks: set[str], run_name: str, mlflow_experiment_id: str | 
             endpoint=evalenv.local(evalenv.MLFLOW_URI) + "/v1/traces",
             headers={"x-mlflow-experiment-id": mlflow_experiment_id})))
     return provider
+
+
+class LangfuseExperiment(SpanProcessor):
+    """Langfuse v4 ("events only") knows a dataset run only from `langfuse.experiment.*` attributes on every span
+    of the item's trace (what the SDK's `run_experiment` propagates); the old dataset-run-items REST call is
+    accepted but not shown. `item` is set per photo by the runner; None leaves the trace outside the experiment."""
+
+    def __init__(self) -> None:
+        self.item: dict | None = None
+        self.root: str | None = None
+
+    def on_start(self, span, parent_context=None) -> None:
+        if not self.item:
+            return
+        if self.root is None:
+            self.root = format(span.get_span_context().span_id, "016x")
+        span.set_attributes({**self.item, "langfuse.experiment.item.root_observation_id": self.root,
+                             "langfuse.environment": "sdk-experiment"})
+
+    def begin(self, item: dict | None) -> None:
+        self.item, self.root = item, None
 
 
 class Traced(rapid.RapidOcr):
@@ -221,11 +245,13 @@ def aggregate(rows: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------- the run
-def run_ocr(ocr: Traced, tracer, items: list[Photo], run_name: str, cfg: dict, meta: dict, images: bool) -> list[dict]:
+def run_ocr(ocr: Traced, tracer, items: list[Photo], run_name: str, cfg: dict, meta: dict, images: bool,
+            lf_experiment: LangfuseExperiment, lf_items: dict[str, dict]) -> list[dict]:
     rows = []
     angle, region = None, None
     for ph in items:
         expected = {"0": 0, "90": 90, "180": 180, "270": 270}.get(ph.tags.get("angle", ""))
+        lf_experiment.begin(lf_items.get(ph.file))
         with tracer.start_as_current_span("ocr.page") as root:
             root.set_attributes({
                 "openinference.span.kind": "CHAIN", "session.id": run_name, "langfuse.trace.name": "ocr.page",
@@ -289,6 +315,7 @@ def run_ocr(ocr: Traced, tracer, items: list[Photo], run_name: str, cfg: dict, m
         print(f"  {ph.file:<44} rot {res.rotation:>3} {res.state:<8} passes {len(res.passes)} "
               f"{seconds:5.1f}s" + (f"  CER {row['cer_norm']:.3f} WER {row['wer_norm']:.3f}" if ph.truth else
                                     "  (no truth yet)"))
+    lf_experiment.begin(None)
     return rows
 
 
@@ -404,53 +431,55 @@ def to_phoenix(rows, metrics, meta, run_name) -> None:
           f"({evalenv.PHOENIX_URL})")
 
 
-def to_langfuse(rows, metrics, meta, run_name) -> None:
+def langfuse_call(method, path, **kw):
     s = evalenv.secrets()
-    auth = (s["LANGFUSE_PUBLIC_KEY"], s["LANGFUSE_SECRET_KEY"])
-    base = evalenv.local(evalenv.LANGFUSE_URL) + "/api/public"
+    r = requests.request(method, evalenv.local(evalenv.LANGFUSE_URL) + "/api/public" + path,
+                         auth=(s["LANGFUSE_PUBLIC_KEY"], s["LANGFUSE_SECRET_KEY"]), timeout=30, **kw)
+    r.raise_for_status()
+    return r.json() if r.content else None
 
-    def call(method, path, **kw):
-        r = requests.request(method, base + path, auth=auth, timeout=30, **kw)
-        r.raise_for_status()
-        return r.json() if r.content else None
 
+def langfuse_prepare(items: list[Photo], run_name: str, meta: dict) -> dict[str, dict]:
+    """Dataset and items before the run (upserted by id); returns each scored photo's experiment attributes."""
     name = EXPERIMENT
     try:
-        call("GET", f"/v2/datasets/{name}")
+        ds = langfuse_call("GET", f"/v2/datasets/{name}")
     except requests.HTTPError:
-        call("POST", "/v2/datasets", json={"name": name, "description": "Leafi page photos with typed page text"})
-    scored = [r for r in rows if r.get("cer_norm") is not None]
-    for r in scored:
-        item_id = r["file"].replace("/", "__")
-        call("POST", "/dataset-items", json={"datasetName": name, "id": item_id, "input": {"file": r["file"]},
-                                             "expectedOutput": {"text": r["truth"]},
-                                             "metadata": {**r["tag_map"], "page_id": r["page_id"]}})
-    # Traces arrive asynchronously over OTLP: a run item must point at a trace Langfuse already has.
-    deadline = time.time() + 120
-    pending = list(scored)
-    while pending and time.time() < deadline:
-        later = []
-        for r in pending:
-            try:
-                call("POST", "/dataset-run-items", json={
-                    "runName": run_name, "datasetItemId": r["file"].replace("/", "__"), "traceId": r["trace_id"],
-                    "metadata": meta, "runDescription": f"{meta['pipeline']} @ {meta['git_commit'][:7]}"})
-            except requests.HTTPError:
-                later.append(r)
-        pending = later
-        if pending:
-            time.sleep(3)
+        ds = langfuse_call("POST", "/v2/datasets",
+                           json={"name": name, "description": "Leafi page photos with typed page text"})
+    experiment_id = hashlib.sha256(run_name.encode()).hexdigest()[:32]
+    out = {}
+    for ph in items:
+        if not ph.truth:
+            continue
+        item_id = ph.file.replace("/", "__")
+        metadata = {**ph.tags, "page_id": ph.page_id}
+        langfuse_call("POST", "/dataset-items", json={"datasetName": name, "id": item_id, "input": {"file": ph.file},
+                                                      "expectedOutput": {"text": ph.truth}, "metadata": metadata})
+        out[ph.file] = {
+            "langfuse.experiment.id": experiment_id, "langfuse.experiment.name": run_name,
+            "langfuse.experiment.description": f"{meta['pipeline']} @ {meta['git_commit'][:7]}",
+            "langfuse.experiment.metadata": json.dumps({k: str(v) for k, v in meta.items()}),
+            "langfuse.experiment.dataset.id": ds["id"], "langfuse.experiment.item.id": item_id,
+            "langfuse.experiment.item.expected_output": json.dumps({"text": ph.truth}),
+            "langfuse.experiment.item.metadata": json.dumps(metadata),
+        }
+    return out
+
+
+def to_langfuse(rows, run_name, lf_items: dict[str, dict]) -> None:
+    """Scores on each trace (the experiment itself travels in the span attributes)."""
     for r in rows:
         for k in ("cer_norm", "wer_norm", "cer_raw"):
             if r.get(k) is not None:
-                call("POST", "/scores", json={"traceId": r["trace_id"], "name": k, "value": r[k],
-                                              "dataType": "NUMERIC"})
+                langfuse_call("POST", "/scores", json={"traceId": r["trace_id"], "name": k, "value": r[k],
+                                                       "dataType": "NUMERIC"})
         if r["expected_rotation"] is not None:
-            call("POST", "/scores", json={"traceId": r["trace_id"], "name": "rotation_ok",
-                                          "value": float(r["rotation"] == r["expected_rotation"]),
-                                          "dataType": "NUMERIC"})
-    print(f"Langfuse: dataset run '{run_name}' ({len(scored) - len(pending)} item(s) linked"
-          + (f", {len(pending)} not linked" if pending else "") + f"); {evalenv.LANGFUSE_URL}")
+            langfuse_call("POST", "/scores", json={"traceId": r["trace_id"], "name": "rotation_ok",
+                                                   "value": float(r["rotation"] == r["expected_rotation"]),
+                                                   "dataType": "NUMERIC"})
+    print(f"Langfuse: experiment '{run_name}' on dataset '{EXPERIMENT}' ({len(lf_items)} item(s)); "
+          f"{evalenv.LANGFUSE_URL}")
 
 
 def main() -> None:
@@ -460,12 +489,13 @@ def main() -> None:
     ap.add_argument("--sinks", default="fiftyone,mlflow,phoenix,langfuse")
     ap.add_argument("--no-images", action="store_true", help="keep photos out of the traces")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--run-name", help="reuse a run's name, e.g. to send it again to one tool with --sinks")
     args = ap.parse_args()
     sinks = set(args.sinks.split(","))
     cfg = PIPELINES[args.pipeline]
     commit, dirty = evalenv.git_state()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_name = f"{args.pipeline}-{stamp}"
+    run_name = args.run_name or f"{args.pipeline}-{stamp}"
     meta = {"pipeline": args.pipeline, "pipeline_version": PIPELINE_VERSION, "git_commit": commit,
             "git_dirty": dirty, "source": args.source, "run": run_name}
     items = photos(args.source)[: args.limit]
@@ -475,7 +505,9 @@ def main() -> None:
         mlflow.set_tracking_uri(evalenv.local(evalenv.MLFLOW_URI))
         exp = mlflow.get_experiment_by_name(EXPERIMENT)
         exp_id = exp.experiment_id if exp else mlflow.create_experiment(EXPERIMENT)
-    provider = tracer_provider(sinks, run_name, exp_id)
+    lf_experiment = LangfuseExperiment()
+    lf_items = langfuse_prepare(items, run_name, meta) if "langfuse" in sinks else {}
+    provider = tracer_provider(sinks, run_name, exp_id, lf_experiment)
     tracer = provider.get_tracer("leafi.ocr.eval")
 
     rapid.PROBE_K = cfg["probe_k"]
@@ -488,7 +520,7 @@ def main() -> None:
 
     print(f"run {run_name}: {len(items)} photo(s), pipeline {args.pipeline} {cfg}, commit {commit[:7]}"
           + (" (dirty)" if dirty else ""))
-    rows = run_ocr(ocr, tracer, items, run_name, cfg, meta, images=not args.no_images)
+    rows = run_ocr(ocr, tracer, items, run_name, cfg, meta, not args.no_images, lf_experiment, lf_items)
     provider.force_flush()
     metrics = aggregate(rows)
 
@@ -507,7 +539,7 @@ def main() -> None:
     if "phoenix" in sinks:
         to_phoenix(rows, metrics, meta, run_name)
     if "langfuse" in sinks:
-        to_langfuse(rows, metrics, meta, run_name)
+        to_langfuse(rows, run_name, lf_items)
     provider.shutdown()
     print("metrics:", json.dumps({k: v for k, v in metrics.items() if not k.startswith("n.")}, sort_keys=True))
 

@@ -169,6 +169,10 @@ services:
     networks: [tools]
     environment:
       PHOENIX_TELEMETRY_ENABLED: "false"
+      # Without these the UI (in the browser, outside the internal network) fetches Google Fonts, the PyPI
+      # release and the GitHub star count (measured 2026-10-25).
+      PHOENIX_ALLOW_EXTERNAL_RESOURCES: "false"
+      PHOENIX_AGENTS_DISABLE_GITHUB: "true"
       PHOENIX_WORKING_DIR: /mnt/data
     volumes:
       - phoenix_data:/mnt/data
