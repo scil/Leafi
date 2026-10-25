@@ -1,8 +1,9 @@
 """Page tracker (B2): frame-diff settle → OCR → printed number or observation match → page + revision.
 
-Reliability (reliability.md): low OCR confidence → recapture once → ask the learner to read the first line
-→ offer typed page text. A frame-diff without a confident match → PAGE_UNCERTAIN: assessment suspended
-until the learner confirms. A new OCR never overwrites verified spans (pages.add_ocr_revision).
+Reliability (reliability.md): a read that needs help (unsure angle or low confidence) → recapture once, but only
+when the frame changed → otherwise ask the learner at once. A frame-diff without a confident match →
+PAGE_UNCERTAIN: assessment suspended until the learner confirms. A new OCR never overwrites verified spans
+(pages.add_ocr_revision), and a read that lost a stored page's words adds no revision (missing-words guard).
 """
 
 from __future__ import annotations
@@ -18,10 +19,16 @@ from pathlib import Path
 
 from leafi.core.ports import Eye, Frame
 from leafi.core.storage import Store, now_iso
+from leafi.core.text import words
 from leafi.study import pages
 
 log = logging.getLogger("leafi.page_tracker")
 NUMBER_RE = re.compile(r"^\s*(?:page\s+)?(\d{1,4})\s*$", re.IGNORECASE)
+OCR_TIMEOUT_S = 15.0  # performance.md: the timeout that bounds an OCR stall
+MISSING = 0.2  # a read that lost more than this share of a stored page's words (and at least MISSING_MIN) is partial
+MISSING_MIN = 3
+PARTIAL_MESSAGE = ("I can only see part of the page. Move your hand away and type /page to look again, "
+                   "or /page N --text <file> to type it.")
 
 
 @dataclass(frozen=True)
@@ -44,15 +51,55 @@ def frame_diff(a: Frame, b: Frame, size: int = 64) -> float:
     return float(ImageStat.Stat(ImageChops.difference(ia, ib)).mean[0])
 
 
-def split_number(lines: list[str]) -> tuple[int | None, list[str]]:
-    """A line that is only a number (first or last two lines) is the printed page number."""
-    body = list(lines)
+def split_number(lines, min_conf: float) -> tuple[int | None, list[str]]:
+    """A line that is only a number (first or last two lines) is the printed page number when it was read with
+    confidence ≥ `min_conf` (ADR-0010: a confidently read number); a number-only line read below it gives no number
+    and is dropped from the text, since a page number is never reading text (OCR design 2026-10-25 O7)."""
+    n = len(lines)
+    drop: set[int] = set()
+    number = None
     for idx in (0, 1, -1, -2):
-        if len(body) > abs(idx) and NUMBER_RE.match(body[idx]):
-            n = int(NUMBER_RE.match(body[idx]).group(1))
-            del body[idx]
-            return n, body
-    return None, body
+        k = idx % n if n > abs(idx) else None
+        if k is None or k in drop or not NUMBER_RE.match(lines[k].text):
+            continue
+        drop.add(k)
+        if lines[k].conf >= min_conf:
+            number = int(NUMBER_RE.match(lines[k].text).group(1))
+            break
+    return number, [ln.text for k, ln in enumerate(lines) if k not in drop]
+
+
+def missing_words(old_text: str, new_text: str) -> tuple[int, int]:
+    """(words of `old_text` the new read lost, words of `old_text`). Substitutions, a moved line and the shifts
+    SequenceMatcher makes on repeated words are not losses: leftover old and new words are paired by similarity
+    first (OCR design 2026-10-25 O7, round 6 W1/W2)."""
+    from difflib import SequenceMatcher
+
+    from rapidfuzz import fuzz
+
+    old = [w.lower() for w in words(old_text)]
+    new = [w.lower() for w in words(new_text)]
+    uo: list[str] = []
+    un: list[str] = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        k = min(i2 - i1, j2 - j1) if tag == "replace" else 0  # paired in place: substitutions
+        uo += old[i1 + k:i2]
+        un += new[j1 + k:j2]
+    missing = 0
+    for w in uo:
+        b = max(un, key=lambda x: fuzz.ratio(w, x), default=None)
+        if b is not None and fuzz.ratio(w, b) >= 60:
+            un.remove(b)
+        else:
+            missing += 1
+    return missing, len(old)
+
+
+def is_partial(old_text: str, new_text: str) -> bool:
+    missing, total = missing_words(old_text, new_text)
+    return total > 0 and missing >= MISSING_MIN and missing / total > MISSING
 
 
 class PageTracker:
@@ -99,17 +146,31 @@ class PageTracker:
     def changed(self, frame: Frame) -> bool:
         return self.last is None or frame_diff(self.last, frame) >= self.diff_threshold
 
+    async def _ocr(self, frame: Frame):
+        try:
+            return await asyncio.wait_for(self.ocr.read(frame), OCR_TIMEOUT_S)
+        except TimeoutError:
+            log.warning("OCR took longer than %.0f s; the page is treated as not seen", OCR_TIMEOUT_S)
+            return None
+
     async def read(self):
-        """Settle and OCR; one recapture when confidence is low. Returns (frame, result) or (None, None)."""
+        """Settle and OCR; when the read needs help, recapture once, but only if the frame changed (an unchanged
+        frame would read the same: the learner is asked at once). Returns (frame, result) or (None, None)."""
         frame = await self.settle()
         if frame is None or self.ocr is None:
             return None, None
-        result = await self.ocr.read(frame)
-        if result.confidence < self.settings.ocr_min_confidence:
-            log.info("OCR confidence %.2f low; recapturing once", result.confidence)
+        result = await self._ocr(frame)
+        if result is None:
+            return None, None
+        if result.needs_help(self.settings.ocr_min_confidence):
             again = await self.settle()
-            if again is not None:
-                frame, result = again, await self.ocr.read(again)
+            if again is not None and frame_diff(frame, again) >= self.diff_threshold:
+                log.info("OCR needs help (state %s, confidence %.2f); the frame changed: reading again",
+                         result.state, result.confidence)
+                second = await self._ocr(again)
+                if second is None:
+                    return None, None
+                frame, result = again, second
         return frame, result
 
     async def find(self, book_id: int, expected_number: int | None = None) -> PageFound:
@@ -117,13 +178,18 @@ class PageTracker:
         if frame is None:
             return PageFound("unavailable", message="I can't see the page. Which page are you on? (/page N)")
         self.last = frame
-        if result.confidence < self.settings.ocr_min_confidence:
+        if result.needs_help(self.settings.ocr_min_confidence):
             return PageFound("low_confidence",
                              message="The page is hard for me to read. Read me the first line, or type the page.")
-        number, body = split_number([ln.text for ln in result.lines])
+        number, body = split_number(result.lines, self.settings.ocr_min_confidence)
         text = "\n".join(body)
         obs = pages.observations_of(text)
         match = pages.match_page(self.store, book_id, obs, number)
+        if match.status == "matched":
+            stored = pages.current_text(self.store, match.page_id)
+            if stored is not None and is_partial(stored, text):
+                log.info("OCR read lost words of stored page %s; no revision added", match.page_id)
+                return PageFound("low_confidence", match.page_id, message=PARTIAL_MESSAGE)
         if match.status == "uncertain":
             guess = self.store.one("SELECT printed_number FROM pages WHERE id=?", (match.page_id,))
             label = guess["printed_number"] if guess and guess["printed_number"] is not None else "the one we read before"

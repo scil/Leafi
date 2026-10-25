@@ -67,7 +67,9 @@ async def identify(eye, ocr, catalog, *, max_width: int = 1920) -> BookGuess:
         if isbn:
             title = await catalog.title_for_isbn(isbn) if catalog is not None else None
             return BookGuess("barcode", title, isbn)
-    result = await ocr.read(frame)
+    # `cover`: the lines upright at the best angle only, so the tallest is the title, not a sideways desk label
+    # (OCR design 2026-10-25 O4); `height` is the line's thickness from its quad
+    result = await ocr.read(frame, purpose="cover")
     lines = sorted((ln for ln in result.lines if ln.text.strip()), key=lambda ln: -ln.height)
     if lines and result.confidence >= 0.5:
         return BookGuess("cover", lines[0].text.strip(), None)

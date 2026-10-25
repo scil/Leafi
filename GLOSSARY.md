@@ -70,6 +70,15 @@ One page of a Book, identified by its number when printed, otherwise by its text
 The text of a Page as Leafi believes it: OCR output until a Correction exists, then the corrected text. Corrected text always wins.
 _Avoid_: ground truth, transcript (reserved for speech)
 
+**Spread**:
+Two facing Pages seen in one camera frame. Read as one Page until the page-OCR stage 2 design decides otherwise.
+
+**Angle probe**:
+A cheap first guess at how the frame must be turned before OCR: text detection once, then recognition of a few long line crops at two candidate angles. It only nominates an angle; a full read must confirm it.
+
+**Remembered angle**:
+The frame rotation of the last sure page read, kept in memory for the session and tried first, while the text still lies where the Book was.
+
 **Correction**:
 A user's statement that a span of Page text is wrong and what it should be. Corrections are kept forever and feed the Lexicon.
 

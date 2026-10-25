@@ -62,23 +62,41 @@ async def snapshot(settings: Settings, *, show: bool = True) -> Path | None:
     return path
 
 
-def _ocr_parameters(settings: Settings, backend, data: bytes) -> None:
-    """The evaluation window: the parameters the page OCR runs with, and the score of every orientation (the
-    session stops at the first that reads like a page; this reads all four, so the choice can be seen)."""
+def _ocr_parameters(settings: Settings, backend) -> None:
+    """The evaluation window: the parameters the page OCR runs with (design 2026-10-25 O8)."""
     from leafi.services.ocr import rapidocr
 
     if not isinstance(backend, rapidocr.RapidOcr):
-        print(f"     backend {settings.ocr_backend}: no per-rotation scores")
+        print(f"     backend {settings.ocr_backend}: no per-angle scores")
         return
-    print(f"     params: {backend.version}, auto-rotate {'on' if backend.auto_rotate else 'off'}, "
-          f"MIN_GOOD_LINES {rapidocr.MIN_GOOD_LINES}, confident = conf >= 0.85 and > 3 chars, "
-          f"rotation order {rapidocr.ROTATIONS}")
-    eng = backend._load()
-    scores = []
-    for angle in (0, *rapidocr.ROTATIONS):
-        res = rapidocr.to_result(eng(data if angle == 0 else rapidocr.rotated(data, angle)))
-        scores.append(f"{angle}°: {res.good_lines} confident / {len(res.lines)}")
-    print(f"     rotations: {', '.join(scores)}")
+    print(f"     params: {backend.version}, OCR_ROTATIONS {','.join(map(str, backend.rotations))}, probe "
+          f"{rapidocr.PROBE_K} lines, line classifier off, a pass is a page with >= {rapidocr.MIN_BODY} wide "
+          f"confident lines (conf >= 0.85, > 3 chars) scoring >= {rapidocr.MIN_SCORE:.0f}, sure when the "
+          f"runner-up <= {rapidocr.MARGIN} x best")
+
+
+def report_ocr(res, seconds: float, path) -> int:
+    """Print what the backend did and chose; run no engine here, so the console shows the session's own choice."""
+    import statistics
+
+    if res.probe is not None:
+        nominee, scores, secs = res.probe
+        shown = ", ".join(f"{a}°: {s:.0f}" for a, s in scores.items()) or "no line-like boxes"
+        print(f"     probe: {shown} -> {f'{nominee}°' if nominee is not None else 'none'} ({secs:.2f}s)")
+    for p in res.passes:
+        print(f"     pass {p.angle:>3}° {p.kind:<10} score {p.score:6.1f}, wide {p.wide}/{p.total}, {p.seconds:.2f}s")
+    body = [ln for ln in res.lines if ln.body]
+    height = f", body line height {statistics.median(ln.height for ln in body):.0f} px" if body else ""
+    ok = res.state == "sure" and len(body) >= 3
+    verdict = "ok  " if ok else "WEAK"
+    print(f"{verdict} {res.state}, rotation {res.rotation}°, {len(res.lines)} lines, {len(body)} body lines"
+          f"{height}, {seconds:.1f}s ({path})")
+    for ln in res.lines:
+        print(f"  {ln.conf:.2f}  {ln.text}")
+    if not ok:
+        print("     not sure: lay the book flat, hands off, page filling a third of the frame; text under ~15 px "
+              "tall reads poorly")
+    return 0 if ok else 1
 
 
 async def ocr(settings: Settings, file: Path | None) -> int:
@@ -93,19 +111,14 @@ async def ocr(settings: Settings, file: Path | None) -> int:
         print(f"FAIL ocr {settings.ocr_backend}: {state} {detail}")
         return 1
     backend = ocr_service.REGISTRY.create(settings.ocr_backend, settings)
-    data = Path(path).read_bytes()
-    _ocr_parameters(settings, backend, data)
+    _ocr_parameters(settings, backend)
     t = time.monotonic()
-    res = await backend.read(Frame(data))
-    lines = ocr_service.reading_order(res.lines)
-    verdict = "ok  " if res.good_lines >= 8 else "WEAK"
-    print(f"{verdict} {len(lines)} lines, {res.good_lines} confident, rotation {res.rotation}°, "
-          f"{time.monotonic() - t:.1f}s ({path})")
-    for ln in lines:
-        print(f"  {ln.conf:.2f}  {ln.text}")
-    if verdict == "WEAK":
-        print("     fewer than 8 confident lines: lay the book flat, hands off, page filling a third of the frame")
-    return 0 if verdict == "ok  " else 1
+    try:
+        res = await backend.read(Frame(Path(path).read_bytes()), purpose="page")
+    finally:
+        if hasattr(backend, "aclose"):
+            await backend.aclose()
+    return report_ocr(res, time.monotonic() - t, path)
 
 
 async def mic(settings: Settings, seconds: float = 3.0) -> int:

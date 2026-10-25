@@ -70,7 +70,16 @@ def test_lists_are_written_in_option_order_and_reject_unknown_or_repeated_items(
 
 @pytest.mark.parametrize("value", ["off", "1", "yes", "T"])
 def test_bool_values_are_only_the_offered_spellings(env, tmp_path, value):
-    assert "OCR_AUTO_ROTATE" in save(tmp_path, {"OCR_AUTO_ROTATE": {"op": "set", "value": value}}).body["errors"]
+    assert "AUDIO_KEEP_CLIPS" in save(tmp_path, {"AUDIO_KEEP_CLIPS": {"op": "set", "value": value}}).body["errors"]
+
+
+def test_ocr_rotations_keep_their_order_and_refuse_bad_values(env, tmp_path):
+    """OCR design 2026-10-25 O1: a `text` key with a validator, because the `list` type would re-sort the angles."""
+    assert save(tmp_path, {"OCR_ROTATIONS": {"op": "set", "value": "270,90,0"}}).body["ok"] is True
+    assert dotenv_values(env)["OCR_ROTATIONS"] == "270,90,0"
+    for bad in ("45", "90,90", " , "):
+        assert "OCR_ROTATIONS" in save(tmp_path, {"OCR_ROTATIONS": {"op": "set", "value": bad}}).body["errors"]
+    assert "OCR_ROTATIONS" in save(tmp_path, {"OCR_ROTATIONS": {"op": "empty"}}).body["errors"]
 
 
 def test_the_cli_removing_a_retired_key_reports_an_unreadable_env(tmp_path, monkeypatch, capsys):

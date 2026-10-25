@@ -70,8 +70,16 @@ def _run_checks_build(field, text, monkeypatch):
     return seen
 
 
+def _run_rapidocr(field, text, monkeypatch):
+    from leafi.core.config import Settings
+    from leafi.services.ocr.rapidocr import RapidOcr
+
+    return RapidOcr(Settings(_env_file=None, **{field: text})).rotations
+
+
 # How to drive each consumer the manifest names; a new consumer must be added here, so its binding is tested.
 CONSUMERS = {
+    "leafi.services.ocr.rapidocr:RapidOcr": _run_rapidocr,
     "agent.config:Settings.parsed_weekly_report": _run_settings_method("parsed_weekly_report"),
     "agent.config:Settings.parsed_schedule": _run_settings_method("parsed_schedule"),
     "leafi.ops.timing:resolve": _run_timing,
@@ -84,6 +92,7 @@ SENTINELS = {
     "leafi.ops.timing:parse_grace": ({"camera": 95.0}, lambda t, s: t.grace["camera"] == 95.0),
     "leafi.ops.timing:parse_backoff": ((6.0, 30.0, 120.0, 300.0), lambda t, s: t.keep_backoff_s == s),
     "leafi.ops.checks:parse_active_hours": ((3, 4), lambda seen, s: seen == [s]),
+    "leafi.services.ocr.rapidocr:parse_rotations": ((180,), lambda rotations, s: rotations == s),
 }
 BOUND = [k for k in envedit.load()[0].keys.values() if k.validator]
 

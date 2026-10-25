@@ -26,7 +26,7 @@ class MockOcr:
     def __init__(self) -> None:
         self.reads = 0
 
-    async def read(self, frame: Frame) -> OcrResult:
+    async def read(self, frame: Frame, *, purpose: str = "page") -> OcrResult:
         self.reads += 1
         info = _info(frame)
         text = info.get("leafi:ocr", info.get("leafi:text", ""))
@@ -37,6 +37,9 @@ class MockOcr:
     async def barcodes(self, frame: Frame) -> list[str]:
         isbn = _info(frame).get("leafi:isbn")
         return [isbn] if isbn else []
+
+    async def aclose(self) -> None:
+        return None
 
 
 def create(settings) -> MockOcr:

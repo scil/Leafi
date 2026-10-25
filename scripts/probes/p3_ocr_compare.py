@@ -36,9 +36,10 @@ WIDTHS = (1920, 2304)
 
 
 def engines():
+    """Its own engines, line classifier on as in the recorded P-3 numbers (the session's backend runs it off)."""
     from leafi.services.ocr import rapidocr as backend
 
-    return {v: backend.engine(v) for v in backend.VERSIONS}
+    return {v: backend.engine(v, use_cls=True) for v in backend.VERSIONS}
 
 
 def run(engine, data: bytes) -> tuple[OcrResult, float]:
@@ -62,7 +63,7 @@ def report_image(name: str, data: bytes, truth: str | None, engs) -> None:
     print(f"\n### {name}  sha256 {hashlib.sha256(data).hexdigest()[:16]}  {len(data)/1024:.0f} KiB")
     for label, eng in engs.items():
         res, dt = run(eng, data)
-        number, body = split_number([ln.text for ln in res.lines])
+        number, body = split_number(res.lines, 0.85)
         text = "\n".join(body)
         acc = ""
         if truth:

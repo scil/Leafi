@@ -89,6 +89,9 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
     except learner_store.LearnerChoice as e:
         print(f"Leafi: {e}")
         return 2
+    finally:
+        if hasattr(ocr, "aclose"):
+            await ocr.aclose()  # a read still running in the executor finishes before the loop ends (design O5)
     print(f"session {sid} saved to {settings.db_path}")
     return 0
 

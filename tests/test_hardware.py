@@ -56,9 +56,8 @@ async def test_sherpa_transcribes_a_kokoro_sentence_and_alignment_commits_it(hw_
 
 
 async def test_rapidocr_reads_a_sideways_rendered_page(hw_settings):
-    """P-3: the desk book lay at 270° to the camera. A crisp render is read at 0° by RapidOCR's own line
-    orientation handling (rotation stays 0); the real capture needed the rotation pass (unit-tested with a fake
-    engine in tests/test_ocr_pipeline.py). Either way the words must come out."""
+    """P-3: the desk book lay at 270° to the camera. With the line classifier off and only wide lines counted
+    (OCR design 2026-10-25 O2), the page is read upright at 270°, sure, by the probe or the scan."""
     import io
 
     from PIL import Image
@@ -70,9 +69,30 @@ async def test_rapidocr_reads_a_sideways_rendered_page(hw_settings):
     img = Image.open(io.BytesIO(render(PAGES[0], number=1, width=1600).data)).rotate(90, expand=True)
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=92)
-    res = await ocr.REGISTRY.create("rapidocr", hw_settings).read(Frame(buf.getvalue()))
-    assert res.good_lines >= 3 and res.rotation in (0, 270)
+    backend = ocr.REGISTRY.create("rapidocr", hw_settings)
+    res = await backend.read(Frame(buf.getvalue()))
+    await backend.aclose()
+    assert res.good_lines >= 3 and res.rotation == 270 and res.state == "sure"
     assert "red kite" in res.text and res.confidence >= 0.9
+
+
+@pytest.mark.parametrize("turn", [90, 180, 270])
+async def test_rapidocr_reads_a_turned_page_upright_with_all_four_angles_listed(hw_settings, turn):
+    import io
+
+    from PIL import Image
+
+    from leafi.core.ports import Frame
+    from leafi.services import ocr
+    from tests.fixtures.pages import PAGES, render
+
+    img = Image.open(io.BytesIO(render(PAGES[1], width=1600).data)).rotate(turn, expand=True)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=92)
+    backend = ocr.REGISTRY.create("rapidocr", hw_settings.model_copy(update={"ocr_rotations": "0,90,180,270"}))
+    res = await backend.read(Frame(buf.getvalue()))
+    await backend.aclose()
+    assert res.rotation == (360 - turn) % 360 and res.state == "sure" and "found a shell" in res.text
 
 
 async def test_sherpa_returns_nothing_for_short_silence_and_noise(hw_settings):

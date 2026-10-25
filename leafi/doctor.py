@@ -185,6 +185,22 @@ def removed_keys_note(env_file: Path = Path(".env")) -> str | None:
             "whoever said it) and the value is ignored: delete the line(s).")
 
 
+RENAMED_ENV_KEYS = {"OCR_AUTO_ROTATE": "OCR_ROTATIONS"}  # page OCR design 2026-10-25 O1
+
+
+def renamed_keys_note(env_file: Path = Path(".env")) -> str | None:
+    """A NOTE naming retired `.env` keys that a newer key replaced: the old value is ignored."""
+    if not env_file.exists():
+        return None
+    from dotenv import dotenv_values
+
+    values = dotenv_values(env_file, encoding="utf-8")
+    left = [f"{old} (now {new})" for old, new in RENAMED_ENV_KEYS.items() if old in values]
+    if not left:
+        return None
+    return f"NOTE: .env still sets {', '.join(left)}; the old key is ignored: delete it and set the new one."
+
+
 def wordlist_line(settings: Settings) -> str:
     from leafi.services.wordinfo import WORDLIST_FILES
 
@@ -218,6 +234,8 @@ def report(settings: Settings) -> str:
     if settings.pron_auto_judge:
         lines.append("NOTE: PRON_AUTO_JUDGE is on; it requires the evaluation threshold in ADR-0011.")
     if (note := removed_keys_note()) is not None:
+        lines.append(note)
+    if (note := renamed_keys_note()) is not None:
         lines.append(note)
     return "\n".join(lines)
 
