@@ -5,9 +5,18 @@
 #   scripts\evals\ocr\stack.ps1 fiftyone  FiftyOne app on 127.0.0.1:19151 (background, .venv-eval)
 #   scripts\evals\ocr\stack.ps1 status    which ports answer
 #   scripts\evals\ocr\stack.ps1 down      stop the containers (data volumes stay)
+#   scripts\evals\ocr\stack.ps1 start     up + mlflow + fiftyone (a server already answering is left alone)
+#   scripts\evals\ocr\stack.ps1 stop      down + stop the MLflow and FiftyOne processes
+#   scripts\evals\ocr\stack.ps1 add-snapshot   copy cache\checks\snapshot.jpg into the photo set, then labels push
+#   scripts\evals\ocr\stack.ps1 labels-push | labels-pull   Label Studio tasks / annotations (labels.py)
+#   scripts\evals\ocr\stack.ps1 run -Pipeline default|probe-k2|scan-only   one evaluation run (run.py)
 #
 # Data and secrets live in the main checkout's gitignored cache\evals\ (stack.env is created on first `up`).
-param([Parameter(Mandatory)][ValidateSet('up', 'down', 'mlflow', 'fiftyone', 'status')][string]$Action)
+param(
+    [Parameter(Mandatory)][ValidateSet('up', 'down', 'mlflow', 'fiftyone', 'status', 'start', 'stop', 'add-snapshot',
+        'labels-push', 'labels-pull', 'run')][string]$Action,
+    [ValidateSet('default', 'probe-k2', 'scan-only')][string]$Pipeline = 'default'
+)
 $ErrorActionPreference = 'Stop'
 
 $here = $PSScriptRoot
@@ -57,29 +66,89 @@ function Test-Port([int]$port) {
     try { $c.ConnectAsync('127.0.0.1', $port).Wait(500) -and $c.Connected } catch { $false } finally { $c.Dispose() }
 }
 
+function Start-Detached([string]$cmdline, [string]$log) {
+    # Win32_Process.Create: a new process that inherits no handle of ours. Start-Process would hand the server our
+    # stdout pipe, and a caller reading that pipe (the Obsidian console, `| Select`) would wait for the server to exit.
+    # The environment comes from the WMI service, not from us, so the telemetry switches go on the command line.
+    $vars = 'set MLFLOW_DISABLE_TELEMETRY=true&& set DO_NOT_TRACK=true&& set FIFTYONE_DO_NOT_TRACK=true&& ' +
+            "set MLFLOW_DISABLE_AGENT_HINT=1&& set FIFTYONE_DATABASE_DIR=$env:FIFTYONE_DATABASE_DIR&& "
+    $full = "cmd.exe /d /c `"$vars$cmdline > `"$log`" 2>&1`""
+    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $full; CurrentDirectory = $root }
+    if ($r.ReturnValue -ne 0) { throw "Win32_Process.Create returned $($r.ReturnValue)" }
+}
+
+function Start-MLflow {
+    if (Test-Port 19500) { Write-Host 'MLflow: already up, http://127.0.0.1:19500'; return }
+    $m = Join-Path $evals 'mlflow'
+    New-Item -ItemType Directory -Force $m | Out-Null
+    $db = 'sqlite:///' + ((Join-Path $m 'mlflow.db') -replace '\\', '/')
+    Start-Detached ("`"$py`" -m mlflow server --host 127.0.0.1 --port 19500 --workers 1 --backend-store-uri $db " +
+        "--artifacts-destination `"$(Join-Path $m 'artifacts')`"") (Join-Path $evals 'logs\mlflow.log')
+    Write-Host 'MLflow: http://127.0.0.1:19500'
+}
+
+function Start-FiftyOne {
+    if (Test-Port 19151) { Write-Host 'FiftyOne: already up, http://127.0.0.1:19151'; return }
+    Start-Detached "`"$py`" `"$(Join-Path $here 'fo_app.py')`"" (Join-Path $evals 'logs\fiftyone.log')
+    Write-Host 'FiftyOne: http://127.0.0.1:19151 (ready after about 20 s)'
+}
+
+function Stop-HostServers {
+    # The top .venv-eval launcher of each server; /T takes its children (the base Python, uvicorn, mongod) with it.
+    $venv = Join-Path $root '.venv-eval'
+    $all = Get-CimInstance Win32_Process
+    $tops = $all | Where-Object {
+        $_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv) -and $_.CommandLine -and
+        ($_.CommandLine.Contains('mlflow server') -or $_.CommandLine.Contains('fo_app.py'))
+    }
+    $ids = @($tops.ProcessId)
+    $tops = $tops | Where-Object { $ids -notcontains $_.ParentProcessId }
+    foreach ($p in $tops) { taskkill /T /F /PID $p.ProcessId | Out-Null; Write-Host "stopped pid $($p.ProcessId)" }
+    if (-not $tops) { Write-Host 'MLflow / FiftyOne: not running' }
+}
+
+function Show-Status {
+    foreach ($p in @(@('Langfuse', 19300), @('Langfuse MinIO', 19090), @('Phoenix', 19006), @('Label Studio', 19080),
+            @('MLflow', 19500), @('FiftyOne', 19151))) {
+        '{0,-15} {1,5}  {2}' -f $p[0], $p[1], $(if (Test-Port $p[1]) { 'up' } else { 'down' })
+    }
+}
+
+function Invoke-Py([string[]]$ArgList) {
+    & $py -W ignore @ArgList
+    if ($LASTEXITCODE) { exit $LASTEXITCODE }
+}
+
 $compose = @('compose', '-f', (Join-Path $here 'docker-compose.yml'), '--env-file', $envFile)
 switch ($Action) {
     'up' { Write-StackEnv; docker @compose up -d }
     'down' { docker @compose down }
-    'mlflow' {
-        $m = Join-Path $evals 'mlflow'
-        New-Item -ItemType Directory -Force $m | Out-Null
-        $db = 'sqlite:///' + ((Join-Path $m 'mlflow.db') -replace '\\', '/')
-        Start-Process -WindowStyle Hidden -FilePath $py -ArgumentList @(
-            '-m', 'mlflow', 'server', '--host', '127.0.0.1', '--port', '19500', '--workers', '1',
-            '--backend-store-uri', $db, '--artifacts-destination', (Join-Path $m 'artifacts')) `
-            -RedirectStandardOutput (Join-Path $evals 'logs\mlflow.out') -RedirectStandardError (Join-Path $evals 'logs\mlflow.err')
-        Write-Host 'MLflow: http://127.0.0.1:19500'
+    'mlflow' { Start-MLflow }
+    'fiftyone' { Start-FiftyOne }
+    'status' { Show-Status }
+    'start' {
+        Write-StackEnv
+        docker @compose up -d 2>&1 | Select-Object -Last 1
+        Start-MLflow
+        Start-FiftyOne
+        for ($t = 0; $t -lt 60 -and -not ((Test-Port 19500) -and (Test-Port 19151)); $t += 3) { Start-Sleep -Seconds 3 }
+        Show-Status
     }
-    'fiftyone' {
-        Start-Process -WindowStyle Hidden -FilePath $py -ArgumentList @((Join-Path $here 'fo_app.py')) `
-            -RedirectStandardOutput (Join-Path $evals 'logs\fiftyone.out') -RedirectStandardError (Join-Path $evals 'logs\fiftyone.err')
-        Write-Host 'FiftyOne: http://127.0.0.1:19151'
+    'stop' { docker @compose down 2>&1 | Select-Object -Last 1; Stop-HostServers }
+    'add-snapshot' {
+        $src = Join-Path $root 'cache\checks\snapshot.jpg'
+        if (-not (Test-Path $src)) { Write-Host "No snapshot yet: take one with the console's camera snapshot button."; exit 1 }
+        $cam = Join-Path $photos 'camera'
+        New-Item -ItemType Directory -Force $cam | Out-Null
+        $hash = (Get-FileHash $src).Hash
+        $same = Get-ChildItem $cam -File | Where-Object { (Get-FileHash $_.FullName).Hash -eq $hash } | Select-Object -First 1
+        if ($same) { Write-Host "Already in the set as camera/$($same.Name)"; exit 0 }
+        $name = 'snap-' + (Get-Item $src).LastWriteTime.ToString('yyyyMMdd-HHmmss') + '.jpg'
+        Copy-Item $src (Join-Path $cam $name)
+        Write-Host "Added camera/$name"
+        Invoke-Py @((Join-Path $here 'labels.py'), 'push')
     }
-    'status' {
-        foreach ($p in @(@('Langfuse', 19300), @('Langfuse MinIO', 19090), @('Phoenix', 19006), @('Label Studio', 19080),
-                @('MLflow', 19500), @('FiftyOne', 19151))) {
-            '{0,-15} {1,5}  {2}' -f $p[0], $p[1], $(if (Test-Port $p[1]) { 'up' } else { 'down' })
-        }
-    }
+    'labels-push' { Invoke-Py @((Join-Path $here 'labels.py'), 'push') }
+    'labels-pull' { Invoke-Py @((Join-Path $here 'labels.py'), 'pull') }
+    'run' { Invoke-Py @((Join-Path $here 'run.py'), '--pipeline', $Pipeline) }
 }

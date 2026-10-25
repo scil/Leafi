@@ -33,7 +33,11 @@ scripts\evals\ocr\stack.ps1 fiftyone      # FiftyOne app
 scripts\evals\ocr\netwatch.ps1 -Seconds 300 [-Control]          # egress proof
 ```
 
-(`.venv-eval` lives in the main checkout; from a worktree use its full path.)
+(`.venv-eval` lives in the main checkout; from a worktree use its full path.) The same steps are buttons in the
+owner's Obsidian console, 评测 tab, subgroup "OCR 评测工具(试用)" (keys `eval-*` of
+`scripts/win/run_for_obsidian_console.ps1` → `stack.ps1 start | stop | status | add-snapshot | labels-push |
+labels-pull | run -Pipeline …`, and `netwatch.ps1`). `stack.ps1` starts MLflow and FiftyOne through
+`Win32_Process.Create`, so the console's output pipe is not held open by the servers.
 
 ### 1.1 The run
 
@@ -223,9 +227,9 @@ they test the workflow, not the reader.
 | Langfuse UI | `img.shields.io` stars badge: **open, owner's choice** |
 
 The two open items are browser requests for page decoration: they carry no photo, text or score, but they do
-tell Google and shields.io this PC's address and when a tool page is open. Ways to close them, for the owner to
-choose: block the two hosts in the browser or the hosts file, or patch the installed FiftyOne page (it is
-rewritten by every upgrade). Neither is applied.
+tell Google and shields.io this PC's address and when a tool page is open. They could be closed by blocking the
+two hosts in the browser or the hosts file, or by patching the installed FiftyOne page (rewritten by every
+upgrade). **Owner decision, 2026-10-25: do not block.**
 
 ## 6. Recommendation
 
