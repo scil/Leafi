@@ -23,6 +23,12 @@ log = logging.getLogger("leafi.hub")
 
 CAPABILITIES = {"eye", "ear", "mouth", "face", "presence", "notifier", "listener"}
 VOICE_POLICIES = {"all", "primary", "none"}
+
+
+def main_capable(listener: Any) -> bool:
+    """Whether a Listener may be the study listener or replace a lost Ear (ADR-0017 §1 as amended 2026-10-25): every
+    one may, except a device that says it may not (`main_capable = False`: the session panel)."""
+    return bool(getattr(listener, "main_capable", True))
 _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
 
 
@@ -165,14 +171,17 @@ class Hub:
 
     # ---- selection
     def listener(self) -> Listener:
-        if self.study_listener and self.study_listener in self.listeners:
-            return self.listeners[self.study_listener]
-        for lis in self.listeners.values():
+        """The study listener: the configured one, else the first typed one, else the first; never one that is not
+        `main_capable` (the session panel, ADR-0017 §1 as amended 2026-10-25)."""
+        leads = {n: lis for n, lis in self.listeners.items() if main_capable(lis)}
+        if self.study_listener and self.study_listener in leads:
+            return leads[self.study_listener]
+        for lis in leads.values():
             if not getattr(lis, "is_voice", False):
                 return lis
-        if self.listeners:
-            return next(iter(self.listeners.values()))
-        raise LookupError("no Listener configured (the console device provides one)")
+        if leads:
+            return next(iter(leads.values()))
+        raise LookupError("no main-capable Listener configured (the console device provides one)")
 
     def eye(self) -> Eye | None:
         if self.study_eye:

@@ -148,4 +148,10 @@ mechanism; this table only lists the buttons.
   `Jump` at an activity's owned prompts and listens, `activity_over()` true while a want is set, `progress` kept by
   each jumpable activity, every negotiate exit and the offer listen checked first, no Brain `sequence` and no
   continuation while a want is set, `Inputs.accepting`; `tests/test_do.py` (15 tests); full suite 1155 passed.
-- [ ] Design steps 3–8.
+- [x] 2026-10-25 design step 3: several typed sources — `Inputs.control_sources` (one reader each,
+  `control:<name>`), the main source tracked by name (`main_name`, replacing `_console_is_main`), `_speak` asks every
+  typed source; `core.hub.main_capable`: `Hub.listener()`, `app.build` (the console is added when no main-capable
+  listener exists) and the Ear-loss switch never choose a non-main-capable source; the console's `eof_stops` option;
+  `Env.control_sources`; `tests/test_typed_sources.py` (7 tests); full suite 1164 passed. Ruff reports 9 older
+  findings in untouched files (`envfile.py`, `envedit.py`, `runner.py`, `rapidocr.py`).
+- [ ] Design steps 4–8.

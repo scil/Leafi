@@ -52,6 +52,7 @@ class Env:
     settings: object  # the household Settings
     listener: object | None = None
     control_source: object | None = None
+    control_sources: list | None = None  # every typed source beside the main one; None: the Hub's (ADR-0017 §1)
     page_tracker: object | None = None
     ocr: object | None = None
     catalog: object | None = None
@@ -296,6 +297,7 @@ async def run_session(env: Env) -> int:
         latch.epoch.session_id, latch.epoch.learner_id = sid, guest
         lst = hs.load(store, guest)
         inputs = Inputs(hub=env.hub, latch=latch, store=store, listener=listener, control_source=env.control_source,
+                        control_sources=env.control_sources,
                         page_tracker=env.page_tracker, page_poll_s=cfg.page_poll_s, lease=lease)
         s = Session(store=store, latch=latch, ledger=Ledger(store, sid, lst.limits()), settings=lst, talk=inputs,
                     session_id=sid, learner_id=guest, brain=env.brain)

@@ -14,7 +14,7 @@ from typing import Any
 from leafi import bootstrap
 from leafi import devices as device_registry
 from leafi.core.config import Settings, env_lookup
-from leafi.core.hub import DevicesConfig, DeviceSpec, Hub, load_devices_config
+from leafi.core.hub import DevicesConfig, DeviceSpec, Hub, load_devices_config, main_capable
 from leafi.core.ports import Ear, Eye, Face, Listener, Mouth, Notifier
 
 log = logging.getLogger("leafi.app")
@@ -68,23 +68,27 @@ def build(
     for cap, named in (extra or {}).items():
         slots[cap].update(named)
 
-    if not slots["listener"] or not slots["face"]:
+    # The console comes whenever nothing else can lead: a panel alone is no study listener (ADR-0017 §1 as amended)
+    if not any(main_capable(lis) for lis in slots["listener"].values()) or not slots["face"]:
         from leafi.devices.console import ConsoleDevice
 
         console = ConsoleDevice("console")
         slots["listener"].setdefault("console", console)
         slots["face"].setdefault("console", console)
 
+    def leads() -> list[str]:
+        return [n for n, lis in slots["listener"].items() if main_capable(lis)]
+
     study_listener = cfg.study_listener
     if text_mode:
         slots["listener"] = {n: lis for n, lis in slots["listener"].items() if not getattr(lis, "is_voice", False)}
-        study_listener = next(iter(slots["listener"]), None)
-    elif study_listener not in slots["listener"]:
+        study_listener = next(iter(leads()), None)
+    elif study_listener not in leads():
         voice = _compose_voice_listener(settings, slots["ear"].get(study_listener or ""), warnings)
         if voice is not None:
             slots["listener"][study_listener] = voice
         else:
-            fallback = next(iter(slots["listener"]))
+            fallback = leads()[0]
             warnings.append(f"study listener {study_listener!r} unavailable; using {fallback!r} (text)")
             study_listener = fallback
 

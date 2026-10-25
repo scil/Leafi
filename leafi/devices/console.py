@@ -1,7 +1,9 @@
 """Typed console device: a Listener that yields typed Utterances and a Face that prints (H4).
 
 Always safe to leave on. stdin is read by one daemon thread started on the first read (no import-time
-side effects). End of input becomes `/stop`. Tests pass `lines=[...]` instead of stdin.
+side effects). End of input becomes `/stop`, unless the option `eof_stops` is false: then the console simply goes
+quiet (a session driven from the session panel without a terminal, panel design D2). Tests pass `lines=[...]`
+instead of stdin.
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ class ConsoleDevice:
             except TimeoutError:
                 return None
         if line is _EOF:
+            if not self.options.get("eof_stops", True):
+                await asyncio.Event().wait()  # quiet from now on; the session's cancellation ends the wait
             return typed_utterance("/stop", self.name, t)
         return typed_utterance(str(line).rstrip("\r\n"), self.name, t)
 

@@ -26,7 +26,7 @@ import anyio
 
 from leafi.core import alerts
 from leafi.core import lease as speech_lease
-from leafi.core.hub import Hub, ListeningGate
+from leafi.core.hub import Hub, ListeningGate, main_capable
 from leafi.core.ports import Display, ListenerLost, Utterance
 from leafi.core.text import typed_utterance
 from leafi.study import controls, phrases
@@ -66,16 +66,16 @@ def _is_offer(owner) -> bool:
 
 
 class Inputs:
-    def __init__(self, *, hub: Hub, latch: Latch, store, listener, control_source=None, page_tracker=None,
-                 page_poll_s: float = 1.0, lease: speech_lease.Lease | None = None) -> None:
+    def __init__(self, *, hub: Hub, latch: Latch, store, listener, control_source=None, control_sources=None,
+                 page_tracker=None, page_poll_s: float = 1.0, lease: speech_lease.Lease | None = None) -> None:
         self.hub, self.latch, self.store = hub, latch, store
         self.listener = listener
         self.voice = bool(getattr(listener, "is_voice", False))
-        if control_source is None:
-            control_source = listener if not self.voice else next(
-                (lis for lis in hub.listeners.values() if lis is not listener and not getattr(lis, "is_voice", False)),
-                None)
-        self.control_source = control_source
+        if control_sources is None:  # every typed source beside the main one (ADR-0017 §1 as amended 2026-10-25)
+            control_sources = [control_source] if control_source is not None else [
+                lis for lis in hub.listeners.values() if lis is not listener and not getattr(lis, "is_voice", False)]
+        self.control_sources = [c for c in control_sources if c is not listener]
+        self.main_name = "main"  # the reader whose silence is a timeout; the console's after a lost Ear
         self.gate = ListeningGate(listener)
         self.page_tracker, self.page_poll_s = page_tracker, page_poll_s
         self.lease = lease
@@ -86,7 +86,6 @@ class Inputs:
         self._want: dict[str, anyio.Event] = {}
         self._busy: dict[str, bool] = {}
         self._sources: dict[str, object] = {}
-        self._console_is_main = False  # after a lost Ear (text mode)
         self._owners: list[tuple[float, object]] = []  # D21: (since, prompt id) timeline
         self.late: list[_Item] = []  # pages and skips of ended prompts (D21)
         self.activity_started_at: float | None = None  # set by run_activity while an activity runs
@@ -94,12 +93,22 @@ class Inputs:
         self._waiting = 0  # depth of controls_only()
         self.accepting = True  # false once the session body ended: later lines are dropped (panel design D7)
 
+    @property
+    def control_source(self):
+        """The first typed source beside the main one (M6's single control source; tests set it)."""
+        return self.control_sources[0] if self.control_sources else None
+
+    @control_source.setter
+    def control_source(self, source) -> None:
+        self.control_sources = [source] if source is not None else []
+
     # ---- lifecycle
     def start(self) -> None:
-        """Spawn the readers, the page watcher and the lease watcher into the session's task group."""
+        """Spawn the readers (the main one, then one per typed source), the page watcher and the lease watcher into
+        the session's task group."""
         self._add("main", self.listener)
-        if self.control_source is not None and self.control_source is not self.listener:
-            self._add("control", self.control_source)
+        for i, source in enumerate(self.control_sources):
+            self._add(f"control:{getattr(source, 'name', None) or i}", source)
         if self.page_tracker is not None:
             self.latch.spawn(self._watch_page)
         if self.lease is not None:
@@ -167,7 +176,7 @@ class Inputs:
 
     async def _deliver(self, u: Utterance | None, name: str, asked: float) -> None:
         if u is None:
-            if name == "main" or self._console_is_main:  # as M6: only the main source's silence is a timeout
+            if name == self.main_name:  # as M6: only the main source's silence is a timeout
                 await self._send.send(_Item("timeout", None, self.owner_at(asked)))
             return
         owner = self.owner_at(u.ended_at if u.ended_at is not None else time.monotonic())
@@ -220,15 +229,15 @@ class Inputs:
         the stream before any line the console delivers next; "mic lost" is said by the main flow's next line."""
         log.error("voice listener lost: %s", err)
         alerts.insert(self.store, "study-mic", "event", "mic_lost")  # a code: `err` names the device (ADR-0016)
-        console = self.control_source if self.control_source is not None and \
-            not getattr(self.control_source, "is_voice", False) else None
+        # the first main-capable typed source leads (ADR-0017 §1 as amended): never the session panel
+        console = next((c for c in self.control_sources if not getattr(c, "is_voice", False) and main_capable(c)),
+                       None)
         if console is None:
             self.latch.terminate("listener_lost_no_console")
             return
         self.listener, self.voice, self.gate = console, False, ListeningGate(console)
-        self.control_source = console
         del self._sources["main"]  # this reader ends; the console reader now delivers the main input
-        self._console_is_main = True
+        self.main_name = next(n for n, src in self._sources.items() if src is console)
         self.latch.epoch.bump()
         self.notice = "mic_lost"
         self._send.send_nowait(_Switched(time.monotonic()))
@@ -363,8 +372,10 @@ class Inputs:
             await self.hub.show(Display("say", text, lang))
             return
         self.speaking = True
-        if self.control_source is not None and self._will_play():  # controls are read only while audio plays
-            self._request("control" if "control" in self._sources else "main")
+        if self._will_play():  # controls are read only while audio plays: every typed source, the main one too
+            for name, source in self._sources.items():
+                if not getattr(source, "is_voice", False):
+                    self._request(name)
         try:
             await self.gate.speak(self.hub, text, lang, slow=slow, book=book)
         finally:
