@@ -46,6 +46,7 @@ class Want:
     source: str
     owner: object = None
     at: float = 0.0
+    entry: dict | None = field(default=None, compare=False)  # its panel-log entry (a panel `/do`), for the fate
 
 
 @dataclass
@@ -67,6 +68,14 @@ class Epoch:
 
     def bump(self) -> None:
         self.turn_id += 1
+
+
+def set_fate(want: Want | None, fate: str, reason: str | None = None) -> None:
+    """What became of a panel `/do` (panel design D3): its log entry shows it; a console `/do` has none."""
+    if want is not None and want.entry is not None:
+        want.entry["fate"] = fate
+        if reason:
+            want.entry["reason"] = reason
 
 
 Versions = Callable[[], tuple[int, int]]
@@ -139,6 +148,7 @@ class Latch:
     def post_want(self, want: Want) -> None:
         if self.want is not None:
             log.info("want %s replaced by %s", self.want.kind, want.kind)
+            set_fate(self.want, "replaced")
         self.want = want
 
     def take_want(self) -> Want | None:

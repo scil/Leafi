@@ -86,6 +86,16 @@ def wait_or_end(s: Session) -> Run:
     return Run(end_activity(s) if s.previous_boundary_was_wait else wait_activity(s))
 
 
+def _fate(b, fate: str, reason: str | None = None) -> None:
+    """The wanted `/do`'s panel-log fate (panel design D3); a console or spoken choice has no entry."""
+    if b.want_entry is not None:
+        b.want_entry["fate"] = fate
+        if reason:
+            b.want_entry["reason"] = reason
+        if fate != "switched":  # a switched one stays: the soft deadline may still drop it (loop._body)
+            b.want_entry = None
+
+
 def _wanted_since(s: Session) -> bool:
     """A want is pending: the pass restarts and takes it, before any exit (§2.1 as amended 2026-10-25)."""
     return s.latch.want is not None
@@ -130,7 +140,7 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         if (want := s.latch.take_want()) is not None:  # a typed `/do` (§2.1 as amended 2026-10-25): a named choice
             s.latch.drain_skips()
             b.excluded.discard(want.kind)
-            b.wanted, b.wanted_by = want.kind, want.source
+            b.wanted, b.wanted_by, b.want_entry = want.kind, want.source, want.entry
         if b.wanted:
             a = await first_constructible(s, [learner_spec(s, b.wanted)], menu)
             s.checkpoint()
@@ -140,8 +150,11 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
                 continue  # a newer want arrived during construction
             if a is not None:
                 by = {"by": b.wanted_by} if b.wanted_by else {}
+                _fate(b, "switched")
                 return Run(replace(a, params=a.params | by, decided_by="learner", override="learner_choice"))
-            await talk.say(f"I can't {DESCRIBE.get(b.wanted, b.wanted)} right now.")
+            refusal = f"I can't {DESCRIBE.get(b.wanted, b.wanted)} right now."
+            _fate(b, "want_refused", refusal)
+            await talk.say(refusal)
             b.excluded.add(b.wanted)
             b.wanted = b.wanted_by = None
         if b.reask:

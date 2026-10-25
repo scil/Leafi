@@ -418,6 +418,8 @@ def _finish_candidate(w: World, mid: int, evidence: str, score: float | None) ->
         miscues.set_status(w.store, mid, status, reason=why, evidence=evidence if evidence != "none" else None,
                            score=score)
     rows._settle_token(w.store, mid)
+    if w.state is not None:
+        rows.settle_in(w.state, mid)  # the World's copy too, so the snapshot never shows it open (panel D3)
     return f"{status}:{why}"
 
 

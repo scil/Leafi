@@ -67,6 +67,8 @@ def adopt(s: Session, learner_id: int) -> bool:
         return False
     runtime.attribute(learner_id, s.session_id)
     s.learner_id = learner_id
+    row = learner_store.get(store, learner_id)  # the snapshot's label, read once here (panel design D3)
+    s.learner_label = {"kind": row["kind"], "name": row["display_name"]} if row is not None else s.learner_label
     s.settings = hs.load(store, learner_id)
     s.ledger.limits = s.settings.limits()
     e = s.latch.epoch

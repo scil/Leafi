@@ -154,4 +154,10 @@ mechanism; this table only lists the buttons.
   listener exists) and the Ear-loss switch never choose a non-main-capable source; the console's `eof_stops` option;
   `Env.control_sources`; `tests/test_typed_sources.py` (7 tests); full suite 1164 passed. Ruff reports 9 older
   findings in untouched files (`envfile.py`, `envedit.py`, `runner.py`, `rapidocr.py`).
-- [ ] Design steps 4–8.
+- [x] 2026-10-25 design step 4: `leafi/study/harness/snapshot.py` (memory only, plain JSON); `Session.log`,
+  `learner_label`, `hooks` and `changed()`; `Boundary.menu`; `World.printed`, `book_title`; `world.reading_counts`
+  (also used by `end_page_read`); `rows.settle_in` keeps `w.state` true after practice; `Inputs.panel_log` with each
+  panel line's fate, `last_line`, `listening`, `on_change`; `Want.entry` and `latch.set_fate` for `/do` fates.
+  Beyond the design's fate list: `stopped` (a panel `/stop`). `tests/test_snapshot.py` (5 tests, the store swapped
+  for one that fails on any use); full suite 1169 passed.
+- [ ] Design steps 5–8.

@@ -30,7 +30,7 @@ from leafi.study.harness import settings as hs
 from leafi.study.harness.activities import KINDS
 from leafi.study.harness.identify import identify
 from leafi.study.harness.inputs import Inputs, StaleInput
-from leafi.study.harness.latch import Jump, Latch, Terminal
+from leafi.study.harness.latch import Jump, Latch, Terminal, set_fate
 from leafi.study.harness.ledger import Ledger
 from leafi.study.harness.menu import allowed
 from leafi.study.harness.negotiate import REOBSERVE, negotiate
@@ -111,6 +111,7 @@ async def identify_book(s: Session, w: World, env: Env) -> None:
             s.checkpoint()
         title = u.text.strip() if controls.of(u) is None else None
     w.book_id = books.find_or_create(s.store, title, isbn, language=env.settings.study_language)
+    w.book_title = title  # the snapshot's (panel design D3)
     s.store.execute("UPDATE reading_sessions SET book_id=? WHERE id=?", (w.book_id, s.session_id))
     if env.page_text is not None:
         w.pending = PageRequest(env.page_number, env.page_text)
@@ -157,10 +158,21 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
         log.warning("store busy: %s did not start", act.kind)
         return ActivityStatus.STORE_BUSY
     outcome = None
+    s.progress = {}
+    entry = {"id": aid, "kind": act.kind, "decided_by": act.decided_by, "params": params, "started": time.monotonic(),
+             "status": ActivityStatus.RUNNING.value, "outcome": None, "progress": s.progress}  # the snapshot's
+    s.log.append(entry)
+    s.changed()
+
+    def logged(status) -> None:
+        entry["status"], entry["outcome"] = ActivityStatus(status).value, outcome
+        w.inputs.activity_id = None
+        s.changed()
 
     def finish_now(status) -> ActivityStatus:
         """No awaiting: also used while the scope is being cancelled. Busy → kept for the next write."""
         w.inputs.activity_started_at = None
+        logged(status)
         try:
             rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id)
         except sqlite3.OperationalError as e:
@@ -172,7 +184,7 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
         return ActivityStatus(status)
 
     w.inputs.activity_started_at = time.monotonic()  # an Ear switch after this ends the activity (D21)
-    s.progress = {}
+    w.inputs.activity_id = aid
     try:
         status, outcome = await KINDS[act.kind](w, replace(act, params=params), aid)
     except StaleInput:
@@ -198,6 +210,7 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
     w.inputs.activity_started_at = None
     if s.latch.want is not None and status == ActivityStatus.COMPLETED:  # ended at its natural step for a want
         outcome = dict(outcome or {}) | {"ended_by": "do"}
+    logged(status)
     try:
         await busy.retry(lambda: rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id))
     except busy.StoreBusy:
@@ -324,6 +337,9 @@ async def run_session(env: Env) -> int:
             log.error("session failed", exc_info=eg)
             latch.terminate("internal_error")
         inputs.accepting = False  # the body is over: a later line has nobody to act on it (panel design D7)
+        set_fate(latch.want, "dropped", "stop" if latch.terminal == "stop" else "session_end")
+        s.changed()
+        inputs.changed()
         try:
             summ = finalize(s, w, env)
         except sqlite3.OperationalError as e:
@@ -391,6 +407,8 @@ async def _body(s: Session, w: World, env: Env) -> None:
         _drain_late(w)
         await w.refresh()
         menu = allowed(s)
+        s.boundary.menu = frozenset(menu)
+        s.changed()  # a boundary: the snapshot shows its menu (panel design D3)
         prop = None  # the default policy's arm: negotiate's default chain decides
         # ADR-0017 §3.3: the Brain proposes (M7 design D10); a pending want is a named choice, so no proposal
         if s.arm == "brain" and env.brain is not None and s.latch.want is None:
@@ -408,6 +426,8 @@ async def _body(s: Session, w: World, env: Env) -> None:
             await run_activity(s, w, act)  # record_boundary: the end row
             break
         if s.past_soft_deadline():
+            if s.boundary.want_entry is not None:  # a `/do` switched to, then lost to the deadline
+                s.boundary.want_entry.update(fate="dropped", reason="soft_deadline")
             break
         last = await run_activity(s, w, act)
         s.previous_boundary_was_wait = act.kind == "wait"

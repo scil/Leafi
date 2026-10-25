@@ -73,6 +73,13 @@ def practice_final(outcomes: list[str]) -> tuple[str, str]:
     return "unsure", "unclear"
 
 
+def settle_in(st: ReadingState, miscue_id: int) -> None:
+    """The miscue's token, still a candidate, becomes settled: in the stored state and in the World's (panel D3)."""
+    for t in st.tokens:
+        if t.miscue_id == miscue_id and t.status == "candidate":
+            t.status = "settled"
+
+
 def _settle_token(store: Store, miscue_id: int) -> None:
     row = store.one("SELECT pr.id, pr.reading_state, rev.text FROM miscues m JOIN page_reads pr ON pr.id = "
                     "m.page_read_id JOIN page_revisions rev ON rev.id = pr.page_revision_id WHERE m.id=?",
@@ -80,9 +87,7 @@ def _settle_token(store: Store, miscue_id: int) -> None:
     if row is None or not row["reading_state"]:
         return
     st = ReadingState.from_json(row["text"], loads(row["reading_state"]))
-    for t in st.tokens:
-        if t.miscue_id == miscue_id and t.status == "candidate":
-            t.status = "settled"
+    settle_in(st, miscue_id)
     store.execute("UPDATE page_reads SET reading_state=? WHERE id=?", (dumps(st.to_json()), row["id"]))
 
 

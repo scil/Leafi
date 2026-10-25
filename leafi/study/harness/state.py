@@ -6,6 +6,7 @@ store and the devices (`facts_fn`), so the decision code stays pure and testable
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -85,6 +86,8 @@ class Boundary:
     content_epoch: tuple | None = None           # the epoch `content` was made under; another epoch clears it
     moment: float | None = None                  # the `next_activity` moment every Brain call here shares
     wanted_by: str | None = None                 # the source of a `/do` that set `wanted` (panel design D7)
+    want_entry: dict | None = None               # that `/do`'s panel-log entry, whose fate negotiation sets
+    menu: frozenset = frozenset()                # the menu this boundary computed (the snapshot shows it)
 
 
 @dataclass
@@ -110,9 +113,21 @@ class Session:
     on_page: Callable[[Utterance], None] | None = None  # D21: a page turn heard at a boundary (the World's)
     pending_audit_brain: list = field(default_factory=list)  # D8: brain_calls rows a busy store kept back
     progress: dict = field(default_factory=dict)  # the running activity's completed steps (panel design D7)
+    # what the session panel's snapshot reads, kept in memory so it never queries the store (panel design D3)
+    log: list = field(default_factory=list)  # this session's activities: id, kind, decided_by, params, status, ...
+    learner_label: dict = field(default_factory=lambda: {"kind": "guest", "name": None})
+    hooks: list = field(default_factory=list)  # zero-argument callables: an activity started or ended, a boundary
 
     def facts(self) -> Facts:
         return self.facts_fn(self)
+
+    def changed(self) -> None:
+        """Tell the hooks that state the snapshot shows has changed; a failing hook is logged, never raised."""
+        for hook in self.hooks:
+            try:
+                hook()
+            except Exception:
+                logging.getLogger("leafi.harness").warning("session hook failed", exc_info=True)
 
     def epoch(self) -> tuple:
         return self.latch.epoch.key()

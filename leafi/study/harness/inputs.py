@@ -19,8 +19,9 @@ import contextlib
 import logging
 import math
 import time
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import anyio
 
@@ -48,6 +49,10 @@ class _Item:
     kind: str
     u: Utterance | None
     owner: object
+    entry: dict | None = field(default=None, compare=False)  # a panel line's log entry: its fate is set on use
+
+
+PANEL_LOG = 20  # panel lines kept for the snapshot (panel design D3)
 
 
 @dataclass(frozen=True)
@@ -92,6 +97,25 @@ class Inputs:
         self.notice: str | None = None  # a phrase the main flow says before its next line ("mic_lost")
         self._waiting = 0  # depth of controls_only()
         self.accepting = True  # false once the session body ended: later lines are dropped (panel design D7)
+        self.panel_log: deque[dict] = deque(maxlen=PANEL_LOG)  # each panel line and its fate (panel design D3)
+        self.activity_id: int | None = None  # the running activity's row, for the log (set by run_activity)
+        self.listening = False
+        self.last_line: str | None = None
+        self.on_change: Callable[[], None] | None = None  # the snapshot's "something changed" (set by the runner)
+
+    def changed(self) -> None:
+        if self.on_change is not None:
+            try:
+                self.on_change()
+            except Exception:
+                log.warning("input change hook failed", exc_info=True)
+
+    def _fate(self, entry: dict | None, fate: str, reason: str | None = None) -> None:
+        if entry is not None:
+            entry["fate"] = fate
+            if reason:
+                entry["reason"] = reason
+            self.changed()
 
     @property
     def control_source(self):
@@ -180,44 +204,56 @@ class Inputs:
                 await self._send.send(_Item("timeout", None, self.owner_at(asked)))
             return
         owner = self.owner_at(u.ended_at if u.ended_at is not None else time.monotonic())
+        entry = None
+        if u.source == controls.PANEL:  # one entry per panel line; its fate is set where the line is used
+            entry = {"at": time.monotonic(), "line": u.text, "activity_id": self.activity_id, "fate": "pending"}
+            self.panel_log.append(entry)
+            self.changed()
         ctl = controls.of(u)
         if ctl is not None and ctl.kind == "say":  # `/say TEXT`: TEXT as typed; from the panel, data (design D6)
             if not ctl.text:
+                self._fate(entry, "refused", "empty")
                 self._request(name)  # it satisfied no listen: read the source again
                 return
             u = typed_utterance(ctl.text, u.source, u.ended_at)
             ctl = controls.of(u)
         if not self.accepting:  # the session is ending: nobody will act on it (design D7)
             log.info("input after the session body ended dropped")
+            self._fate(entry, "refused", "session_end")
             return
         if ctl is not None and ctl.kind == "do":
-            self._take_do(ctl, u, owner)
+            self._take_do(ctl, u, owner, entry)
             self._request(name)  # it satisfied no listen: read the source again
             return
         if ctl is not None and ctl.kind == "stop":
+            self._fate(entry, "stopped")
             await self.hub.stop_speaking()
             self.latch.terminate("stop")
             return
         if ctl is not None and ctl.kind == "skip":
             if self.speaking and owner == self.current_owner:
+                self._fate(entry, "cut")
                 await self.hub.skip_current()  # during playback skip cuts the current line only
                 return
-            await self._send.send(_Item("skip", u, owner))  # posted when its listener takes it (D21)
+            await self._send.send(_Item("skip", u, owner, entry))  # posted when its listener takes it (D21)
             return
         kind = "page" if ctl is not None and ctl.kind == "page" else "utterance"
-        await self._send.send(_Item(kind, u, owner))
+        await self._send.send(_Item(kind, u, owner, entry))
 
-    def _take_do(self, ctl: controls.Control, u: Utterance, owner) -> None:
+    def _take_do(self, ctl: controls.Control, u: Utterance, owner, entry: dict | None = None) -> None:
         """`/do <kind>` (ADR-0017 §2.1 as amended): one slot, then a payload-free wake. Nothing touches speech: a
         line that is playing finishes. A `do` for a prompt that has ended is stale; an unknown kind is refused."""
         if owner is not None and owner != self.current_owner:
             log.info("stale /do dropped (prompt %s, now %s)", owner, self.current_owner)
+            self._fate(entry, "dropped_stale")
             return
         if ctl.text not in KINDS or ctl.text == "wait":
             log.info("/do refused: no activity kind %r", ctl.text)
+            self._fate(entry, "want_refused", "no such activity")
             return
-        self.latch.post_want(Want(ctl.text, u.source, owner, time.monotonic()))
+        self.latch.post_want(Want(ctl.text, u.source, owner, time.monotonic(), entry))
         self._send.send_nowait(_Item("wake", None, None))
+        self.changed()
 
     def _jump_due(self, owner) -> bool:
         """A want ends the running activity at its owned prompts and listens, never at a setup prompt."""
@@ -267,6 +303,15 @@ class Inputs:
         if self._recv.statistics().current_buffer_used == 0:  # an input already waiting answers first (as M6)
             for name in self._sources:
                 self._request(name)
+        self.listening = True
+        self.changed()
+        try:
+            return await self._take(timeout_s, owner, owned, accepts_page)
+        finally:
+            self.listening = False
+            self.changed()
+
+    async def _take(self, timeout_s: float | None, owner, owned: bool, accepts_page: bool) -> Utterance | None:
         with anyio.move_on_after(math.inf if timeout_s is None else timeout_s):
             while True:
                 item = await self._recv.receive()
@@ -285,8 +330,10 @@ class Inputs:
                 if owned and item.owner is not None and item.owner != owner:
                     if item.kind in ("page", "skip"):
                         self.late.append(item)  # D21: routed to the boundary or the activity, not lost
+                        self._fate(item.entry, "parked")
                     else:
                         log.info("stale input dropped (prompt %s, listening for %s)", item.owner, owner)
+                        self._fate(item.entry, "dropped_stale")
                     for name in self._sources:  # a source freed by the stale read is asked again (D21)
                         self._request(name)
                     continue
@@ -294,10 +341,13 @@ class Inputs:
                     return None
                 if item.kind == "skip":
                     self.latch.post_skip()
+                    self._fate(item.entry, "skipped")
                     return item.u
                 if item.kind == "page" and not accepts_page:
                     log.info("page turn ignored by a listen that does not take pages")
+                    self._fate(item.entry, "ignored")
                     continue
+                self._fate(item.entry, "turned" if item.kind == "page" else "answered")
                 return item.u
         return None
 
@@ -372,6 +422,8 @@ class Inputs:
             await self.hub.show(Display("say", text, lang))
             return
         self.speaking = True
+        self.last_line = text  # the snapshot's "what Leafi last said" (panel design D3)
+        self.changed()
         if self._will_play():  # controls are read only while audio plays: every typed source, the main one too
             for name, source in self._sources.items():
                 if not getattr(source, "is_voice", False):
@@ -380,6 +432,7 @@ class Inputs:
             await self.gate.speak(self.hub, text, lang, slow=slow, book=book)
         finally:
             self.speaking = False
+            self.changed()
 
     def _will_play(self) -> bool:
         return self.hub.policy != "none" and bool(self.hub.mouths) and self.hub.synthesizer is not None

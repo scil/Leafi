@@ -8,11 +8,12 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import get_args
 
 from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.core.wordinfo import NullWordInfo, WordInfo
 from leafi.study import controls, knowledge, pages
-from leafi.study.alignment import ReadingState, opened
+from leafi.study.alignment import ReadingState, Status, opened
 from leafi.study.harness import rows
 from leafi.study.harness.inputs import Inputs
 from leafi.study.harness.state import Facts, Session
@@ -26,6 +27,14 @@ class PageRequest:
     text: str | None = None
 
 
+def reading_counts(st: ReadingState) -> dict[str, int]:
+    """Tokens by ADR-0013 status (every status, zero when absent): the page read's counts and the snapshot's."""
+    counts = dict.fromkeys(get_args(Status), 0)
+    for t in st.tokens:
+        counts[t.status] = counts.get(t.status, 0) + 1
+    return counts
+
+
 class World:
     def __init__(self, *, s: Session, inputs: Inputs, settings, book_id: int | None = None,
                  word_info: WordInfo | None = None, anki=None, pron=None, page_tracker=None,
@@ -37,6 +46,8 @@ class World:
         self.anki, self.pron, self.page_tracker = anki, pron, page_tracker
         self.pending: PageRequest | None = page_request  # the page the learner turned to or typed
         self.page_id: int | None = None
+        self.printed: int | None = None  # the page's printed number, for the snapshot (panel design D3)
+        self.book_title: str | None = None
         self.rev: pages.Revision | None = None
         self.state: ReadingState | None = None
         self.read_id: int | None = None
@@ -215,6 +226,7 @@ class World:
         same = self.store.one("SELECT id, reading_state FROM page_reads WHERE cycle_id=? AND page_id=? "
                               "ORDER BY id DESC LIMIT 1", (cyc, page_id)) if cyc else None
         self.page_id, self.rev = page_id, rev
+        self.printed = self.store.one("SELECT printed_number FROM pages WHERE id=?", (page_id,))["printed_number"]
         if same is not None and same["reading_state"]:
             self.read_id = same["id"]
             self.state = ReadingState.from_json(rev.text, loads(same["reading_state"]))
@@ -263,7 +275,7 @@ class World:
         if self.read_id is None or self.state is None:
             return
         st = self.state
-        counts = {k: sum(1 for t in st.tokens if t.status == k) for k in ("committed", "settled", "unread")}
+        counts = reading_counts(st)
         self.store.execute(
             "UPDATE page_reads SET ended_at=?, tokens_committed=?, tokens_matched=?, tokens_unread=?, "
             "unaligned_words=?, reading_state=? WHERE id=?",
