@@ -1,4 +1,4 @@
-# Bring data\leafi.db to the latest schema (ADR-0018 section 7.2): first check that no Leafi process is running,
+﻿# Bring data\leafi.db to the latest schema (ADR-0018 section 7.2): first check that no Leafi process is running,
 # then `leafi backup`, then `leafi migrate`. It never stops anything itself: with a process running it lists it and
 # exits 1, and the owner stops services first (console 停止全部服务). `leafi migrate` also refuses on its own when
 # another process holds the database (the exclusive lock), so a process this check misses cannot slip through.

@@ -17,3 +17,16 @@ def test_entries_become_backends_and_ollama_stays_gated(caplog):
     assert isinstance(tiers["standard"][0][0], MockModel) and tiers["deep"] == []
     assert "gated until Ollama is measured" in caplog.text
     assert locality(fast[0], fast[1]) == "cloud" and locality(tiers["standard"][0][0], "m") == "local"
+
+
+def test_the_runner_gets_a_brain_only_when_a_tier_is_usable():
+    from leafi import app
+
+    claude = dict(brain_tier_fast="claude:claude-haiku-5-5", brain_tier_standard="claude:claude-sonnet-5-5",
+                  brain_tier_deep="claude:claude-opus-5-5")
+    assert app.build_brain(Settings(_env_file=None, anthropic_api_key="", **claude), None) is None
+    brain = app.build_brain(Settings(_env_file=None, anthropic_api_key="k", **claude), None)
+    assert brain.configured() == {"fast", "standard", "deep"}
+    mixed = app.build_brain(Settings(_env_file=None, anthropic_api_key="", **{**claude, "brain_tier_fast": "mock:m"}),
+                            None)
+    assert mixed.configured() == {"fast"}  # a keyless claude entry is dropped, a local one stays

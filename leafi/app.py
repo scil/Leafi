@@ -104,6 +104,21 @@ def build(
     return App(settings, cfg, hub, devices, warnings)
 
 
+def build_brain(settings: Settings, egress) -> Any | None:
+    """The study Brain from the tiers (M7 design D9, D10), or None when no tier has a usable backend; then every
+    session runs the default policy. A `claude:` entry needs ANTHROPIC_API_KEY, so without a key it is dropped."""
+    from leafi.services.brain import tiers as brain_tiers
+    from leafi.study.brain import call as bc
+
+    tiers, locality = brain_tiers.build(settings, egress)
+    if not settings.anthropic_api_key:
+        tiers = {t: [(b, m) for b, m in entries if getattr(b, "locality_destination", None) != "anthropic"]
+                 for t, entries in tiers.items()}
+    if not any(tiers.values()):
+        return None
+    return bc.Brain(tiers, locality=locality)
+
+
 def _construct(spec: DeviceSpec, settings: Settings, warnings: list[str]) -> Any | None:
     try:
         cls = device_registry.factory(spec.adapter)

@@ -44,5 +44,8 @@ switch ($Button) {
     'privacy-setup' { .venv\Scripts\python.exe -m leafi setup; Done }  # 隐私设置步骤
     'privacy-schools' { .venv\Scripts\python.exe -m leafi privacy schools; Done }  # 孩子的学校
     'privacy-terms' { .venv\Scripts\python.exe -m leafi privacy terms; Done }  # 受保护的名字
+    'study-pc' { cmd /c start "Leafi 读书 (PC 喇叭)" /d E:\GitHub\scil\Leafi cmd /k .venv\Scripts\python.exe -m leafi study --mouth pc; Done }  # 开始读书(PC 喇叭)
+    'study-camera' { cmd /c start "Leafi 读书 (摄像头喇叭)" /d E:\GitHub\scil\Leafi cmd /k .venv\Scripts\python.exe -m leafi study; Done }  # 开始读书(摄像头喇叭)
+    'brain-probe' { .venv\Scripts\python.exe scripts\probes\brain_compile.py; Done }  # Brain 连通测试
     default { Write-Output "Unknown console button: $Button"; exit 2 }
 }

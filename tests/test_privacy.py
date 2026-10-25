@@ -222,12 +222,21 @@ def test_no_network_text_session_completes_with_the_cloud_backend_configured(tmp
     page.write_text("The fox ran home. It was late.", encoding="utf-8")
     env = _env(tmp_path, ANTHROPIC_API_KEY="fake-key", BRAIN_BACKEND="claude", ANKI_URL="http://127.0.0.1:9",
                BRAIN_DEADLINE_S="5")
-    r = subprocess.run([sys.executable, "-m", "leafi", "study", "--text", "--book", "Offline", "--page-text",
-                        str(page), "--page", "1", "--learner", "Ada"], input=script, capture_output=True, text=True, cwd=tmp_path,
-                       env=env, timeout=120, encoding="utf-8")
-    assert r.returncode == 0, r.stderr[-2000:]
-    assert "session 1 saved" in r.stdout
-    assert "can't explain" in r.stdout  # the cloud call was denied → static fallback
+    # The reader types once the page is ready, as at the keyboard: with a Brain, lines piped ahead arrive during its
+    # `decide` wait and belong to that wait's prompt (M7 design D21), so they would never reach the reading.
+    p = subprocess.Popen([sys.executable, "-m", "leafi", "study", "--text", "--book", "Offline", "--page-text",
+                          str(page), "--page", "1", "--learner", "Ada"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True, cwd=tmp_path, env=env, encoding="utf-8")
+    out = []
+    for line in p.stdout:
+        out.append(line)
+        if "is ready" in line:
+            break
+    stdout, stderr = p.communicate(script, timeout=120)
+    stdout = "".join(out) + stdout
+    assert p.returncode == 0, stderr[-2000:]
+    assert "session 1 saved" in stdout
+    assert "can't explain" in stdout  # the cloud call was denied → static fallback
 
 
 def test_no_network_guard_denies_non_loopback_and_pronunciation_scores_offline(tmp_path):

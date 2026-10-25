@@ -68,11 +68,16 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
     from leafi.privacy import runtime
     from leafi.services.wordinfo import LocalWordInfo
 
+    from leafi import app as composition
+
     runtime.get(settings).start_detector()  # loads in a thread while the session starts (M7 design D8)
     lexicon = [r["word"] for r in store.all("SELECT DISTINCT word FROM lexicon")]
     page_text = args.page_text.read_text(encoding="utf-8") if args.page_text else None
-    # The Brain arrives with M7 (plan): until then every session runs the default policy, and code owns content.
+    # `--mock` never calls a model; otherwise the Brain sequences sessions when a tier is usable (M7b).
+    brain = None if args.mock else composition.build_brain(settings, runtime.get(settings))
+    log.info("study brain: %s", sorted(brain.configured()) if brain else "off (default policy)")
     env = loop.Env(store=store, hub=built.hub, settings=settings, page_tracker=tracker, ocr=ocr, catalog=catalog,
+                   brain=brain,
                    anki=None if args.mock else AnkiClient(settings.anki_url), pron=pron,
                    word_info=LocalWordInfo(settings.models_dir, lexicon), book_title=args.book, page_text=page_text,
                    page_number=args.page, learner=getattr(args, "learner", None))
