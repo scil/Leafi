@@ -25,3 +25,4 @@ tools/go2rtc/*.jpg
 models/
 .scratch/
 data/evals/
+.venv-eval/
