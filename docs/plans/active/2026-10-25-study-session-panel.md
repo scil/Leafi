@@ -144,4 +144,8 @@ mechanism; this table only lists the buttons.
   (2f6f55a).
 - [x] 2026-10-25 design step 1 (7e667d5): ADR-0017 §1, §2.1, §3.4 amended; `scoring.counts_as_answer` is the one
   predicate; `controls.of`, `/say`; every D8 site; `tests/test_panel_lines.py` (13 tests); full suite 1142 passed.
-- [ ] Design steps 2–8.
+- [x] 2026-10-25 design step 2: `/do <kind>` at safe points — `Latch.want` and `Jump`, a payload-free wake,
+  `Jump` at an activity's owned prompts and listens, `activity_over()` true while a want is set, `progress` kept by
+  each jumpable activity, every negotiate exit and the offer listen checked first, no Brain `sequence` and no
+  continuation while a want is set, `Inputs.accepting`; `tests/test_do.py` (15 tests); full suite 1155 passed.
+- [ ] Design steps 3–8.

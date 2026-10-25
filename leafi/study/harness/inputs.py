@@ -30,7 +30,8 @@ from leafi.core.hub import Hub, ListeningGate
 from leafi.core.ports import Display, ListenerLost, Utterance
 from leafi.core.text import typed_utterance
 from leafi.study import controls, phrases
-from leafi.study.harness.latch import Latch
+from leafi.study.harness.latch import Jump, Latch, Want
+from leafi.study.harness.status import KINDS
 
 log = logging.getLogger("leafi.harness.inputs")
 
@@ -60,6 +61,10 @@ class StaleInput(Exception):
     """The input source changed under the running activity: it ends `aborted_stale` (ADR-0017 §1)."""
 
 
+def _is_offer(owner) -> bool:
+    return isinstance(owner, tuple) and owner[:1] == ("offer",)
+
+
 class Inputs:
     def __init__(self, *, hub: Hub, latch: Latch, store, listener, control_source=None, page_tracker=None,
                  page_poll_s: float = 1.0, lease: speech_lease.Lease | None = None) -> None:
@@ -87,6 +92,7 @@ class Inputs:
         self.activity_started_at: float | None = None  # set by run_activity while an activity runs
         self.notice: str | None = None  # a phrase the main flow says before its next line ("mic_lost")
         self._waiting = 0  # depth of controls_only()
+        self.accepting = True  # false once the session body ended: later lines are dropped (panel design D7)
 
     # ---- lifecycle
     def start(self) -> None:
@@ -172,6 +178,13 @@ class Inputs:
                 return
             u = typed_utterance(ctl.text, u.source, u.ended_at)
             ctl = controls.of(u)
+        if not self.accepting:  # the session is ending: nobody will act on it (design D7)
+            log.info("input after the session body ended dropped")
+            return
+        if ctl is not None and ctl.kind == "do":
+            self._take_do(ctl, u, owner)
+            self._request(name)  # it satisfied no listen: read the source again
+            return
         if ctl is not None and ctl.kind == "stop":
             await self.hub.stop_speaking()
             self.latch.terminate("stop")
@@ -184,6 +197,23 @@ class Inputs:
             return
         kind = "page" if ctl is not None and ctl.kind == "page" else "utterance"
         await self._send.send(_Item(kind, u, owner))
+
+    def _take_do(self, ctl: controls.Control, u: Utterance, owner) -> None:
+        """`/do <kind>` (ADR-0017 §2.1 as amended): one slot, then a payload-free wake. Nothing touches speech: a
+        line that is playing finishes. A `do` for a prompt that has ended is stale; an unknown kind is refused."""
+        if owner is not None and owner != self.current_owner:
+            log.info("stale /do dropped (prompt %s, now %s)", owner, self.current_owner)
+            return
+        if ctl.text not in KINDS or ctl.text == "wait":
+            log.info("/do refused: no activity kind %r", ctl.text)
+            return
+        self.latch.post_want(Want(ctl.text, u.source, owner, time.monotonic()))
+        self._send.send_nowait(_Item("wake", None, None))
+
+    def _jump_due(self, owner) -> bool:
+        """A want ends the running activity at its owned prompts and listens, never at a setup prompt."""
+        setup = isinstance(owner, tuple) and owner[:1] == ("setup",)
+        return self.latch.want is not None and self.activity_started_at is not None and not setup
 
     def _listener_lost(self, err: BaseException) -> None:
         """Synchronous, before any await (D21 rev 8/9): the console becomes the main source and `Switched` is in
@@ -213,8 +243,15 @@ class Inputs:
         every item. An owned listen takes only items of its prompt (or of no prompt), parks a page or skip of an
         ended prompt in `late`, drops other stale items, and ignores a page unless `accepts_page`. An Ear switch
         raises StaleInput when an activity began before it, for a setup prompt, or for an unowned listen; at a
-        boundary it is absorbed (the epoch bump makes the boundary re-observe)."""
+        boundary it is absorbed (the epoch bump makes the boundary re-observe).
+
+        A want (ADR-0017 §2.1 as amended) raises `Jump` at an owned listen of a running activity, and returns None
+        to an offer's listen, which then takes the want; elsewhere a wake is ignored."""
         owned = owner is not _UNOWNED
+        if owned and self._jump_due(owner):
+            raise Jump()
+        if owned and self.latch.want is not None and _is_offer(owner):
+            return None
         if owned:
             self.present(owner)
         await self.hub.show(Display("listening", "listening"))
@@ -229,6 +266,12 @@ class Inputs:
                     setup = isinstance(owner, tuple) and owner[:1] == ("setup",)
                     if not owned or setup or (started is not None and started < item.at):
                         raise StaleInput("listener switched to the console")
+                    continue
+                if item.kind == "wake":  # carries no request: one that finds no want changes nothing
+                    if owned and self._jump_due(owner):
+                        raise Jump()
+                    if owned and self.latch.want is not None and _is_offer(owner):
+                        return None
                     continue
                 if owned and item.owner is not None and item.owner != owner:
                     if item.kind in ("page", "skip"):
@@ -251,7 +294,10 @@ class Inputs:
 
     async def ask(self, owner, text: str, lang: str = "en", *, book: bool = False, **kw) -> None:
         """A prompt (D21): `owner` is current from before its first word, so an answer typed while it plays is
-        its answer."""
+        its answer. A pending want ends the running activity here, before the prompt is said (its listen would end
+        it anyway, with no write between them)."""
+        if self._jump_due(owner):
+            raise Jump()
         self.present(owner)
         await self._speak(text, lang, book=book, **kw)
 

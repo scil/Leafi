@@ -280,5 +280,8 @@ class World:
         return self.s.cycle_id
 
     def activity_over(self) -> bool:
-        """`limits.activity_max_min`: the activity ends `completed` at its next natural step after it."""
+        """`limits.activity_max_min`, or a pending want (ADR-0017 §2.1 as amended 2026-10-25): the activity ends
+        `completed` at its next natural step, before it asks its next question."""
+        if self.s.latch.want is not None:
+            return True
         return time.monotonic() - self.activity_started >= 60.0 * self.s.settings["limits.activity_max_min"]

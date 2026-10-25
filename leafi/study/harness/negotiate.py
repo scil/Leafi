@@ -86,6 +86,11 @@ def wait_or_end(s: Session) -> Run:
     return Run(end_activity(s) if s.previous_boundary_was_wait else wait_activity(s))
 
 
+def _wanted_since(s: Session) -> bool:
+    """A want is pending: the pass restarts and takes it, before any exit (§2.1 as amended 2026-10-25)."""
+    return s.latch.want is not None
+
+
 def _exclude(s: Session, kind: str) -> None:
     if kind != "end":  # end is never excluded
         s.boundary.excluded.add(kind)
@@ -122,21 +127,30 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
     talk = s.talk
     st = s.settings
     while True:
+        if (want := s.latch.take_want()) is not None:  # a typed `/do` (§2.1 as amended 2026-10-25): a named choice
+            s.latch.drain_skips()
+            b.excluded.discard(want.kind)
+            b.wanted, b.wanted_by = want.kind, want.source
         if b.wanted:
             a = await first_constructible(s, [learner_spec(s, b.wanted)], menu)
             s.checkpoint()
             if s.epoch() != epoch:
                 return REOBSERVE
+            if _wanted_since(s):
+                continue  # a newer want arrived during construction
             if a is not None:
-                return Run(replace(a, decided_by="learner", override="learner_choice"))
+                by = {"by": b.wanted_by} if b.wanted_by else {}
+                return Run(replace(a, params=a.params | by, decided_by="learner", override="learner_choice"))
             await talk.say(f"I can't {DESCRIBE.get(b.wanted, b.wanted)} right now.")
             b.excluded.add(b.wanted)
-            b.wanted = None
+            b.wanted = b.wanted_by = None
         if b.reask:
             a = b.current
             b.reask = False
         else:
             if b.offers >= st["negotiation.max_offers"]:
+                if _wanted_since(s):
+                    continue
                 return wait_or_end(s)
             m = menu - b.excluded
             chain = default_chain(s, m - {"end"})
@@ -147,6 +161,8 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
             if s.epoch() != epoch:
                 return REOBSERVE
             s.latch.drain_skips()  # a skip before an offer is heard excludes nothing
+            if _wanted_since(s):
+                continue
             if a is None:
                 return wait_or_end(s)
             b.current = a
@@ -156,6 +172,8 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         if autonomy >= st["bands.announce"]:
             await talk.say(announcement(prop, a), epoch=epoch)  # D12: never spoken under a newer epoch
             s.checkpoint()
+            if _wanted_since(s):
+                continue  # the announced kind never starts over a want
             if s.take_skip():
                 _exclude(s, a.kind)
                 continue
@@ -170,6 +188,8 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         else:
             await talk.ask(owner, f"Would you like to {describe_choices(s, a, m, st['negotiation.choices'])}?")
         u = await talk.listen(float(st["negotiation.ask_s"]), owner, accepts_page=True)
+        if _wanted_since(s):
+            continue  # checked first: a wake is neither an answer nor a silence
         if u is not None and s.on_page is not None and (pc := controls.of(u)) is not None \
                 and pc.kind == "page":
             s.on_page(u)  # a page turn during an offer: the boundary re-observes for the new page (D21)
@@ -180,6 +200,8 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
             return REOBSERVE
         if s.take_skip() or c in ("skip", "no"):
             _exclude(s, a.kind)
+            continue
+        if _wanted_since(s):
             continue
         if c == "yes":
             return Run(a)
@@ -198,5 +220,7 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         b.silences += 1
         if b.silences <= st["negotiation.silence_reasks"]:
             b.reask = True
+            continue
+        if _wanted_since(s):
             continue
         return wait_or_end(s)

@@ -32,6 +32,22 @@ class Terminal(Exception):
         self.reason = reason
 
 
+class Jump(Exception):
+    """A want reached a safe point of the running activity (ADR-0017 §2.1 as amended 2026-10-25): the activity ends
+    `completed` and the boundary runs the wanted kind. Raised only where `StaleInput` may be raised: an owned prompt
+    or listen of the activity."""
+
+
+@dataclass(frozen=True)
+class Want:
+    """A typed `/do <kind>`: the one copy of the request (session panel design D7)."""
+
+    kind: str
+    source: str
+    owner: object = None
+    at: float = 0.0
+
+
 @dataclass
 class Epoch:
     """ADR-0017 §1: an item built under one epoch is dropped if the epoch has changed when it would be used."""
@@ -65,6 +81,7 @@ class Latch:
     tg: anyio.abc.TaskGroup | None = None
     hard_deadline: float = float("inf")  # time.monotonic() clock
     skips: deque = field(default_factory=deque)
+    want: Want | None = None  # one slot: a newer want replaces an older one
     versions: Versions | None = None  # (learner settings_version, household version); None in tests
     on_settings_change: Callable[[], None] | None = None
 
@@ -117,6 +134,16 @@ class Latch:
         n = len(self.skips)
         self.skips.clear()
         return n
+
+    # ---- the want slot (ADR-0017 §2.1 as amended 2026-10-25)
+    def post_want(self, want: Want) -> None:
+        if self.want is not None:
+            log.info("want %s replaced by %s", self.want.kind, want.kind)
+        self.want = want
+
+    def take_want(self) -> Want | None:
+        want, self.want = self.want, None
+        return want
 
     # ---- children and the deadline
     def spawn(self, fn: Callable[..., Awaitable[None]], *args) -> None:

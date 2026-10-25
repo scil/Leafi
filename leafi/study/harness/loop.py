@@ -30,7 +30,7 @@ from leafi.study.harness import settings as hs
 from leafi.study.harness.activities import KINDS
 from leafi.study.harness.identify import identify
 from leafi.study.harness.inputs import Inputs, StaleInput
-from leafi.study.harness.latch import Latch, Terminal
+from leafi.study.harness.latch import Jump, Latch, Terminal
 from leafi.study.harness.ledger import Ledger
 from leafi.study.harness.menu import allowed
 from leafi.study.harness.negotiate import REOBSERVE, negotiate
@@ -171,10 +171,14 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
         return ActivityStatus(status)
 
     w.inputs.activity_started_at = time.monotonic()  # an Ear switch after this ends the activity (D21)
+    s.progress = {}
     try:
         status, outcome = await KINDS[act.kind](w, replace(act, params=params), aid)
     except StaleInput:
         return finish_now(ActivityStatus.ABORTED_STALE)
+    except Jump:  # a want at a safe point (ADR-0017 §2.1 as amended): the completed steps are kept
+        outcome = dict(s.progress) | {"ended_by": "do"}
+        return finish_now(ActivityStatus.COMPLETED)
     except (Terminal, anyio.get_cancelled_exc_class()):
         finish_now(s.latch.status())
         raise
@@ -191,6 +195,8 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
         raise
     # any other BaseException is a process exit: the row stays `running` for startup recovery (§2, §8.5)
     w.inputs.activity_started_at = None
+    if s.latch.want is not None and status == ActivityStatus.COMPLETED:  # ended at its natural step for a want
+        outcome = dict(outcome or {}) | {"ended_by": "do"}
     try:
         await busy.retry(lambda: rows.finish_activity(s.store, aid, status, outcome, learner_id=s.learner_id))
     except busy.StoreBusy:
@@ -315,6 +321,7 @@ async def run_session(env: Env) -> int:
         except* Exception as eg:
             log.error("session failed", exc_info=eg)
             latch.terminate("internal_error")
+        inputs.accepting = False  # the body is over: a later line has nobody to act on it (panel design D7)
         try:
             summ = finalize(s, w, env)
         except sqlite3.OperationalError as e:
@@ -383,7 +390,8 @@ async def _body(s: Session, w: World, env: Env) -> None:
         await w.refresh()
         menu = allowed(s)
         prop = None  # the default policy's arm: negotiate's default chain decides
-        if s.arm == "brain" and env.brain is not None:  # ADR-0017 §3.3: the Brain proposes (M7 design D10)
+        # ADR-0017 §3.3: the Brain proposes (M7 design D10); a pending want is a named choice, so no proposal
+        if s.arm == "brain" and env.brain is not None and s.latch.want is None:
             from leafi.study.brain.sequence import REOBSERVE_PAGE, sequence
 
             chain = [sp.kind for sp in policy.default_chain(s, menu - {"end"})]
@@ -402,7 +410,7 @@ async def _body(s: Session, w: World, env: Env) -> None:
         last = await run_activity(s, w, act)
         s.previous_boundary_was_wait = act.kind == "wait"
         s.boundary = Boundary()
-        while continuation_allowed(s) and (
+        while continuation_allowed(s) and s.latch.want is None and (  # a want goes to the boundary
                 (last == ActivityStatus.PAGE_TURNED and w.pending is not None)  # §8.2: same cycle, on every turn
                 or (last == ActivityStatus.ABORTED_STALE and act.kind == "read_listen")):  # §1: an Ear switch
             page = "next" if last == ActivityStatus.PAGE_TURNED else "current"  # keeps cycle and page read

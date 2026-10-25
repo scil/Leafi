@@ -84,6 +84,7 @@ class Boundary:
     content: dict = field(default_factory=dict)  # M7 D14: (kind, selection) -> generated content or Rejected
     content_epoch: tuple | None = None           # the epoch `content` was made under; another epoch clears it
     moment: float | None = None                  # the `next_activity` moment every Brain call here shares
+    wanted_by: str | None = None                 # the source of a `/do` that set `wanted` (panel design D7)
 
 
 @dataclass
@@ -108,6 +109,7 @@ class Session:
     pending_rows: list = field(default_factory=list)  # §7.3: activity ends a busy store could not take yet
     on_page: Callable[[Utterance], None] | None = None  # D21: a page turn heard at a boundary (the World's)
     pending_audit_brain: list = field(default_factory=list)  # D8: brain_calls rows a busy store kept back
+    progress: dict = field(default_factory=dict)  # the running activity's completed steps (panel design D7)
 
     def facts(self) -> Facts:
         return self.facts_fn(self)

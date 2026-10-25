@@ -81,6 +81,8 @@ def parse_typed(text: str) -> Control | None:
         return Control("explain", text=rest or None, typed=True)
     if cmd == "say":  # /say TEXT: TEXT as an answer, never a command (session panel design D6)
         return Control("say", text=rest or None, typed=True)
+    if cmd == "do":  # /do KIND: the next activity, at a safe point (ADR-0017 §2.1 as amended); typed only
+        return Control("do", text=rest.strip().lower() or None, typed=True)
     if cmd == "fix":  # /fix Y X : Leafi has Y, the book says X
         parts = rest.split(None, 1)
         if len(parts) == 2:

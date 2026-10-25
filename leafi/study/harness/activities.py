@@ -376,6 +376,7 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                     any(t.status != "unattempted" for t in w.state.tokens if t.sentence_id == sid):
                 w.state, _ = complete_sentence(w.state, sid)
                 w.save_state()
+        s.progress.update(outcome())  # what a jump keeps (panel design D7)
         w.end_page_read()
 
 
@@ -478,6 +479,7 @@ async def practise_errors(w: World, act: Activity, aid: int) -> tuple[str, dict]
                 break
         final = _finish_candidate(w, mid, evidence, score)
         done[mid] = final
+        s.progress["practised"] = dict(done)
         await io.line("practice_withdrawn" if final.startswith("withdrawn") else
                       "practice_idle" if final.endswith("idle") else "practice_unsure")
     return "completed", {"practised": done}
@@ -536,6 +538,7 @@ async def review_anki(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                     _retrieval(w, card.knowledge_item_id, aid, "fail" if ease == 1 else "success",
                                "typed" if u.typed else "heard_confident")
                 answered += 1
+                s.progress["cards"] = answered
                 break
             await io.line("noop")
     return "completed", {"cards": answered}
@@ -691,6 +694,7 @@ async def quiz(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                 knowledge.add_encounter(w.store, item, session_id=s.session_id, trigger="check",
                                         context_sentence=q["evidence"][0])
         results.append(outcome)
+        s.progress.update(questions=len(results), results=list(results))
     return "completed", {"questions": len(results), "results": results}
 
 
@@ -779,6 +783,7 @@ async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dic
             continue
         _store_utterance(w, u, "question")
         asked += 1
+        s.progress.update(questions=asked, answered=answered)
         epoch = s.epoch()
         result = await _answer(w, u, owner)
         s.checkpoint()
@@ -789,6 +794,7 @@ async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dic
             await io.line("degraded")  # ADR-0017 §5.1: a weaker tier's answer says so
         await io.say(result.value.answer, epoch=epoch)  # D12
         answered += 1
+        s.progress.update(questions=asked, answered=answered)
     return "completed", {"questions": asked, "answered": answered}
 
 
@@ -868,6 +874,7 @@ async def teach_items(w: World, act: Activity, aid: int) -> tuple[str, dict]:
         if ended:
             return ended, {"items": len(results), "results": results}
         await _score_item(w, aid, t["item_id"], t["key"], outcome, u, t["sentence"], t["explanation"])
+        w.s.progress.update(items=len(results), results=list(results))
     return "completed", {"items": len(results), "results": results}
 
 
@@ -909,6 +916,7 @@ async def recall_items(w: World, act: Activity, aid: int) -> tuple[str, dict]:
         if ended:
             return ended, {"items": len(results), "results": results}
         await _score_item(w, aid, item, key, outcome, u, sentence, None)
+        w.s.progress.update(items=len(results), results=list(results))
     return "completed", {"items": len(results), "results": results}
 
 
