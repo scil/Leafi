@@ -449,6 +449,20 @@ class Egress:
             cached = self._lists = (version, lists.pattern())
         return cached[1] is not None and cached[1].search(pseudonym.norm(text)) is not None
 
+    def names_in(self, text: str, *, book: bool = False) -> bool:
+        """Whether `text` holds a listed name, or (for a non-book line) a name the detector finds: TTS routes such a
+        line to a local backend so no one hears a surrogate (ADR-0021 E7). The detector refusing because it is
+        still loading in a session counts as a name (fail closed)."""
+        if self.contains_protected(text):
+            return True
+        if book:
+            return False
+        try:
+            det = self.detector()
+        except Refused:
+            return True
+        return bool(det is not None and det.spans(text))
+
     @contextlib.asynccontextmanager
     async def library_call(self, prepared: Prepared):
         """For a library that opens its own connection (edge-tts `library` mode, design D14): claims the token,

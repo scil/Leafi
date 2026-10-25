@@ -146,25 +146,36 @@ async def test_a_line_with_a_protected_name_never_reaches_edge(settings, edge_eg
     assert [tuple(r) for r in rows] == [("edge_tts", "tts", edge_egress.learner, "sent")]
 
 
-async def test_with_cloud_learner_lines_edge_speaks_only_surrogates(settings, edge_egress):
-    service = tts.create(settings, en="edge", zh="edge")
-    service.learner_lines = "cloud"  # PRIVACY_TTS_LEARNER_LINES=cloud: ADR-0018 lets edge speak surrogates
-    await service.synth("Good question, Zephyrine! Let me think about Quillfield Academy.", "en")
-    (said,) = _EdgeRecorder.texts
-    assert "Zephyrine" not in said and "Quillfield" not in said and "the school" in said
-
-
-async def test_a_learners_own_words_never_reach_a_cloud_backend(settings, edge_egress):
+async def test_tts_routes_by_content_not_by_who_said_it(settings, edge_egress):
+    """ADR-0021 E7: a learner's words with no name may be spoken by edge-tts; a line where the detector finds a
+    name stays local, whoever said it; a book line keeps its characters' names off the detector."""
     from leafi.core.ports import Provenance
+    from tests.test_detector import Fake
 
     mine = Provenance("learner", (edge_egress.learner,))
     mixed = tts.create(settings, en="edge", zh="mock")
     clip = await mixed.synth("Thanks! \"Zorblat\" it is.", "en", provenance=mine)
-    assert clip.codec == "wav" and _EdgeRecorder.texts == []  # spoken by the local backend
-    cloud_only = tts.create(settings, en="edge", zh="edge")
-    with pytest.raises(tts.LocalOnlyUnavailable):
-        await cloud_only.synth("Thanks! \"Zorblat\" it is.", "en", provenance=mine)
-    assert _EdgeRecorder.texts == []
+    assert clip.codec == "mp3" and _EdgeRecorder.texts == ["Thanks! \"Zorblat\" it is."]
+    edge_egress.egress._detector, edge_egress.egress.detector_state = Fake(("Sophie", "[name]")), "ready"
+    clip = await mixed.synth("I played with Sophie.", "en")  # a system line, but it names someone
+    assert clip.codec == "wav" and len(_EdgeRecorder.texts) == 1
+    clip = await mixed.synth("Sophie opened the door.", "en", provenance=Provenance("page"))  # a book line
+    assert clip.codec == "mp3" and _EdgeRecorder.texts[-1] == "Sophie opened the door."
+
+
+async def test_clips_are_cached_per_attributed_learner_and_shared_without_one(settings, edge_egress):
+    """ADR-0021 E9: the cache folder follows the session's attribution."""
+    from leafi.privacy import runtime
+
+    service = tts.create(settings, en="mock", zh="mock")
+    clip = await service.synth("Hello there.", "en")
+    assert clip.path.parent == settings.cache_dir / "tts" / "learners" / str(edge_egress.learner)
+    token = runtime.attribution.set(None)
+    try:
+        clip = await service.synth("Hello there.", "en")
+    finally:
+        runtime.attribution.reset(token)
+    assert clip.path.parent == settings.cache_dir / "tts" / "shared"
 
 
 class QueueEar:

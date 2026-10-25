@@ -265,6 +265,9 @@ async def run_session(env: Env) -> int:
         rows.recover(store)
         guests.normalise_orphans(store, cfg.guest_keep_days)
         guests.sweep(store)
+        # ADR-0021 E9: spoken-line cache folders of forgotten learners and ended guests, before any synthesis
+        cache = getattr(cfg, "cache_dir", None)  # a settings object without one sweeps nothing
+        records.sweep_tts_cache(store, Path(cache) if cache is not None else None)
         guest = guests.new_guest(store)
         listener = env.listener or env.hub.listener()
         mode = "voice" if getattr(listener, "is_voice", False) else "text"

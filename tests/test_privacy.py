@@ -321,7 +321,7 @@ async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatc
         "",                                              # no objection: reading starts
         f"This book belongs to {NAME}",
         f"what does {NAME} mean",                       # explain_wait embeds the (page) target → redacted
-        f"/fix belongs {learner_word}",                  # learner-typed correction text → local-only line
+        f"/fix belongs {learner_word}",                  # learner-typed, no name: may reach edge (ADR-0021 E7)
         "/stop",
     ]
     console = GatedConsole(script)
@@ -335,9 +335,9 @@ async def test_cloud_tts_receives_only_redacted_leafi_lines(settings, monkeypatc
     # a line holding a protected name is spoken locally, never sent pseudonymised (M5 design D13)
     assert any(t.startswith("Good question!") and NAME in t for t in local), local
     assert spoken, "the edge path was not exercised"
-    assert any(learner_word in t for t in local), local  # the correction line went to the local backend
+    assert any(learner_word in t for t in spoken + local), (spoken, local)  # routed by content, not by source
     assert any(learner_word in t for t in face.texts)  # and is shown on Faces
     assert len(mouth.played) > 3
-    for text in spoken:
-        for c in [*CANARIES, learner_word]:
+    for text in spoken:  # no protected name ever reaches cloud TTS; a learner's plain word may (ADR-0021 E7)
+        for c in CANARIES:
             assert c.lower() not in text.lower(), (c, text)
