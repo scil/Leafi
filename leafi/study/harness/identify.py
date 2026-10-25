@@ -11,7 +11,7 @@ import re
 from rapidfuzz import fuzz
 
 from leafi.core import learner_store
-from leafi.core.ports import Provenance, Utterance
+from leafi.core.ports import Utterance
 from leafi.privacy import runtime
 from leafi.privacy import settings as privacy
 from leafi.study import controls
@@ -76,9 +76,9 @@ def adopt(s: Session, learner_id: int) -> bool:
 
 
 async def _confirm(s: Session, question: str) -> bool:
-    # the question holds a name the learner said: `learner` text until adoption (M5 design D13)
+    # the question holds a name the learner said: not a book line, so TTS's detector checks it (ADR-0021 E7)
     owner = ("setup", "confirm", next(_CONFIRMS))  # each question its own prompt; never the name (it is logged)
-    await s.talk.ask(owner, question, provenance=Provenance("learner", (s.learner_id,)))
+    await s.talk.ask(owner, question)
     u = await s.talk.listen(ASK_S, owner)
     s.checkpoint()
     ctl = controls.parse(u.text) if u is not None else None
@@ -146,8 +146,7 @@ async def _identify(s: Session, keep_days: int) -> int:
     voice = bool(getattr(talk, "voice", False))
     if enrolled and not voice:
         picks = ", ".join(f"{i}. {r['display_name']}" for i, r in enumerate(enrolled, 1))
-        await talk.ask(owner, f"Hello! Who's reading today? {picks} - or type your name.",
-                       provenance=Provenance("learner", tuple(r["id"] for r in enrolled)))
+        await talk.ask(owner, f"Hello! Who's reading today? {picks} - or type your name.")
     else:
         await talk.ask(owner, "Hello! Who's reading today?")
     name = parse_name(await talk.listen(ASK_S, owner), enrolled)

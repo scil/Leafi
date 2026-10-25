@@ -101,7 +101,7 @@ async def construct(s: Session, spec: Spec, menu: set[str] | None = None) -> Act
     if _has_url(sel) or _has_url(made.value):
         return Rejected("no URLs")
     return Activity(spec.kind, sel, spec.source, content=made.value, content_owner=owner,
-                    content_provenance=made.provenance, degraded=made.degraded)
+                    degraded=made.degraded)
 
 
 async def first_constructible(s: Session, specs: list[Spec], menu: set[str]) -> Activity | None:

@@ -149,17 +149,15 @@ async def test_a_line_with_a_protected_name_never_reaches_edge(settings, edge_eg
 async def test_tts_routes_by_content_not_by_who_said_it(settings, edge_egress):
     """ADR-0021 E7: a learner's words with no name may be spoken by edge-tts; a line where the detector finds a
     name stays local, whoever said it; a book line keeps its characters' names off the detector."""
-    from leafi.core.ports import Provenance
     from tests.test_detector import Fake
 
-    mine = Provenance("learner", (edge_egress.learner,))
     mixed = tts.create(settings, en="edge", zh="mock")
-    clip = await mixed.synth("Thanks! \"Zorblat\" it is.", "en", provenance=mine)
+    clip = await mixed.synth("Thanks! \"Zorblat\" it is.", "en")  # a learner's words, no name in them
     assert clip.codec == "mp3" and _EdgeRecorder.texts == ["Thanks! \"Zorblat\" it is."]
     edge_egress.egress._detector, edge_egress.egress.detector_state = Fake(("Sophie", "[name]")), "ready"
     clip = await mixed.synth("I played with Sophie.", "en")  # a system line, but it names someone
     assert clip.codec == "wav" and len(_EdgeRecorder.texts) == 1
-    clip = await mixed.synth("Sophie opened the door.", "en", provenance=Provenance("page"))  # a book line
+    clip = await mixed.synth("Sophie opened the door.", "en", book=True)  # a book line
     assert clip.codec == "mp3" and _EdgeRecorder.texts[-1] == "Sophie opened the door."
 
 

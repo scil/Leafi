@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from leafi.core.ports import SYSTEM, Provenance, Utterance
+from leafi.core.ports import Utterance
 from leafi.core.storage import Store
 from leafi.study.harness.latch import Latch
 from leafi.study.harness.ledger import Ledger
@@ -19,9 +19,9 @@ from leafi.study.harness.settings import LearnerSettings
 
 
 class Talk(Protocol):
-    async def say(self, text: str, *, provenance: Provenance = SYSTEM,
-                  epoch: tuple | None = None) -> None: ...  # M5 design D13; M7 D12: dropped under a newer epoch
-    async def ask(self, owner, text: str, *, provenance: Provenance = SYSTEM,
+    async def say(self, text: str, *, book: bool = False,
+                  epoch: tuple | None = None) -> None: ...  # ADR-0021 E2 (book line); M7 D12: dropped under a newer epoch
+    async def ask(self, owner, text: str, *, book: bool = False,
                   epoch: tuple | None = None) -> None: ...  # M7 D21: a prompt
     async def listen(self, timeout_s: float | None, owner=..., *, accepts_page: bool = True
                      ) -> Utterance | None: ...
@@ -62,8 +62,7 @@ class Activity:
     content: dict | None = None
     content_owner: str = "code"
     override: str | None = None
-    content_provenance: Provenance = SYSTEM  # M7 D15: what the content's writers store and its lines carry
-    degraded: bool = False                   # M7 D10: the content came from a weaker tier than its route's
+    degraded: bool = False  # M7 D10: the content came from a weaker tier than its route's
 
 
 @dataclass(frozen=True)

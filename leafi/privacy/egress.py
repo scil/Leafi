@@ -52,7 +52,6 @@ import psutil
 
 from leafi.core import netguard
 from leafi.core.config import Settings
-from leafi.core.provenance import PARENT_SOURCE, Provenance
 from leafi.core.storage import Store, _FileLock, now_iso
 from leafi.privacy import destinations as dests
 from leafi.privacy import pseudonym, versions
@@ -77,21 +76,15 @@ class Refused(PermissionError):
 @dataclass(frozen=True)
 class Text:
     """A string to send. `book` marks a book field (page text, a sentence, an expected word, a title): the name
-    detector skips it, the lists still apply (ADR-0021 E2). `provenance` and `sources` no longer decide anything
-    in egress; until they go (ADR-0021 E6) a `page` provenance also marks a book field."""
+    detector skips it, the lists still apply (ADR-0021 E2). Nothing else about a text's origin is carried: the
+    provenance it once had is gone (ADR-0021 E6)."""
 
     value: str
-    provenance: str = "system"
-    sources: tuple[int, ...] = ()  # may hold PARENT_SOURCE (0): parent text went into this (M7 design D2)
     book: bool = False
 
     @property
     def is_book(self) -> bool:
-        return self.book or self.provenance == "page"
-
-    @property
-    def prov(self) -> Provenance:
-        return Provenance(self.provenance, self.sources)
+        return self.book
 
 
 @dataclass
@@ -374,9 +367,8 @@ class Egress:
         if study and self.watch.stale():
             raise Refused("household privacy settings changed since this process started; restart it")
         texts = list(_texts(out))
-        # PARENT_SOURCE is a flag, not a learner: never in the snapshot, the privacy map or the log (M7 D2, S1)
-        sources = sorted({s for t in texts for s in t.sources if s != PARENT_SOURCE}
-                         | ({learner_id} if study and learner_id else set()))
+        # the snapshot covers the request's learner only: texts carry no sources (ADR-0021 E6)
+        sources = [learner_id] if study and learner_id else []
         c = self._conn()
         cloud = locality == "cloud"
         if cloud:  # allocation writes; done before the read snapshot so the snapshot sees the surrogates
@@ -432,12 +424,6 @@ class Egress:
         for gone in self.tokens.add(tok):
             self._finish(gone, "failed")
         return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping, tok.attempt_id)
-
-    def may_send(self, destination: str, model: str | None, text: Text) -> bool:
-        """Whether `prepare` would let this leaf go to `destination` (M7 design D3). Since ADR-0021 no text is
-        refused for its source, so every leaf may go to a known destination, redacted; the per-leaf filter that
-        calls this goes with ADR-0021 E6."""
-        return self.registry.get(destination) is not None
 
     def contains_protected(self, text: str) -> bool:
         """Whether `text` holds a listed name (TTS routing, design D13): such a line is spoken locally."""

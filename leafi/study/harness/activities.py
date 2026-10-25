@@ -14,7 +14,7 @@ import math
 import time
 
 from leafi.core import learner_store
-from leafi.core.ports import Display, Provenance, Utterance
+from leafi.core.ports import Display, Utterance
 from leafi.core.storage import dumps, loads, now_iso
 from leafi.core.text import words
 from leafi.study import cards, coach, controls, corrections, knowledge, miscues, pages, phrases
@@ -40,7 +40,6 @@ from leafi.study.harness.state import Activity
 from leafi.study.harness.world import PageRequest, World
 
 log = logging.getLogger("leafi.harness.activities")
-PAGE = Provenance("page")  # practice words and read-aloud sentences come from the page (M5 design D13)
 
 PRON_CONFIRM_BELOW = 0.5  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
 ANSWER_MIN_CONF = 0.8     # §3.4: a spoken answer counts only when every word is at least this confident
@@ -193,7 +192,7 @@ async def _correct(w: World, ctl: controls.Control, uid: int, typed: bool) -> No
     span = corrections.locate(w.rev.text, ctl.old, near, window) or corrections.locate(w.rev.text, ctl.old, near)
     source = "text" if typed else "voice"
     if span is None:
-        await w.inputs.line("correction_not_found", provenance=Provenance("learner", (w.s.learner_id,)), old=ctl.old)
+        await w.inputs.line("correction_not_found", old=ctl.old)
         corrections.record_unlocated(w.store, revision_id=w.rev.id, old_text=ctl.old, new_text=ctl.text,
                                      source=source, learner_id=w.s.learner_id, utterance_id=uid)
         await w.inputs.line("correction_saved")
@@ -206,7 +205,7 @@ async def _correct(w: World, ctl: controls.Control, uid: int, typed: bool) -> No
     w.save_state()
     w.s.latch.epoch.revision_id = res.revision_id
     w.s.latch.epoch.bump()  # a correction bumps the epoch (§1)
-    await w.inputs.line("correction_thanks", provenance=Provenance("learner", (w.s.learner_id,)), new=ctl.text)
+    await w.inputs.line("correction_thanks", new=ctl.text)
 
 
 _HINT_YES = {"yes please", "please", "ok please", "okay please", "sure please"}
@@ -421,14 +420,14 @@ async def practise_errors(w: World, act: Activity, aid: int) -> tuple[str, dict]
         evidence, score = "none", None
         if attempt < 2:
             await io.hub.show(Display("say", sentence))
-            await io.line("practice_intro", provenance=PAGE, word=word)
-            await io.say(word, slow=True, provenance=PAGE)
+            await io.line("practice_intro", book=True, word=word)  # practice words come from the page
+            await io.say(word, slow=True, book=True)
         while attempt < 2:
             owner = ("act", aid, f"{mid}.{attempt}")  # D21: each try is its own question
-            await io.line("practice_retry" if attempt == 0 else "practice_again", provenance=PAGE, word=word,
+            await io.line("practice_retry" if attempt == 0 else "practice_again", book=True, word=word,
                           owner=owner)
             if attempt:
-                await io.say(word, slow=True, provenance=PAGE)
+                await io.say(word, slow=True, book=True)
             u = await io.listen(cfg.practice_retry_s if io.voice else None, owner, accepts_page=True)
             s.checkpoint()
             if (late := _late_pages(w, aid)) is not None:  # a page turned during an earlier try
@@ -490,10 +489,9 @@ async def review_anki(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     for i, card in enumerate(cards):
         if w.activity_over():
             break
-        # a card's text may hold the learner's own words; its provenance is not known here: `learner` (M5 D13)
+        # a card's text may hold the learner's own words: not a book line, so TTS's detector checks it (ADR-0021 E7)
         owner = ("act", aid, f"card.{i}")  # D21: each card its own question
-        await io.line("review_prompt_eases", provenance=Provenance("learner", (s.learner_id,)), front=card.front,
-                      owner=owner)
+        await io.line("review_prompt_eases", front=card.front, owner=owner)
         while True:
             u = await io.listen(cfg.study_idle_s, owner, accepts_page=True)
             s.checkpoint()
@@ -540,7 +538,7 @@ async def read_aloud(w: World, act: Activity, aid: int) -> tuple[str, dict]:
             break
         text = coach.sentence_text(w.rev.text, st, sid)
         await io.hub.show(Display("say", text))
-        await io.say(text, slow=sid in hard, provenance=PAGE)
+        await io.say(text, slow=sid in hard, book=True)
         s.checkpoint()
         s.take_skip()  # a skip cut this sentence; the next one follows
         said += 1
@@ -585,7 +583,7 @@ async def add_cards(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     s = w.s
     added, flagged, rejected = [], [], {}
     for item_id in act.params["item_ids"]:
-        if act.content_owner == "brain":  # the generated card, under the call's provenance (D15)
+        if act.content_owner == "brain":  # the generated card (D15)
             card = (act.content or {}).get("cards", {}).get(item_id)
             if card is None:
                 rejected[item_id] = "no card was generated for it"
@@ -627,14 +625,13 @@ async def quiz(w: World, act: Activity, aid: int) -> tuple[str, dict]:
     `unavailable` and write no encounter and no retrieval event (§3.4); only `incorrect` writes an encounter."""
     s, io, cfg = w.s, w.inputs, w.settings
     w.activity_started = time.monotonic()
-    prov = act.content_provenance
     results: list[str] = []
     await io.line("quiz_intro")
     for i, q in enumerate(act.content["questions"]):
         if w.activity_over():
             break
         owner = ("act", aid, f"q{i}")  # D21: each question its own prompt
-        await io.ask(owner, q["text"], provenance=prov)
+        await io.ask(owner, q["text"])
         u = await io.listen(CHECK_ANSWER_S if io.voice else cfg.study_idle_s, owner, accepts_page=True)
         s.checkpoint()
         if (late := _late_pages(w, aid)) is not None and s.on_page is not None:
@@ -661,7 +658,7 @@ async def quiz(w: World, act: Activity, aid: int) -> tuple[str, dict]:
         if outcome == "correct":
             await io.line("check_correct")
         elif q["answers"]:
-            await io.line("quiz_answer", provenance=prov, answer=" ".join(q["answers"][0]))
+            await io.line("quiz_answer", answer=" ".join(q["answers"][0]))
         if outcome in RETRIEVAL_OF:
             for item in q["item_ids"]:
                 _retrieval(w, item, aid, RETRIEVAL_OF[outcome], "typed" if u.typed else "heard_confident")
@@ -681,15 +678,13 @@ DONE = {"done", "no", "no more", "that's all", "finished", "nothing"}
 
 def _answer_sections(w: World, u: Utterance) -> tuple:
     """What an `answer` call carries: the session's learner context (cached, owner decision 2026-10-24), the
-    sentences read in this cycle (page text) and the learner's question as said (learner text: only on an
-    eligible backend, D10). One turn: earlier questions are not sent."""
-    from leafi.core.ports import Section
-    from leafi.core.provenance import Leaf
+    sentences read in this cycle (book leaves) and the learner's question as said (a non-book leaf that egress
+    redacts by content, ADR-0021 E1/E2). One turn: earlier questions are not sent."""
+    from leafi.core.ports import Leaf, Section
     from leafi.study.brain import generate, kinds
 
-    page = tuple(Leaf(f"{x.rid}: {x.text}", PAGE) for x in kinds.cycle_sentences(w.s))
-    return (generate.learner_context(w.s), Section("page", page),
-            Section("question", (Leaf(u.text, Provenance("learner", (w.s.learner_id,))),)))
+    page = tuple(Leaf(f"{x.rid}: {x.text}", book=True) for x in kinds.cycle_sentences(w.s))
+    return (generate.learner_context(w.s), Section("page", page), Section("question", (Leaf(u.text),)))
 
 
 async def _answer(w: World, u: Utterance, owner):
@@ -718,8 +713,9 @@ async def _answer(w: World, u: Utterance, owner):
 
 
 async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dict]:
-    """The learner asks; each answer is one `answer` call grounded in the cycle's read sentences, spoken under
-    the call's provenance, a `degraded` one prefaced (D10). Up to `max_turns` questions."""
+    """The learner asks; each answer is one `answer` call grounded in the cycle's read sentences, spoken as a
+    non-book line (TTS routes it by content, ADR-0021 E7), a `degraded` one prefaced (D10). Up to `max_turns`
+    questions."""
     s, io, cfg = w.s, w.inputs, w.settings
     w.activity_started = time.monotonic()
     answered = asked = 0
@@ -762,7 +758,7 @@ async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dic
             continue
         if result.degraded:
             await io.line("degraded")  # ADR-0017 §5.1: a weaker tier's answer says so
-        await io.say(result.value.answer, provenance=result.provenance, epoch=epoch)  # D12
+        await io.say(result.value.answer, epoch=epoch)  # D12
         answered += 1
     return "completed", {"questions": asked, "answered": answered}
 

@@ -1,4 +1,4 @@
-"""The `decide` observation (ADR-0017 §4; M7 design D3, D6, D12, D15): order, provenance, substitutes, ids."""
+"""The `decide` observation (ADR-0017 §4; M7 design D3, D6, D12, D15): order, book fields, ids."""
 
 from __future__ import annotations
 
@@ -22,13 +22,15 @@ def test_sections_come_in_the_one_rendering_order():
         ["page", "cycle", "menu", "session", "turn"]
 
 
-def test_a_learners_words_carry_their_provenance_and_a_substitute():
-    cycle = next(s for s in observe(_input()).sections if s.name == "cycle")
-    heard = [leaf for leaf in cycle.leaves if "heard" in leaf.value]
-    (h,) = heard
-    assert h.prov.cls == "learner" and h.prov.sources == (7,) and "house" in h.value
-    assert h.substitute is not None and "house" not in h.substitute
-    assert all(leaf.prov.cls == "page" for leaf in cycle.leaves if leaf is not h)
+def test_a_heard_word_is_a_non_book_leaf_and_page_sentences_are_book_leaves():
+    """ADR-0021 E2: the detector skips book fields only; a heard word is scanned like any learner text."""
+    sections = {s.name: s for s in observe(_input()).sections}
+    cycle = sections["cycle"]
+    (h,) = [leaf for leaf in cycle.leaves if "heard" in leaf.value]
+    assert not h.book and "house" in h.value
+    assert all(leaf.book for leaf in cycle.leaves if leaf is not h)
+    sentences = [leaf for leaf in sections["page"].leaves if leaf.value.startswith("s3.")]
+    assert len(sentences) == 2 and all(leaf.book for leaf in sentences)
 
 
 def test_ids_are_rendered_and_mapped_back_and_the_turn_is_opaque():

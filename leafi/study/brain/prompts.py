@@ -8,8 +8,7 @@ autonomy, age band) follows it in the same system block; it is stable within a s
 
 from __future__ import annotations
 
-from leafi.core.ports import CallAttempt, ModelRequest, Section, Turn
-from leafi.core.provenance import Leaf
+from leafi.core.ports import CallAttempt, Leaf, ModelRequest, Section, Turn
 from leafi.study.brain import schemas
 
 PROMPT_VERSION = "m7-1"

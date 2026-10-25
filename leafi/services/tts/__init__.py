@@ -20,7 +20,7 @@ import logging
 from pathlib import Path
 from typing import Any, Protocol
 
-from leafi.core.ports import SYSTEM, AudioClip, Provenance
+from leafi.core.ports import AudioClip
 from leafi.services._registry import Registry
 
 log = logging.getLogger("leafi.tts")
@@ -46,7 +46,7 @@ class TtsBackend(Protocol):
     model: str
 
     async def synthesize(self, text: str, lang: str, slow: bool, out_base: Path) -> AudioClip: ...
-    # a cloud backend also takes `provenance=` (keyword), for egress's prepare
+    # a cloud backend also takes `book=` (keyword), for egress's prepare (ADR-0021 E2)
 
 
 class TtsService:
@@ -73,10 +73,10 @@ class TtsService:
         att = runtime.attribution.get()
         return self.cache_dir / ("learners" if att is not None else "") / (str(att.learner_id) if att else "shared")
 
-    async def synth(self, text: str, lang: str, *, slow: bool = False, provenance: Provenance = SYSTEM) -> AudioClip:
+    async def synth(self, text: str, lang: str, *, slow: bool = False, book: bool = False) -> AudioClip:
+        """`book`: a book line, which the name detector skips; the lists still apply (ADR-0021 E2)."""
         folder = self.folder()
         be = self._backend(lang)
-        book = provenance.cls == "page"  # a book line: the detector skips it (ADR-0021 E2), the lists still apply
         if getattr(be, "cloud", False) and self._must_stay_local(text, book):
             local = [b for b in self.backends.values() if not getattr(b, "cloud", False)]
             if not local:
@@ -94,7 +94,7 @@ class TtsService:
                     return AudioClip(path, d["duration_s"], d["sample_rate"], d["channels"], d["codec"])
             except (OSError, ValueError, KeyError):
                 pass
-        kw = {"provenance": provenance} if getattr(be, "cloud", False) else {}  # a cloud backend prepares egress
+        kw = {"book": book} if getattr(be, "cloud", False) else {}  # a cloud backend prepares egress
         clip = await be.synthesize(text, lang, slow, folder / key, **kw)
         meta.write_text(json.dumps({"path": str(clip.path), "duration_s": clip.duration_s,
                                     "sample_rate": clip.sample_rate, "channels": clip.channels,

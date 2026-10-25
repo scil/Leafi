@@ -8,8 +8,7 @@ import time
 import pytest
 from pydantic import BaseModel
 
-from leafi.core.ports import Section
-from leafi.core.provenance import Leaf, Provenance
+from leafi.core.ports import Leaf, Section
 from leafi.services.brain.mock import MockModel
 from leafi.study.brain import call as bc
 from leafi.study.brain import generate
@@ -69,7 +68,7 @@ def _check(s, sel, value):
 
 @pytest.fixture
 def card_generator(monkeypatch):
-    gen = generate.Generator(_Card, lambda s, sel: (Section("page", (Leaf("The fox ran home.", Provenance("page")),)),),
+    gen = generate.Generator(_Card, lambda s, sel: (Section("page", (Leaf("The fox ran home.", book=True),)),),
                              _check)
     monkeypatch.setitem(generate.GENERATORS, "add_cards", gen)
     return gen
@@ -89,7 +88,6 @@ async def test_one_generate_call_per_boundary_kind_and_selection(tmp_path, card_
     s, model = _brain_session(tmp_path, {"back": "a small wild dog"})
     a = await construct(s, Spec("add_cards", {"item_ids": [7]}, content={"back": "ignored"}, source="brain"), MENU)
     assert isinstance(a, Activity) and a.content == {"back": "a small wild dog"} and a.content_owner == "brain"
-    assert a.content_provenance.cls == "page"  # D2: of_output over what was sent
     again = await construct(s, Spec("add_cards", {"item_ids": [7]}), MENU)  # a re-offer, a silence re-ask
     assert again.content == a.content and len(model.requests) == 1
     other = await construct(s, Spec("add_cards", {"item_ids": [8]}), MENU)  # another selection: its own call

@@ -34,13 +34,10 @@ async def test_add_cards_stores_the_card_text_and_push_sends_exactly_it(settings
 
 async def test_a_brain_owned_card_is_stored_once_and_push_sends_exactly_it(settings):
     """M7 design D15: Brain content reaches Anki only through `add_cards` and its checks, as stored."""
-    from leafi.core.provenance import Provenance
-
     w = make_world(settings, settings, [])
     item = _explained(w, "fox", "The fox ran home.")
     content = {"cards": {item: {"front": "fox", "back": "a small <b>wild</b> dog", "sentence": "The fox ran home."}}}
-    status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]}, content=content, content_owner="brain",
-                                   content_provenance=Provenance("page"))
+    status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]}, content=content, content_owner="brain")
     assert outcome["cards"] == 1
     fake = FakeAnki()
     await anki.sync_outbox(w.store, anki.AnkiClient(transport=fake.transport()), "Leafi")

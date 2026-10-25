@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from leafi.core.ports import SYSTEM, AudioClip, Provenance
+from leafi.core.ports import AudioClip
 from leafi.services._registry import has_package
 
 _BITRATE = 48000
@@ -36,7 +36,7 @@ class EdgeTts:
         return self._egress
 
     async def synthesize(self, text: str, lang: str, slow: bool, out_base: Path, *,
-                         provenance: Provenance = SYSTEM) -> AudioClip:
+                         book: bool = False) -> AudioClip:
         import edge_tts  # lazy
 
         from leafi.privacy.egress import Outgoing, Text
@@ -44,8 +44,7 @@ class EdgeTts:
         path = out_base.with_suffix(".mp3")
         path.parent.mkdir(parents=True, exist_ok=True)
         e = self.egress()
-        prepared = e.prepare(DESTINATION, "tts", Outgoing(json={"text": Text(text, provenance.cls,
-                                                                            provenance.sources)}))
+        prepared = e.prepare(DESTINATION, "tts", Outgoing(json={"text": Text(text, book=book)}))
         spoken = prepared.json["text"]
         async with e.library_call(prepared):
             await edge_tts.Communicate(spoken, self.voice, rate="-25%" if slow else "+0%").save(str(path))

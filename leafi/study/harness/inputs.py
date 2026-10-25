@@ -27,7 +27,7 @@ import anyio
 from leafi.core import alerts
 from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate
-from leafi.core.ports import SYSTEM, Display, ListenerLost, Provenance, Utterance
+from leafi.core.ports import Display, ListenerLost, Utterance
 from leafi.core.text import typed_utterance
 from leafi.study import controls, phrases
 from leafi.study.harness.latch import Latch
@@ -243,11 +243,11 @@ class Inputs:
                 return item.u
         return None
 
-    async def ask(self, owner, text: str, lang: str = "en", *, provenance: Provenance = SYSTEM, **kw) -> None:
+    async def ask(self, owner, text: str, lang: str = "en", *, book: bool = False, **kw) -> None:
         """A prompt (D21): `owner` is current from before its first word, so an answer typed while it plays is
         its answer."""
         self.present(owner)
-        await self._speak(text, lang, provenance=provenance, **kw)
+        await self._speak(text, lang, book=book, **kw)
 
     @contextlib.asynccontextmanager
     async def controls_only(self, owner):
@@ -285,19 +285,19 @@ class Inputs:
     def lease_held(self) -> bool:
         return self.latch.terminal != "lease_lost"
 
-    async def say(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM,
+    async def say(self, text: str, lang: str = "en", *, slow: bool = False, book: bool = False,
                   epoch: tuple | None = None) -> None:
-        """`provenance` says where the text came from (M5 design D13): a learner's own words, page text, or Leafi's
-        own phrase; the TTS service keeps a learner's words (and any line holding a protected name) off the
-        cloud. Controls are read during playback; nothing is spoken after the lease is lost (Faces still show
+        """`book` marks a book line (page text, a practice word): the TTS service routes every line by content
+        and skips the name detector for a book line (ADR-0021 E2, E7; the provenance once passed here is gone,
+        E6). Controls are read during playback; nothing is spoken after the lease is lost (Faces still show
         it). A plain line is no prompt (D21): outside a Brain wait it makes no prompt current, so a line typed
         while it plays goes to the next listen, as in M6. `epoch`: a Brain-derived line is dropped when the live
         epoch is no longer the one it was made under (M7 design D12)."""
         if self._waiting == 0:
             self.present(None)
-        await self._speak(text, lang, slow=slow, provenance=provenance, epoch=epoch)
+        await self._speak(text, lang, slow=slow, book=book, epoch=epoch)
 
-    async def _speak(self, text: str, lang: str = "en", *, slow: bool = False, provenance: Provenance = SYSTEM,
+    async def _speak(self, text: str, lang: str = "en", *, slow: bool = False, book: bool = False,
                      epoch: tuple | None = None) -> None:
         if epoch is not None and self.latch.epoch.key() != epoch:
             log.info("a line made under an earlier epoch was dropped")
@@ -314,21 +314,21 @@ class Inputs:
         if self.control_source is not None and self._will_play():  # controls are read only while audio plays
             self._request("control" if "control" in self._sources else "main")
         try:
-            await self.gate.speak(self.hub, text, lang, slow=slow, provenance=provenance)
+            await self.gate.speak(self.hub, text, lang, slow=slow, book=book)
         finally:
             self.speaking = False
 
     def _will_play(self) -> bool:
         return self.hub.policy != "none" and bool(self.hub.mouths) and self.hub.synthesizer is not None
 
-    async def line(self, key: str, *, provenance: Provenance = SYSTEM, owner=_UNOWNED, **kw) -> None:
-        """A phrase; `provenance` is that of the most restrictive value filled into it (`system` for counts).
-        With `owner` the phrase is a prompt (`ask`, D21)."""
+    async def line(self, key: str, *, book: bool = False, owner=_UNOWNED, **kw) -> None:
+        """A phrase; `book` when every value filled into it is a book field (a practice word). With `owner` the
+        phrase is a prompt (`ask`, D21)."""
         text = phrases.say(key, **kw)
         if owner is _UNOWNED:
-            await self.say(text, provenance=provenance)
+            await self.say(text, book=book)
         else:
-            await self.ask(owner, text, provenance=provenance)
+            await self.ask(owner, text, book=book)
 
     # ---- watchers
     async def _watch_page(self) -> None:

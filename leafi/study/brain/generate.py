@@ -19,8 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from leafi.core.ports import SYSTEM, Provenance, Section
-from leafi.core.provenance import Leaf
+from leafi.core.ports import Leaf, Section
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
 from leafi.study.brain import prompts, routing
@@ -41,10 +40,9 @@ GENERATORS: dict[str, Generator] = {}
 
 @dataclass(frozen=True)
 class Content:
-    """Generated content with the provenance its writers store and its lines are spoken with (D2, D15)."""
+    """Generated content (D15); it carries no provenance (ADR-0021 E6)."""
 
     value: dict
-    provenance: Provenance = SYSTEM
     degraded: bool = False
 
 
@@ -90,15 +88,13 @@ async def boundary_wait(s, call):
     return result
 
 
-PAGE = Provenance("page")
-
-
 def learner_context(s) -> Section:
     """The session-level block every `generate`, `answer` and `judge` request starts with, after the system text
     and marked for prompt caching (owner decision 2026-10-24, "give Claude enough information"): the learner's
     Difficulties and this cycle's errors, expected and heard (learner notes join in M7d). Byte-stable: a fixed
     order and fixed formatting, rebuilt only when its inputs change (another learner, another cycle, a new
-    error); heard words carry D3's substitute, so with `cloud.text` off they leave as expected word + category."""
+    error); heard words are non-book leaves that egress redacts by content (ADR-0021 E1; D3's substitute went with
+    E6)."""
     weights = sorted(knowledge.word_weights(s.store, s.learner_id).items(), key=lambda kv: (-kv[1], kv[0]))[:10]
     errors = () if s.cycle_id is None else tuple(tuple(r) for r in s.store.all(
         "SELECT id, expected, heard, origin FROM miscues WHERE cycle_id=? AND status='candidate' ORDER BY id",
@@ -106,12 +102,11 @@ def learner_context(s) -> Section:
     inputs = (s.learner_id, s.cycle_id, tuple((w, f"{x:.1f}") for w, x in weights), errors)
     if s.learner_context is not None and s.learner_context[0] == inputs:
         return s.learner_context[1]
-    leaves = [Leaf(f"difficulty '{w}' {x}", PAGE) for w, x in inputs[2]]
+    leaves = [Leaf(f"difficulty '{w}' {x}", book=True) for w, x in inputs[2]]
     for _mid, expected, heard, origin in errors:
-        leaves.append(Leaf(f"error '{expected}' {origin}", PAGE))
+        leaves.append(Leaf(f"error '{expected}' {origin}", book=True))
         if heard:
-            leaves.append(Leaf(f"heard '{heard}' for '{expected}'", Provenance("learner", (s.learner_id,)),
-                               substitute=f"'{expected}': a {origin} (words withheld)"))
+            leaves.append(Leaf(f"heard '{heard}' for '{expected}'"))
     section = Section("learner_context", tuple(leaves or [Leaf("nothing recorded yet")]), cache=True)
     s.learner_context = (inputs, section)
     return section
@@ -154,7 +149,7 @@ async def _generate(s, gen: Generator, kind: str, sel: dict, deadline: float) ->
     checked = gen.check(s, sel, result.value)
     if isinstance(checked, Rejected):
         return checked
-    return Content(checked, result.provenance or SYSTEM, result.degraded)
+    return Content(checked, result.degraded)
 
 
 # The D15 generators register themselves; kinds imports this module's names, so it is imported last.

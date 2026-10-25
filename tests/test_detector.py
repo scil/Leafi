@@ -64,7 +64,7 @@ def test_state_reports_the_effective_mode(tmp_path):
 
 async def test_egress_runs_the_detector_on_every_text_but_book_fields(settings):
     """ADR-0021 E2: the detector scans every `Text` that is not a book field, whatever its source; a book field
-    (`book=True`, or a `page` provenance until E6) keeps its characters' names; plain strings get the lists only."""
+    (`book=True`) keeps its characters' names; plain strings get the lists only."""
     from leafi.privacy import destinations as dests
     from leafi.privacy import egress as eg
     from leafi.privacy import secret
@@ -78,10 +78,10 @@ async def test_egress_runs_the_detector_on_every_text_but_book_fields(settings):
     e._detector, e.detector_state = Fake(("Sophie", "[name]")), "ready"  # M7 D8: a loaded detector
     try:
         p = e.prepare("fake", "generate", eg.Outgoing(json={
-            "said": eg.Text("I read with Sophie", "learner", (rocco,)),
-            "page": eg.Text("Sophie opened the door", "page"),
+            "said": eg.Text("I read with Sophie"),
+            "page": eg.Text("Sophie opened the door", book=True),
             "title": eg.Text("Sophie's Day", book=True),
-            "note": eg.Text("Sophie helped", "system"),
+            "note": eg.Text("Sophie helped"),
             "const": "Sophie"}), learner_id=rocco)
         assert p.json == {"said": "I read with [name]", "page": "Sophie opened the door", "title": "Sophie's Day",
                           "note": "[name] helped", "const": "Sophie"}

@@ -13,9 +13,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
-from .provenance import SYSTEM, Leaf, Provenance  # noqa: F401  (re-exported; defined there since M7 design D2)
-
 # ---------------------------------------------------------------- value types
+
+
+@dataclass(frozen=True)
+class Leaf:
+    """One piece of text as the Brain port carries it (M7 design D5); a backend turns it into
+    `leafi.privacy.egress.Text` when it prepares the request. `book`: a book field — page text, sentence, expected
+    word, title — that the name detector skips; the protected-name lists still apply (ADR-0021 E2). The in-memory
+    provenance it once carried is gone (ADR-0021 E6)."""
+
+    value: str
+    book: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,10 +181,9 @@ class Notifier(Protocol):
 class Synthesizer(Protocol):
     """Implemented by `leafi.services.tts`; injected into the Hub by the composition root."""
 
-    async def synth(self, text: str, lang: str, *, slow: bool = False, provenance: Provenance = SYSTEM
-                    ) -> AudioClip: ...
-    # provenance: a learner's own words, or any line holding a protected name, never reach a cloud backend
-    # while PRIVACY_TTS_LEARNER_LINES=local (M5 D13).
+    async def synth(self, text: str, lang: str, *, slow: bool = False, book: bool = False) -> AudioClip: ...
+    # routes by content (ADR-0021): a line holding a protected name never reaches a cloud backend; `book` marks a
+    # book line (page text, a practice word), which the name detector skips (E2).
 
 
 # ---------------------------------------------------------------- the Brain (ADR-0017 §5; M7 design D5)
@@ -192,12 +200,11 @@ class Section:
 
 @dataclass(frozen=True)
 class Turn:
-    """One message. A single-turn purpose sends one user Turn; a multi-turn one (M7f's practice) the conversation,
-    each assistant Turn with the output provenance of what produced it. No tool calls."""
+    """One message. A single-turn purpose sends one user Turn; a multi-turn one (M7f's practice) the conversation.
+    No tool calls."""
 
     role: Literal["user", "assistant"]
     sections: tuple[Section, ...]
-    provenance: Provenance | None = None
 
 
 @dataclass

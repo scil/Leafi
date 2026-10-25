@@ -25,8 +25,7 @@ import anyio
 from pydantic import ValidationError
 
 from leafi.core import learner_store
-from leafi.core.ports import BrainBackend, CallAttempt, CallRecord, Leaf, ModelRequest
-from leafi.core.provenance import Provenance, of_output
+from leafi.core.ports import BrainBackend, CallAttempt, CallRecord, ModelRequest
 from leafi.core.storage import Store, dumps, now_iso
 from leafi.study.brain import routing
 from leafi.study.harness import busy
@@ -90,8 +89,7 @@ class Result:
     value: Any
     tier: str
     degraded: bool
-    record: CallRecord
-    provenance: Provenance | None = None  # D2: `of_output` over the leaves sent; every use of `value` carries it
+    record: CallRecord  # no output provenance: egress redacts by content (ADR-0021 E6)
 
 
 @dataclass
@@ -182,8 +180,7 @@ async def brain_call(brain: Brain, ctx: CallContext, purpose: str, make_request:
                         rec.outcome, rejection = "invalid", rejection_codes(e)
                         rec.detail = "; ".join(rejection)
                         break  # the next tier, with the codes
-                    return Result(value, step.tier, step.degraded, rec,
-                                  of_output(leaf.prov for leaf in leaves_of(req)))
+                    return Result(value, step.tier, step.degraded, rec)
                 if rec.outcome == "invalid":
                     rejection = [rec.detail or "type at ."]
                     break
@@ -213,10 +210,6 @@ def _cut(ctx: CallContext, attempt: CallAttempt, outcome: str, started: float) -
 
 
 # ---------------------------------------------------------------- audit rows (D11, D22)
-
-
-def leaves_of(req: ModelRequest) -> list[Leaf]:
-    return [leaf for t in req.turns for s in t.sections for leaf in s.leaves]
 
 
 def _row(ctx: CallContext, purpose: str, d: str, tier: str, backend: BrainBackend, req: ModelRequest,

@@ -20,8 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from leafi.core.ports import Section
-from leafi.core.provenance import Leaf, Provenance
+from leafi.core.ports import Leaf, Section
 from leafi.core.storage import loads
 from leafi.core.text import norm, words
 from leafi.study import pages, phrases
@@ -31,7 +30,6 @@ from leafi.study.brain.generate import GENERATORS, Generator
 from leafi.study.function_words import FUNCTION_WORDS
 from leafi.study.harness.state import Rejected
 
-PAGE = Provenance("page")
 KEYWORD_TYPES = ("completion", "recall", "wh-")
 OPEN_TYPES = ("open-ended", "distancing")
 
@@ -122,8 +120,8 @@ def quiz_sections(s, sel) -> tuple[Section, ...] | Rejected:
     if not sentences:
         return Rejected("no read sentences")
     n = s.ledger.cycle_quiz_left(s.cycle_id)
-    return (_section("page", [Leaf(f"{x.rid}: {x.text}", PAGE) for x in sentences]),
-            _section("cycle", [Leaf(f"i{i} '{k}'", PAGE) for i, k in items]),
+    return (_section("page", [Leaf(f"{x.rid}: {x.text}", book=True) for x in sentences]),
+            _section("cycle", [Leaf(f"i{i} '{k}'", book=True) for i, k in items]),
             _section("limits", [Leaf(f"at most {n} questions")]))
 
 
@@ -164,7 +162,7 @@ def read_aloud_sections(s, sel) -> tuple[Section, ...] | Rejected:
     sentences = current_sentences(s, sel.get("range", "rest"))
     if not sentences:
         return Rejected("nothing left to read on this page")
-    return (_section("page", [Leaf(f"{x.rid}: {x.text}", PAGE) for x in sentences]),)
+    return (_section("page", [Leaf(f"{x.rid}: {x.text}", book=True) for x in sentences]),)
 
 
 def read_aloud_check(s, sel, value: schemas.ReadAloudContent) -> dict | Rejected:
@@ -201,8 +199,9 @@ def add_cards_sections(s, sel) -> tuple[Section, ...] | Rejected:
     ctx = _contexts(s, [i for i, _ in items])
     if not items or not ctx:
         return Rejected("no cards to add")
-    return (_section("page", [Leaf(f"{rid} (for i{item}): {text}", PAGE) for rid, (item, text) in ctx.items()]),
-            _section("cycle", [Leaf(f"i{i} '{k}'", PAGE) for i, k in items]))
+    return (_section("page", [Leaf(f"{rid} (for i{item}): {text}", book=True)
+                              for rid, (item, text) in ctx.items()]),
+            _section("cycle", [Leaf(f"i{i} '{k}'", book=True) for i, k in items]))
 
 
 def add_cards_check(s, sel, value: schemas.AddCardsContent) -> dict | Rejected:

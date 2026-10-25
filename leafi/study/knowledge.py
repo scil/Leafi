@@ -12,7 +12,6 @@ import uuid
 from collections import defaultdict
 
 from leafi.core import learner_store
-from leafi.core.provenance import Provenance
 from leafi.core.storage import Store, dumps, now_iso
 from leafi.core.text import norm
 
@@ -42,10 +41,8 @@ def upsert_item(store: Store, learner_id: int, kind: str, key: str, language: st
 
 def add_encounter(store: Store, item_id: int, *, session_id: int | None, trigger: str,
                   context_sentence: str = "", revision_id: int | None = None, explanation_en: str | None = None,
-                  explanation_zh: str | None = None, example: str | None = None,
-                  explanation_provenance: Provenance | None = None) -> int:
-    """The owner is the item's learner, and the write is fenced by them (ADR-0021 E9). `explanation_provenance`
-    is accepted for older callers and no longer stored."""
+                  explanation_zh: str | None = None, example: str | None = None) -> int:
+    """The owner is the item's learner, and the write is fenced by them (ADR-0021 E9)."""
     learner_id = store.one("SELECT learner_id FROM knowledge_items WHERE id=?", (item_id,))["learner_id"]
     with store.transaction():  # the encounter and the Difficulties it feeds change together (review 1 #17)
         enc = learner_store.insert(

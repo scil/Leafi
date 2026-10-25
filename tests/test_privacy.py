@@ -120,7 +120,7 @@ async def test_no_canary_leaves_in_any_outbound_body(settings):
 
 def test_the_parent_notification_names_a_learner_without_a_school_answer(settings):
     """Owner decision 2026-10-24 (M7 design A1, rev 6 review #17): with no school answer the notification now names
-    the learner, as learner-derived text (so egress replaces the name by its surrogate); a guest is "A reader"
+    the learner in a non-book `Text` (so egress replaces the name by its surrogate); a guest is "A reader"
     (ADR-0021: there is no `cloud.text` to switch off)."""
     from leafi.core import learner_store
     from leafi.core.ports import Counts
@@ -132,7 +132,7 @@ def test_the_parent_notification_names_a_learner_without_a_school_answer(setting
     guest = learner_store.create(store, "Guest", kind="guest")
     notifier = NotifierDevice(options={"egress": e}, settings=settings)
     body = notifier.body(Counts(kid, None, pages=1))
-    assert body.value.startswith(NAME) and (body.provenance, body.sources) == ("derived_from_learner", (kid,))
+    assert body.value.startswith(NAME) and not body.is_book
     assert notifier.body(Counts(guest, None, pages=1)).startswith("A reader")
 
 
@@ -153,7 +153,7 @@ async def test_a_learners_own_words_leave_only_pseudonymised(settings):
 
     def brain_body() -> Outgoing:
         return Outgoing(path="/v1/messages", json={"model": "m", "max_tokens": 5, "messages": [
-            {"role": "user", "content": Text(said, "learner", (kid,))}]})
+            {"role": "user", "content": Text(said)}]})
 
     p = e.prepare("anthropic", "generate", brain_body(), learner_id=kid)
     async with e.client("anthropic") as c:

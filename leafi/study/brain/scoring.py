@@ -15,8 +15,7 @@ from __future__ import annotations
 import time
 from typing import Literal
 
-from leafi.core.ports import Section, Utterance
-from leafi.core.provenance import Leaf, Provenance
+from leafi.core.ports import Leaf, Section, Utterance
 from leafi.core.text import norm, words
 from leafi.core.wordinfo import NullWordInfo, WordInfo
 from leafi.study.alignment import EXACT, PHONES, Tok, pair_class
@@ -58,12 +57,12 @@ def cloze_word(u: Utterance | None, cloze: str, info: WordInfo | None = None) ->
 VERDICT = {"yes": "success", "no": "fail", "cannot_tell": "unavailable"}
 
 
-def judge_sections(u: Utterance, item_key: str, prompt: str, learner_id: int) -> tuple[Section, ...]:
-    """What a `judge` call carries: the item's key (page text), the prompt Leafi asked (its own line), and the
-    learner's answer — learner text, so the call needs an eligible backend (D10, ADR-0018 §2)."""
-    return (Section("item", (Leaf(f"word '{item_key}'", Provenance("page")),)),
+def judge_sections(u: Utterance, item_key: str, prompt: str) -> tuple[Section, ...]:
+    """What a `judge` call carries: the item's key (a book field), the prompt Leafi asked (its own line), and the
+    learner's answer — a non-book leaf that egress redacts by content (D10, ADR-0021 E1/E2)."""
+    return (Section("item", (Leaf(f"word '{item_key}'", book=True),)),
             Section("prompt", (Leaf(prompt),)),
-            Section("answer", (Leaf(u.text, Provenance("learner", (learner_id,))),)))
+            Section("answer", (Leaf(u.text),)))
 
 
 async def item_used(s, u: Utterance | None, item_key: str, prompt: str) -> Outcome:
@@ -74,7 +73,7 @@ async def item_used(s, u: Utterance | None, item_key: str, prompt: str) -> Outco
     from leafi.study.brain import call as bc
     from leafi.study.brain import generate, prompts, routing, schemas
 
-    sections = (generate.learner_context(s), *judge_sections(u, item_key, prompt, s.learner_id))
+    sections = (generate.learner_context(s), *judge_sections(u, item_key, prompt))
     make = prompts.single_request("judge", prompts.JUDGE_SYSTEM, sections, schemas.Judgement,
                                   learner_id=s.learner_id, session_id=s.session_id)
     ctx = generate.context(s, time.monotonic() + routing.moment_s("feedback", s.mouth))

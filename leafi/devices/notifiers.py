@@ -73,7 +73,7 @@ class NotifierDevice:
             row = e._conn().execute("SELECT kind, forgetting, display_name FROM learners WHERE id=?",
                                     (counts.learner_id,)).fetchone()
             if row is not None and row[0] == "learner" and not row[1]:  # egress replaces the name (ADR-0021 E6)
-                return Text(row[2] + tail, "derived_from_learner", (counts.learner_id,))
+                return Text(row[2] + tail)  # not a book field: the detector scans it too
         return "A reader" + tail
 
     async def notify(self, counts: Counts) -> None:
@@ -96,8 +96,7 @@ class NotifierDevice:
                 log.error("bark notification failed", exc_info=True)
         if self.telegram_token and self.telegram_chat:
             try:
-                text = body if isinstance(body, str) else type(body)(f"{TITLE}\n{body.value}", body.provenance,
-                                                                       body.sources)
+                text = body if isinstance(body, str) else type(body)(f"{TITLE}\n{body.value}")
                 p = e.prepare("telegram", "notify", Outgoing(path=f"/bot{self.telegram_token}/sendMessage",
                                                              form={"chat_id": self.telegram_chat, "text": text}),
                               **kw)

@@ -1,40 +1,12 @@
-"""From a `ModelRequest` to the bytes a backend sends (M7 design D3, D6): the per-leaf filter, then the Anthropic
-Messages body in the one rendering order, with its cache breakpoints. Shared by every backend on the port."""
+"""From a `ModelRequest` to the bytes a backend sends (M7 design D6): the Anthropic Messages body in the one
+rendering order, with its cache breakpoints. Shared by every backend on the port. No leaf is filtered by its
+source: egress redacts every text by content (ADR-0021 E1; the per-leaf filter went with E6)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from leafi.core.ports import ModelRequest, Section, Turn
-from leafi.core.provenance import Leaf, Provenance
-
-
-class AssistantTurnWithheld(Exception):
-    """A leaf of an earlier assistant turn may no longer leave (e.g. `cloud.text` switched off mid-practice): the
-    conversation cannot be sent with a hole in it, so the request is refused (owner decision B2, rev 6 #15)."""
-
-
-def filter_turns(turns: tuple[Turn, ...], may_send: Callable[[Leaf], bool]) -> tuple[tuple[Turn, ...], int]:
-    """D3: every leaf the egress gate would refuse is replaced by its substitute (as page text: an expected word
-    and its category come from the page and the harness) or dropped; returns the turns and how many were held."""
-    held = 0
-    out = []
-    for t in turns:
-        sections = []
-        for s in t.sections:
-            leaves = []
-            for leaf in s.leaves:
-                if may_send(leaf):
-                    leaves.append(leaf)
-                    continue
-                if t.role == "assistant":
-                    raise AssistantTurnWithheld(s.name)
-                held += 1
-                if leaf.substitute is not None:
-                    leaves.append(Leaf(leaf.substitute, Provenance("page")))
-            sections.append(Section(s.name, tuple(leaves), s.cache))
-        out.append(Turn(t.role, tuple(sections), t.provenance))
-    return tuple(out), held
+from leafi.core.ports import Leaf, ModelRequest, Turn
 
 
 def _escape(text: str, tag: str) -> str:
@@ -56,7 +28,7 @@ def messages_body(req: ModelRequest, turns: tuple[Turn, ...], text: Callable[[Le
             if not s.leaves:
                 continue
             blocks.append({"type": "text", "text": f"<{s.name}>"})
-            blocks.extend({"type": "text", "text": text(Leaf(_escape(leaf.value, s.name), leaf.prov))}
+            blocks.extend({"type": "text", "text": text(Leaf(_escape(leaf.value, s.name), leaf.book))}
                           for leaf in s.leaves)
             close = {"type": "text", "text": f"</{s.name}>"}
             if s.cache and t.role == "user":  # the session's learner context: one more breakpoint (owner 2026-10-24)

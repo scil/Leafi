@@ -5,7 +5,6 @@ Inputs, a scripted console, a mock Brain on the port; nothing speaks."""
 from __future__ import annotations
 
 from leafi.core import learner_store
-from leafi.core.provenance import Provenance
 from leafi.services.brain.mock import MockModel
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
@@ -53,8 +52,7 @@ async def test_a_quiz_is_built_from_one_generate_call_and_scored_by_check(settin
     sections = model.requests[0].turns[0].sections
     assert sections[0].name == "learner_context" and sections[0].cache  # owner decision 2026-10-24
     assert not any("a wild animal" in leaf.value for sec in sections for leaf in sec.leaves)
-    status, outcome, _ = await run(w, "quiz", {}, content=a.content, content_owner="brain",
-                                   content_provenance=a.content_provenance)
+    status, outcome, _ = await run(w, "quiz", {}, content=a.content, content_owner="brain")
     assert status == "completed" and outcome == {"questions": 3,
                                                  "results": ["correct", "incorrect", "unavailable"]}
     events = [r["outcome"] for r in w.store.all("SELECT outcome FROM retrieval_events ORDER BY id")]
@@ -118,7 +116,8 @@ async def test_the_learner_context_is_byte_stable_and_rebuilt_only_when_it_chang
     values = [leaf.value for leaf in second.leaves]
     assert "error 'dark' substitution" in values and "heard 'dork' for 'dark'" in values
     heard = next(leaf for leaf in second.leaves if leaf.value.startswith("heard"))
-    assert heard.prov.cls == "learner" and heard.substitute == "'dark': a substitution (words withheld)"  # D3
+    assert not heard.book  # the heard word is not a book field: egress's detector scans it (ADR-0021 E2)
+    assert all(leaf.book for leaf in second.leaves if leaf is not heard)
 
 
 async def test_generate_answer_and_judge_all_start_with_the_same_learner_context(settings):
@@ -169,7 +168,7 @@ async def _asked(settings, *later):
     return w
 
 
-async def test_a_learners_question_is_answered_once_under_the_calls_provenance(settings):
+async def test_a_learners_question_is_answered_once(settings):
     w = await _asked(settings, "why was it dark", "done")
     model = _brain(w, {"answer": {"answer": "Because it was late at night.", "grounded": True}})
     status, outcome, _ = await run(w, "learner_questions", {"max_turns": 3})
@@ -177,7 +176,7 @@ async def test_a_learners_question_is_answered_once_under_the_calls_provenance(s
     (req,) = model.requests
     assert req.purpose == "answer" and len(req.turns) == 1
     question = next(sec for sec in req.turns[0].sections if sec.name == "question")
-    assert question.leaves[0].value == "why was it dark" and question.leaves[0].prov.cls == "learner"
+    assert question.leaves[0].value == "why was it dark" and not question.leaves[0].book
     assert any("Because it was late at night." in t for t in w.face.texts)
     assert w.store.one("SELECT purpose, outcome FROM brain_calls")[:] == ("answer", "ok")
 
@@ -221,8 +220,7 @@ async def test_brain_written_cards_store_the_brain_text(settings):
     enc = knowledge.add_encounter(w.store, item, session_id=w.s.session_id, trigger="explain",
                                   context_sentence="The fox ran home.", explanation_en="a wild animal")
     content = {"cards": {item: {"front": "fox", "back": "a small wild dog", "sentence": "The fox ran home."}}}
-    status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]}, content=content, content_owner="brain",
-                                   content_provenance=Provenance("derived_from_learner", (w.s.learner_id,)))
+    status, outcome, _ = await run(w, "add_cards", {"item_ids": [item]}, content=content, content_owner="brain")
     assert outcome["cards"] == 1
     assert w.store.one("SELECT back FROM anki_outbox")["back"] == "a small wild dog"
     assert enc

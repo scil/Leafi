@@ -10,7 +10,6 @@ import pytest
 
 from leafi.core import learner_store
 from leafi.core.ports import CallRecord, Leaf, ModelRequest, Section, Turn
-from leafi.core.provenance import Provenance
 from leafi.core.storage import Store
 from leafi.study.brain import call as bc
 from leafi.study.brain import routing
@@ -67,7 +66,7 @@ def ctx(tmp_path):
     return c
 
 
-def _req(leaves=(Leaf("page text", Provenance("page")),)):
+def _req(leaves=(Leaf("page text", book=True),)):
     def make(model, tier, rejection, budget, attempt, timeout):
         sections = [Section("page", tuple(leaves))]
         if rejection:

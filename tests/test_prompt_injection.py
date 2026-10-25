@@ -47,12 +47,11 @@ def test_every_m7c_purpose_declares_its_tagged_sections_data():
 
 
 def test_a_learners_question_and_page_text_stay_inside_their_own_tags():
-    from leafi.core.ports import Section
-    from leafi.core.provenance import Leaf, Provenance
+    from leafi.core.ports import Leaf, Section
     from leafi.study.brain import prompts, schemas
 
-    sections = (Section("page", (Leaf(INJECTED, Provenance("page")),)),
-                Section("question", (Leaf(INJECTED, Provenance("learner", (1,))),)))
+    sections = (Section("page", (Leaf(INJECTED, book=True),)),
+                Section("question", (Leaf(INJECTED),)))
     _, body = _body(prompts.single_request("answer", prompts.ANSWER_SYSTEM, sections, schemas.AnswerContent,
                                            learner_id=1, session_id=1))
     texts = _texts(body)

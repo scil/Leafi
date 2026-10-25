@@ -1,10 +1,11 @@
 """The observation sent to `decide` (ADR-0017 §4; M7 design D3, D6, D12, D15): sections in the one rendering order,
-every piece a `Leaf` with its provenance, rendered ids for everything the Brain may cite.
+every piece a `Leaf` (book fields marked, ADR-0021 E2), rendered ids for everything the Brain may cite.
 
 Order, stable first (D6): `page`, `memory`, `cycle`, `menu`, then the volatile `last_activity`, `session`, `turn`.
-A learner's own words carry a substitute (D3): if they may not leave, the expected word and its category go
-instead. Ids are rendered (`s<page_read>.<sentence>`, `m<miscue>`, `i<item>`, `a<activity>`) and `ids` maps them
-back, so a decision can only cite what this observation showed (D15). The turn is an opaque counter, never a
+A learner's heard word is a non-book leaf: egress redacts it by content like every text (ADR-0021 E1; the
+provenance and substitute it once carried are gone, E6). Ids are rendered (`s<page_read>.<sentence>`,
+`m<miscue>`, `i<item>`, `a<activity>`) and `ids` maps them back, so a decision can only cite what this
+observation showed (D15). The turn is an opaque counter, never a
 session or learner id (D12).
 """
 
@@ -12,10 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from leafi.core.ports import Section
-from leafi.core.provenance import Leaf, Provenance
-
-PAGE = Provenance("page")
+from leafi.core.ports import Leaf, Section
 
 
 @dataclass(frozen=True)
@@ -64,24 +62,23 @@ def observe(o: ObservationInput) -> Observation:
     def item_leaf(it: Item) -> Leaf:
         rid = f"i{it.item_id}"
         ids[rid] = ("item", it.item_id)
-        return Leaf(f"{rid} {it.kind} '{it.key}'", PAGE)  # item keys come from the page
+        return Leaf(f"{rid} {it.kind} '{it.key}'", book=True)  # item keys come from the page
 
     page = []
     for sid, text in o.sentences:
         rid = f"s{o.page_read_id}.{sid}"
         ids[rid] = ("sentence", sid)
-        page.append(Leaf(f"{rid}: {text}", PAGE))
+        page.append(Leaf(f"{rid}: {text}", book=True))
     if o.unread_from is not None:
         page.append(Leaf(f"unread from s{o.page_read_id}.{o.unread_from}"))
-    memory = [Leaf(f"difficulty '{w}' {weight:.1f}", PAGE) for w, weight in o.difficulties[:10]]
+    memory = [Leaf(f"difficulty '{w}' {weight:.1f}", book=True) for w, weight in o.difficulties[:10]]
     cycle = []
     for c in o.candidates:
         rid = f"m{c.miscue_id}"
         ids[rid] = ("candidate", c.miscue_id)
-        cycle.append(Leaf(f"{rid} expected '{c.expected}' {c.origin}", PAGE))
+        cycle.append(Leaf(f"{rid} expected '{c.expected}' {c.origin}", book=True))
         if c.heard:
-            cycle.append(Leaf(f"{rid} heard '{c.heard}'", Provenance("learner", (c.learner_id,)),
-                              substitute=f"{rid} heard: a {c.origin} (words withheld)"))
+            cycle.append(Leaf(f"{rid} heard '{c.heard}'"))
     cycle += [item_leaf(it) for it in o.new_items]
     if o.recall_due:
         cycle.append(Leaf("recall due:"))

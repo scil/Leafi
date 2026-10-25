@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from .ports import SYSTEM, Counts, Display, Eye, Face, Listener, Mouth, Notifier, Provenance, Synthesizer
+from .ports import Counts, Display, Eye, Face, Listener, Mouth, Notifier, Synthesizer
 
 log = logging.getLogger("leafi.hub")
 
@@ -200,10 +200,10 @@ class Hub:
 
         await asyncio.gather(*(one(n, f) for n, f in self.faces.items()))
 
-    async def say(self, text: str, lang: str = "en", *, slow: bool = False,
-                  provenance: Provenance = SYSTEM) -> float:
+    async def say(self, text: str, lang: str = "en", *, slow: bool = False, book: bool = False) -> float:
         """Faces first, then TTS → Mouths per policy. Returns the max drain_s of the Mouths that played.
-        `provenance` reaches the Synthesizer, which routes a learner's own words off the cloud (M5 D13)."""
+        `book` (a book line: page text, a practice word) reaches the Synthesizer, which routes by content and skips
+        the name detector for it (ADR-0021 E2; the provenance it once passed is gone, E6)."""
         generation = self._generation
         async with self._lock:
             if generation != self._generation:  # cleared by stop_speaking() while queued
@@ -217,7 +217,7 @@ class Hub:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self.say_timeout_s
             try:
-                clip = await asyncio.wait_for(self.synthesizer.synth(text, lang, slow=slow, provenance=provenance),
+                clip = await asyncio.wait_for(self.synthesizer.synth(text, lang, slow=slow, book=book),
                                               self.say_timeout_s)
             except Exception:
                 log.error("TTS failed; text shown on Faces only", exc_info=True)
@@ -310,7 +310,7 @@ class ListeningGate:
         self._lock = asyncio.Lock()
 
     async def speak(self, hub: Hub, text: str, lang: str = "en", *, slow: bool = False,
-                    provenance: Provenance = SYSTEM) -> None:
+                    book: bool = False) -> None:
         # pause → speak → drain → resume is one serialised operation, so a queued line never plays while
         # listening has been reopened by the previous one (review 1 #9).
         async with self._lock:
@@ -318,7 +318,7 @@ class ListeningGate:
             self.is_open = False
             drain: float | None = None
             try:
-                drain = await hub.say(text, lang, slow=slow, provenance=provenance)
+                drain = await hub.say(text, lang, slow=slow, book=book)
             finally:
                 await self.listener.resume(after_s=hub.max_drain_s() if drain is None else drain)
                 self.is_open = True

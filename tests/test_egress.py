@@ -98,7 +98,7 @@ def _sdk(w) -> anthropic.AsyncAnthropic:
 
 def _brain_body(w, text: str) -> dict:
     return {"model": "claude-x", "max_tokens": 50, "system": "You help a child read.",
-            "messages": [{"role": "user", "content": Text(text, "learner", (w.rocco,))}]}
+            "messages": [{"role": "user", "content": Text(text)}]}
 
 
 def _log(w):
@@ -161,7 +161,7 @@ async def test_text_is_redacted_by_content_and_never_refused_for_its_source(worl
     `cloud.text` to switch off), a guest, text naming no source learner, parent text — it leaves redacted."""
     w = world
     leo = learner_store.create(w.store, "Leo")
-    body = {"messages": [{"role": "user", "content": Text("Leo here", "learner", (leo,))}]}
+    body = {"messages": [{"role": "user", "content": Text("Leo here")}]}
     sent = w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
     assert b"Leo" not in sent.body  # no school answer, still pseudonymised
     privacy.set_school(w.store, leo, None)
@@ -170,11 +170,10 @@ async def test_text_is_redacted_by_content_and_never_refused_for_its_source(worl
     sent = w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
     assert b"here" in sent.body and b"Leo" not in sent.body  # sent, redacted
     guest = learner_store.create(w.store, "Guest", kind="guest")  # as guests.start_guest stores every guest
-    sent = w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("me and Leo", "learner", (guest,))}),
+    sent = w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("me and Leo")}),
                             learner_id=guest)
     assert b"me and" in sent.body and b"Leo" not in sent.body  # a guest's words leave too, listed names replaced
-    w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "learner")}), learner_id=w.rocco)
-    w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)
+    w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x")}), learner_id=w.rocco)
     w.settings.local_models = "local:m1"
     local = w.egress.prepare("local", "generate", Outgoing(json={**body, "model": "m1"}), learner_id=leo,
                              model="m1")  # a local model may read it
@@ -182,7 +181,7 @@ async def test_text_is_redacted_by_content_and_never_refused_for_its_source(worl
 
 
 def _local_body(text: str, learner: int, model: str) -> dict:
-    return {"model": model, "messages": [{"role": "user", "content": Text(text, "learner", (learner,))}]}
+    return {"model": model, "messages": [{"role": "user", "content": Text(text)}]}
 
 
 async def test_a_model_bound_destination_is_local_only_for_a_listed_model(world):
@@ -223,26 +222,6 @@ async def test_an_unlisted_local_model_is_treated_as_cloud_and_redacted(world):
 async def _send(w, dest: str, p) -> httpx2.Response:
     async with w.egress.client(dest) as c:
         return await c.send(p.request())
-
-
-async def test_a_parent_origin_source_passes_admit_and_is_never_gated(world):
-    """M7 design D2 / S1: source 0 marks parent origin in a mixed output. It never reaches the version snapshot
-    as a 'learner 0' (that refused every such request at admit); since ADR-0021 no source gates a send."""
-    from leafi.core.provenance import PARENT_SOURCE
-
-    w = world
-    mixed = {"model": "m1", "messages": [{"role": "user",
-                                          "content": Text("Rocco likes rockets", "derived_from_learner",
-                                                          (w.rocco, PARENT_SOURCE))}]}
-    w.settings.local_models = "local:m1"
-    p = w.egress.prepare("local", "generate", Outgoing(path="/v1/chat", json=mixed), learner_id=w.rocco, model="m1")
-    assert (await _send(w, "local", p)).status_code == 200  # admitted: no "source learner 0 is gone"
-    p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=mixed), learner_id=w.rocco)
-    assert (await _send(w, "fake", p)).status_code == 200
-    w.egress.prepare("fake", "generate", Outgoing(json=mixed), learner_id=w.rocco)
-    only_parent = {"t": Text("x", "derived_from_learner", (PARENT_SOURCE,))}
-    w.egress.prepare("fake", "generate", Outgoing(json=only_parent), learner_id=w.rocco)
-    assert _log(w)[:2] == [("local", "generate", w.rocco, "sent", 1), ("fake", "generate", w.rocco, "sent", 1)]
 
 
 async def test_the_ollama_adapter_names_its_model_and_is_local_only_when_listed(world):
@@ -325,8 +304,7 @@ async def test_path_fields_are_filtered_before_quoting(world):
     w = world
     p = w.egress.prepare("fake", "notify", Outgoing(method="GET", path="/key/{title}/{body}",
                                                     path_fields={"title": "Leafi",
-                                                                 "body": Text("Rocco read 3 pages", "derived_from_learner",
-                                                                              (w.rocco,))}),
+                                                                 "body": Text("Rocco read 3 pages")}),
                          learner_id=w.rocco)
     async with w.egress.client("fake") as c:
         r = await c.send(p.request())
@@ -478,11 +456,11 @@ async def test_the_detector_settles_off_at_once_and_never_loads_on_the_loop_in_a
     monkeypatch.setattr(detector, "load", lambda s: gate.wait(5) and "DET")
     e.start_detector()
     assert e.detector_state == "loading"
-    body = Outgoing(json={"m": Text("Rocco here", "learner", (w.rocco,))})
+    body = Outgoing(json={"m": Text("Rocco here")})
     with runtime.attributed(w.rocco), pytest.raises(eg.Refused, match="detector not ready"):
         e.prepare("fake", "generate", body, learner_id=w.rocco)
     with runtime.attributed(w.rocco), pytest.raises(eg.Refused, match="detector not ready"):  # any non-book text
-        e.prepare("fake", "generate", Outgoing(json={"m": Text("a hint", "system")}), learner_id=w.rocco)
+        e.prepare("fake", "generate", Outgoing(json={"m": Text("a hint")}), learner_id=w.rocco)
     with runtime.attributed(w.rocco):  # book text alone does not wait for the detector (ADR-0021 E3)
         e.prepare("fake", "generate", Outgoing(json={"m": Text("Rocco went home.", book=True)}), learner_id=w.rocco)
     gate.set()

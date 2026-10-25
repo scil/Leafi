@@ -39,7 +39,7 @@ class OllamaBrain:
                 "response_format": {"type": "json_schema", "json_schema": {"name": req.intent.value,
                                                                            "schema": SCHEMAS[req.intent]}},
                 "messages": [{"role": "system", "content": SYSTEM},
-                             {"role": "user", "content": Text(build_prompt(req), "page")}]}
+                             {"role": "user", "content": Text(build_prompt(req), book=True)}]}
         e = self.egress()
         try:
             p = e.prepare(DESTINATION, "generate", Outgoing(path="/v1/chat/completions", json=body),

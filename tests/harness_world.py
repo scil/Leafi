@@ -43,7 +43,7 @@ def make_world(tmp_path, settings, script, *, page=PAGE_1, number=1, values=None
 
 
 async def run(w: World, kind: str, params: dict | None = None, *, continuation: bool = False, **activity):
-    """`activity`: further `Activity` fields (Brain content: `content`, `content_owner`, `content_provenance`)."""
+    """`activity`: further `Activity` fields (Brain content: `content`, `content_owner`, `degraded`)."""
     params = dict(params or {})
     if continuation:
         params["continuation"] = True

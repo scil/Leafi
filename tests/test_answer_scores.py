@@ -51,7 +51,7 @@ async def test_item_used_is_one_judge_call_and_cannot_tell_is_unavailable(tmp_pa
     (req,) = model.requests
     assert req.purpose == "judge" and "Examples:" in req.system  # the fixed few-shot examples (D16)
     answer = next(sec for sec in req.turns[0].sections if sec.name == "answer").leaves[0]
-    assert answer.prov.cls == "learner"
+    assert not answer.book  # the learner's answer is not a book field: egress's detector scans it
     s2, _ = _judged(tmp_path / "b", {"verdict": "cannot_tell"})
     assert await item_used(s2, typed_utterance("through it"), "through", "Use it.") == "unavailable"
     s3, _ = _judged(tmp_path / "c", {"verdict": "no"})

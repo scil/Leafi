@@ -68,7 +68,7 @@ class ClaudeBrain:
             "model": self.model,
             "max_tokens": 4096,
             "system": SYSTEM,
-            "messages": [{"role": "user", "content": Text(build_prompt(req), "page")}],
+            "messages": [{"role": "user", "content": Text(build_prompt(req), book=True)}],
             "output_config": {"format": {"type": "json_schema", "schema": SCHEMAS[req.intent]}},
         }
 
@@ -105,27 +105,23 @@ class ClaudeBrain:
 
     # ---------------------------------------------------------------- the M7 port (design D3, D5, D6)
     async def call(self, req):
-        """Filter, render, prepare through egress (with the model and the caller's budget), send through the
+        """Render, prepare through egress (with the model and the caller's budget), send through the
         mediating client; every outcome is a `CallRecord` (a cancellation propagates)."""
         import json
         import time
 
         from leafi.core.ports import CallRecord
         from leafi.privacy.egress import TOKEN_HEADER, Outgoing, Refused, Text
-        from leafi.services.brain.render import AssistantTurnWithheld, filter_turns, messages_body
+        from leafi.services.brain.render import messages_body
 
         if not self._key:
             return CallRecord("failed", model=req.model, detail="no ANTHROPIC_API_KEY")
         e = self.egress()
 
         def text(leaf):
-            return Text(leaf.value, leaf.prov.cls, leaf.prov.sources)
+            return Text(leaf.value, book=leaf.book)
 
-        try:
-            turns, _held = filter_turns(req.turns, lambda leaf: e.may_send(DESTINATION, req.model, text(leaf)))
-        except AssistantTurnWithheld:
-            return CallRecord("refused", model=req.model, detail="an earlier turn may no longer leave")
-        body = messages_body(req, turns, text)
+        body = messages_body(req, req.turns, text)
         try:
             prepared = e.prepare(DESTINATION, req.purpose, Outgoing(path="/v1/messages", json=body),
                                  learner_id=req.learner_id, session_id=req.session_id, ttl_s=req.timeout_s + 1,
