@@ -157,15 +157,16 @@ async def test_a_body_or_header_the_adapter_did_not_prepare_is_refused(world):
 
 
 async def test_text_is_redacted_by_content_and_never_refused_for_its_source(world):
-    """ADR-0021 E1 (owner 2026-10-24): no text is refused for where it came from — a learner with `cloud.text` off,
-    a guest, text naming no source learner, parent text with CLOUD_PARENT_TEXT off — it leaves redacted."""
+    """ADR-0021 E1, E4 (owner 2026-10-24): no text is refused for where it came from — a learner (there is no
+    `cloud.text` to switch off), a guest, text naming no source learner, parent text — it leaves redacted."""
     w = world
     leo = learner_store.create(w.store, "Leo")
     body = {"messages": [{"role": "user", "content": Text("Leo here", "learner", (leo,))}]}
     sent = w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
     assert b"Leo" not in sent.body  # no school answer, still pseudonymised
     privacy.set_school(w.store, leo, None)
-    privacy.write(w.store, leo, "cloud.text", False)
+    with pytest.raises(privacy.InvalidPrivacySetting, match="removed by ADR-0021"):
+        privacy.write(w.store, leo, "cloud.text", False)
     sent = w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
     assert b"here" in sent.body and b"Leo" not in sent.body  # sent, redacted
     guest = learner_store.create(w.store, "Guest", kind="guest")  # as guests.start_guest stores every guest
@@ -173,7 +174,6 @@ async def test_text_is_redacted_by_content_and_never_refused_for_its_source(worl
                             learner_id=guest)
     assert b"me and" in sent.body and b"Leo" not in sent.body  # a guest's words leave too, listed names replaced
     w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "learner")}), learner_id=w.rocco)
-    w.settings.cloud_parent_text = False
     w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)
     w.settings.local_models = "local:m1"
     local = w.egress.prepare("local", "generate", Outgoing(json={**body, "model": "m1"}), learner_id=leo,
@@ -212,7 +212,6 @@ async def test_an_unlisted_local_model_is_treated_as_cloud_and_redacted(world):
     assert b"Rocco" not in sent.body  # treated as cloud: replaced by a surrogate
     leo = learner_store.create(w.store, "Leo")
     privacy.set_school(w.store, leo, None)
-    privacy.write(w.store, leo, "cloud.text", False)
     sent = w.egress.prepare("local", "generate", Outgoing(json=_local_body("Leo here", leo, "m2")), learner_id=leo,
                             model="m2")
     assert b"Leo" not in sent.body  # ADR-0021: sent redacted, not refused
@@ -240,7 +239,6 @@ async def test_a_parent_origin_source_passes_admit_and_is_never_gated(world):
     assert (await _send(w, "local", p)).status_code == 200  # admitted: no "source learner 0 is gone"
     p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=mixed), learner_id=w.rocco)
     assert (await _send(w, "fake", p)).status_code == 200
-    w.settings.cloud_parent_text = False
     w.egress.prepare("fake", "generate", Outgoing(json=mixed), learner_id=w.rocco)
     only_parent = {"t": Text("x", "derived_from_learner", (PARENT_SOURCE,))}
     w.egress.prepare("fake", "generate", Outgoing(json=only_parent), learner_id=w.rocco)
@@ -289,7 +287,7 @@ async def test_a_change_between_prepare_and_send_refuses(world):
         await _sdk(w).messages.create(**p.json, extra_headers={eg.TOKEN_HEADER: p.token_id})
     p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=_brain_body(w, "hi")),
                          learner_id=w.rocco)
-    privacy.write(w.store, w.rocco, "cloud.text", False)
+    privacy.write(w.store, w.rocco, "privacy.media", "never")
     with pytest.raises(anthropic.PermissionDeniedError, match="privacy settings of learner"):
         await _sdk(w).messages.create(**p.json, extra_headers={eg.TOKEN_HEADER: p.token_id})
     assert w.server.requests == []
@@ -367,11 +365,11 @@ async def test_the_grant_ends_with_the_response(world):
 async def test_an_env_privacy_change_while_running_refuses_study_egress(world, tmp_path):
     w = world
     env = tmp_path / ".env"
-    env.write_text("CLOUD_PARENT_TEXT=false\n", encoding="utf-8")
+    env.write_text("PRIVACY_NAME_DETECTOR=false\n", encoding="utf-8")
     e = eg.Egress(w.settings, registry=w.egress.registry, env_file=env)
     try:
         p = e.prepare("fake", "generate", Outgoing(path="/v1/messages", json=_brain_body(w, "hi")), learner_id=w.rocco)
-        env.write_text("CLOUD_PARENT_TEXT=true\n", encoding="utf-8")
+        env.write_text("PRIVACY_NAME_DETECTOR=true\n", encoding="utf-8")
         async with e.client("fake") as c:
             r = await c.send(p.request())
         assert r.status_code == 403 and "household privacy" in r.json()["refused"]

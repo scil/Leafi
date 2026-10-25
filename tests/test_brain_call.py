@@ -151,15 +151,14 @@ async def test_a_cancelled_call_still_leaves_its_row_and_propagates(ctx, scaled)
     assert _rows(ctx) == [("fast", "cancelled")] and a.needs_reset
 
 
-async def test_answer_and_judge_need_the_learners_cloud_text_for_a_cloud_backend(ctx, scaled):
+async def test_answer_and_judge_may_use_a_cloud_backend_for_any_learner(ctx, scaled):
+    """ADR-0021 E6: no `cloud.text` gate on `answer` and `judge`; egress redacts what they carry."""
     import time
 
     ctx.deadline = time.monotonic() + 3
     a = Fake("a", [("ok", {})])
     brain = _brain([(a, "m")], [(a, "m")])
-    assert not brain.routable("answer", ctx) and not brain.eligible("fast", "judge", ctx)
-    ctx.may_use_cloud_text = True
-    assert brain.routable("answer", ctx)
+    assert brain.routable("answer", ctx) and brain.eligible("fast", "judge", ctx) == [(a, "m")]
 
 
 async def test_an_audit_row_naming_a_forgotten_learner_keeps_no_text(ctx, scaled):

@@ -5,10 +5,10 @@ retention, security.md); each entry's sidecar records the line's provenance (ADR
 Backends: `kokoro` (en, local), `edge` (zh, cloud text-to-speech through `leafi.privacy.egress`), `mock`
 (silence, tests).
 
-Routing by provenance (M5 design D13), after the per-language backend choice: while
-`PRIVACY_TTS_LEARNER_LINES` is `local` (the default), a learner's own words, or any line holding a protected name,
-go to a local backend — so edge-tts never speaks a surrogate; with no local backend the line raises
-`LocalOnlyUnavailable` and the Hub shows it on Faces only.
+Routing (M5 design D13), after the per-language backend choice: a learner's own words, or any line holding a
+protected name, go to a local backend — so edge-tts never speaks a surrogate; with no local backend the line raises
+`LocalOnlyUnavailable` and the Hub shows it on Faces only. `PRIVACY_TTS_LEARNER_LINES` is gone (ADR-0021 E4): the
+service always keeps such lines local; ADR-0021 E7 then routes by content alone.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ REGISTRY = Registry("tts", {
 })
 
 
-LEARNER_LINES = ("local", "cloud")  # PRIVACY_TTS_LEARNER_LINES (ADR-0018 §5)
 EDGE_MODES = ("library",)  # TTS_EDGE_MODE; `mediated` (ADR-0018 §2) is not built yet
 
 
@@ -119,5 +118,4 @@ def create(settings: Any, *, en: str | None = None, zh: str | None = None) -> Tt
             from leafi.privacy import runtime
 
             return runtime.get(_s).contains_protected(text)
-    return TtsService(built, Path(settings.cache_dir) / "tts",
-                      learner_lines=getattr(settings, "privacy_tts_learner_lines", "local"), protected=protected)
+    return TtsService(built, Path(settings.cache_dir) / "tts", protected=protected)

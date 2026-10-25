@@ -1,13 +1,16 @@
 """A learner's privacy keys (ADR-0018 §5, design D10/D12): the one writer, and what egress reads.
 
 The keys live in `learners.settings` beside the harness settings, but `leafi.study.harness.settings.save` refuses
-them (they are not in its SPEC); only `write` here changes them, and it bumps the learner's `privacy.version` and,
-for `cloud.text`, writes a `consents` row in the same transaction. Guests read as off whatever is stored.
+them (they are not in its SPEC); only `write` here changes them, and it bumps the learner's `privacy.version`.
+Guests read media as `never` whatever is stored.
+
+`cloud.text` is gone (ADR-0021 E4, owner 2026-10-24): egress redacts every text by its content and never gates by
+its source, so there is nothing per learner to switch. A value still stored in `learners.settings` is ignored;
+`write` refuses the key. Old `consents` rows with purpose `cloud_text` stay as history; none is written.
 
 `privacy.school` is the answer Leafi asks every learner for (ADR-0018 §3): `none`, or the id of a `household_terms`
-row of kind `school` (siblings at one school share the row), so the school's name can be replaced. Since the
-owner's decision of 2026-10-24 an unanswered school no longer keeps the learner's words local: they leave as
-`cloud.text` allows, with the lists and the name detector (which replaces organisations it finds) applied.
+row of kind `school` (siblings at one school share the row), so the school's name can be replaced. An unanswered
+school is replaced only if the name detector finds it (owner decisions of 2026-10-24).
 """
 
 from __future__ import annotations
@@ -18,7 +21,8 @@ from leafi.core import learner_store
 from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.core.text import placeholder_reason
 
-KEYS: dict[str, object] = {"cloud.text": True, "privacy.media": "ask", "privacy.school": None}
+KEYS: dict[str, object] = {"privacy.media": "ask", "privacy.school": None}
+REMOVED = {"cloud.text": "removed by ADR-0021: text leaves redacted by its content, whoever said it"}
 MEDIA = ("ask", "never")
 VERSION = "privacy.version"
 
@@ -32,7 +36,6 @@ class LearnerPrivacy:
     learner_id: int
     kind: str | None  # None: no such learner
     forgetting: bool
-    cloud_text: bool
     media: str
     school: int | str | None  # a household_terms id, "none", or None (unanswered)
     version: int
@@ -40,12 +43,6 @@ class LearnerPrivacy:
     @property
     def school_answered(self) -> bool:
         return self.school is not None
-
-    @property
-    def cloud_text_allowed(self) -> bool:
-        """Learner-derived text may go to the cloud: an enrolled learner, not being forgotten, `cloud.text` on
-        (the school answer is no longer required: owner decision 2026-10-24, M7 design A1)."""
-        return self.kind == "learner" and not self.forgetting and self.cloud_text
 
 
 def read(store: Store, learner_id: int) -> LearnerPrivacy:
@@ -56,32 +53,30 @@ def read(store: Store, learner_id: int) -> LearnerPrivacy:
 def from_row(learner_id: int, row) -> LearnerPrivacy:
     """`row` holds (kind, forgetting, settings) by name or position, or is None for a missing learner."""
     if row is None:
-        return LearnerPrivacy(learner_id, None, False, False, "never", None, 0)
+        return LearnerPrivacy(learner_id, None, False, "never", None, 0)
     kind, forgetting, settings = row[0], row[1], row[2]
     values = loads(settings, {})
     guest = kind != "learner"
     return LearnerPrivacy(
         learner_id, kind, bool(forgetting),
-        cloud_text=False if guest else bool(values.get("cloud.text", KEYS["cloud.text"])),
         media="never" if guest else values.get("privacy.media", KEYS["privacy.media"]),
         school=values.get("privacy.school"), version=int(values.get(VERSION, 0)))
 
 
 def _validate(key: str, value: object) -> None:
+    if key in REMOVED:
+        raise InvalidPrivacySetting(f"{key}: {REMOVED[key]}")
     if key not in KEYS:
         raise InvalidPrivacySetting(f"{key}: not a privacy key ({', '.join(KEYS)})")
-    if key == "cloud.text" and not isinstance(value, bool):
-        raise InvalidPrivacySetting("cloud.text: must be on or off")
     if key == "privacy.media" and value not in MEDIA:
         raise InvalidPrivacySetting(f"privacy.media: must be one of {', '.join(MEDIA)}")
     if key == "privacy.school" and not (value == "none" or (isinstance(value, int) and not isinstance(value, bool))):
         raise InvalidPrivacySetting("privacy.school: a school term id or none")
 
 
-def write(store: Store, learner_id: int, key: str, value: object, *,
-          indicated_by: str = "household_setting") -> LearnerPrivacy:
-    """Set one key of an enrolled learner, bump `privacy.version`, and record `cloud.text` in `consents`, in one
-    transaction (design D12). The caller has shown the learner, the key and the value and had them confirmed."""
+def write(store: Store, learner_id: int, key: str, value: object) -> LearnerPrivacy:
+    """Set one key of an enrolled learner and bump `privacy.version`, in one transaction (design D12). The caller
+    has shown the learner, the key and the value and had them confirmed."""
     _validate(key, value)
     with store.transaction():
         row = store.one("SELECT kind, forgetting, settings FROM learners WHERE id=?", (learner_id,))
@@ -95,10 +90,6 @@ def write(store: Store, learner_id: int, key: str, value: object, *,
         values[key] = value
         values[VERSION] = int(values.get(VERSION, 0)) + 1
         store.execute("UPDATE learners SET settings=? WHERE id=?", (dumps(values), learner_id))
-        if key == "cloud.text":
-            learner_store.insert(store, "consents", learner_id, purpose="cloud_text",
-                                 status="granted" if value else "withdrawn", valid_from=now_iso(),
-                                 indicated_by=indicated_by, created_at=now_iso())
     return read(store, learner_id)
 
 

@@ -169,6 +169,22 @@ def schools_line(settings: Settings) -> str:
             "then --yes")
 
 
+REMOVED_ENV_KEYS = ("CLOUD_PARENT_TEXT", "PRIVACY_TTS_LEARNER_LINES")  # ADR-0021 E4
+
+
+def removed_keys_note(env_file: Path = Path(".env")) -> str | None:
+    """A NOTE naming `.env` keys ADR-0021 removed: their value is ignored, so the line only misleads."""
+    if not env_file.exists():
+        return None
+    from dotenv import dotenv_values
+
+    left = [k for k in REMOVED_ENV_KEYS if k in dotenv_values(env_file, encoding="utf-8")]
+    if not left:
+        return None
+    return (f"NOTE: .env still sets {', '.join(left)}; ADR-0021 removed them (text leaves redacted by its content, "
+            "whoever said it) and the value is ignored: delete the line(s).")
+
+
 def wordlist_line(settings: Settings) -> str:
     from leafi.services.wordinfo import WORDLIST_FILES
 
@@ -201,6 +217,8 @@ def report(settings: Settings) -> str:
         lines.append(f"NOTE (Anki): {NOTICE}")
     if settings.pron_auto_judge:
         lines.append("NOTE: PRON_AUTO_JUDGE is on; it requires the evaluation threshold in ADR-0011.")
+    if (note := removed_keys_note()) is not None:
+        lines.append(note)
     return "\n".join(lines)
 
 

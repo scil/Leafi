@@ -70,8 +70,7 @@ class Settings(BaseSettings):
     leafi_no_network: bool = False
     leafi_debug_text: bool = False
     # ADR-0018 §5 household keys (M5 design D12); the learner keys live in `learners.settings`
-    cloud_parent_text: bool = True  # parent text (corrections a parent made) may go to the cloud, pseudonymised
-    privacy_tts_learner_lines: str = "local"  # local: a learner's words and protected names never reach cloud TTS
+    # CLOUD_PARENT_TEXT and PRIVACY_TTS_LEARNER_LINES were removed by ADR-0021 E4; `doctor` names a leftover value
     tts_edge_mode: str = "library"  # library (mediated: not built yet)
     privacy_name_detector: bool = True  # Presidio + spaCy on a learner's own words before the cloud
     local_models: str = ""  # backend:model pairs that count as local (comma-separated), e.g. ollama:qwen3:8b

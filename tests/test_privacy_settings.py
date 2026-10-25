@@ -74,46 +74,48 @@ def test_backup_carries_the_key(settings, monkeypatch, capsys):
 
 def test_defaults_and_guests(store):
     mia = learner_store.create(store, "Mia")
-    guest = learner_store.create(store, "guest", kind="guest", settings={"cloud.text": True})
+    guest = learner_store.create(store, "guest", kind="guest", settings={"privacy.media": "ask"})
     p = privacy.read(store, mia)
-    assert (p.cloud_text, p.media, p.school, p.version) == (True, "ask", None, 0)
-    assert p.cloud_text_allowed  # no school answer yet, which no longer gates (owner, 2026-10-24)
+    assert (p.media, p.school, p.version) == ("ask", None, 0)
     g = privacy.read(store, guest)
-    assert (g.cloud_text, g.media) == (False, "never") and not g.cloud_text_allowed
+    assert g.media == "never"  # a guest never consents to media, whatever is stored
     assert privacy.read(store, 404).kind is None
 
 
-def test_write_bumps_the_version_and_records_cloud_text_consent(store):
+def test_write_bumps_the_version_and_writes_no_consent(store):
+    """ADR-0021 E4: `cloud.text` is refused as removed; a stored value is ignored; no `cloud_text` consent row is
+    written any more."""
     mia = learner_store.create(store, "Mia")
     privacy.set_school(store, mia, None)
-    p = privacy.write(store, mia, "cloud.text", False)
-    assert (p.cloud_text, p.school, p.version) == (False, "none", 2)
-    p = privacy.write(store, mia, "cloud.text", True)
-    assert p.cloud_text_allowed and p.version == 3
-    rows = [tuple(r) for r in store.all("SELECT purpose, status, indicated_by FROM consents ORDER BY id")]
-    assert rows == [("cloud_text", "withdrawn", "household_setting"), ("cloud_text", "granted", "household_setting")]
+    p = privacy.write(store, mia, "privacy.media", "never")
+    assert (p.media, p.school, p.version) == ("never", "none", 2)
+    with pytest.raises(privacy.InvalidPrivacySetting, match="removed by ADR-0021"):
+        privacy.write(store, mia, "cloud.text", True)
+    assert store.all("SELECT * FROM consents") == []
+    old = learner_store.create(store, "Old", settings={"cloud.text": False})  # written before ADR-0021
+    assert privacy.read(store, old).media == "ask"
 
 
 def test_write_refuses_bad_values_guests_and_the_forgotten(store):
     mia = learner_store.create(store, "Mia")
     guest = learner_store.create(store, "g", kind="guest")
-    for key, value in [("cloud.text", "yes"), ("privacy.media", "always"), ("privacy.school", 99), ("x", 1)]:
+    for key, value in [("cloud.text", True), ("privacy.media", "always"), ("privacy.school", 99), ("x", 1)]:
         with pytest.raises(privacy.InvalidPrivacySetting):
             privacy.write(store, mia, key, value)
     with pytest.raises(privacy.InvalidPrivacySetting):
-        privacy.write(store, guest, "cloud.text", True)
+        privacy.write(store, guest, "privacy.media", "never")
     store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (mia,))
     with pytest.raises(privacy.InvalidPrivacySetting):
-        privacy.write(store, mia, "cloud.text", False)
+        privacy.write(store, mia, "privacy.media", "never")
 
 
 def test_the_harness_writer_refuses_privacy_keys_and_keeps_them(store):
     mia = learner_store.create(store, "Mia")
-    privacy.write(store, mia, "cloud.text", False)
+    privacy.write(store, mia, "privacy.media", "never")
     with pytest.raises(harness_settings.InvalidSetting):
-        harness_settings.save(store, mia, {"cloud.text": True})
+        harness_settings.save(store, mia, {"privacy.media": "ask"})
     harness_settings.save(store, mia, {"bands.ask": 2})
-    assert privacy.read(store, mia).cloud_text is False  # a harness save merges, never drops them
+    assert privacy.read(store, mia).media == "never"  # a harness save merges, never drops them
 
 
 def test_school_names_are_shared_and_an_imported_term_is_upgraded(store):
@@ -175,7 +177,7 @@ def test_terms_add_change_kind_and_remove_unlinking_a_school(store):
         privacy.add_term(store, "x", "planet")
     effects = privacy.remove_term(store, "oakwood")
     assert effects == [f"learner #{mia} Mia has no school answer now"]
-    assert privacy.read(store, mia).school is None and privacy.read(store, mia).cloud_text_allowed
+    assert privacy.read(store, mia).school is None
     with pytest.raises(privacy.InvalidPrivacySetting, match="no household term"):
         privacy.remove_term(store, "Oakwood")
 
@@ -258,13 +260,25 @@ def test_snapshot_goes_stale_on_every_relevant_change(store):
     privacy.set_school(store, mia, None)
     before = versions.snapshot(store.conn, [mia])
     assert versions.stale(before, versions.snapshot(store.conn, [mia])) is None
-    privacy.write(store, mia, "cloud.text", False)
+    privacy.write(store, mia, "privacy.media", "never")
     assert "privacy settings" in versions.stale(before, versions.snapshot(store.conn, [mia]))
     before = versions.snapshot(store.conn, [mia])
     store.execute("INSERT INTO household_terms(term, kind, created_at) VALUES('Rose', 'name', 't')")
     assert versions.stale(before, versions.snapshot(store.conn, [mia])) == "protected names changed"
     before = versions.snapshot(store.conn, [mia, 404])
     assert "404 is gone" in versions.stale(before, versions.snapshot(store.conn, [mia, 404]))
+
+
+def test_doctor_names_env_keys_adr_0021_removed(tmp_path):
+    from leafi import doctor
+
+    env = tmp_path / ".env"
+    assert doctor.removed_keys_note(env) is None  # no file
+    env.write_text("ANKI_DECK=Leafi\n", encoding="utf-8")
+    assert doctor.removed_keys_note(env) is None
+    env.write_text("CLOUD_PARENT_TEXT=false\nPRIVACY_TTS_LEARNER_LINES=local\n", encoding="utf-8")
+    note = doctor.removed_keys_note(env)
+    assert "CLOUD_PARENT_TEXT, PRIVACY_TTS_LEARNER_LINES" in note and "ignored" in note
 
 
 def test_harness_settings_do_not_stale_a_snapshot(store):
@@ -276,13 +290,15 @@ def test_harness_settings_do_not_stale_a_snapshot(store):
 
 def test_the_policy_fingerprint_follows_the_file_and_the_environment(tmp_path):
     env = tmp_path / ".env"
-    env.write_text("CLOUD_PARENT_TEXT=true\nANKI_DECK=Leafi\n", encoding="utf-8")
+    env.write_text("PRIVACY_NAME_DETECTOR=true\nANKI_DECK=Leafi\n", encoding="utf-8")
     watch = versions.PolicyWatch(b"k" * 32, env, environ={})
     assert not watch.stale()
-    env.write_text("CLOUD_PARENT_TEXT=true\nANKI_DECK=Other\n", encoding="utf-8")
+    env.write_text("PRIVACY_NAME_DETECTOR=true\nANKI_DECK=Other\n", encoding="utf-8")
     assert not watch.stale()  # not a privacy key
-    env.write_text("CLOUD_PARENT_TEXT=false\nANKI_DECK=Other\n", encoding="utf-8")
+    env.write_text("PRIVACY_NAME_DETECTOR=true\nANKI_DECK=Other\nCLOUD_PARENT_TEXT=false\n", encoding="utf-8")
+    assert not watch.stale()  # removed by ADR-0021: no longer a policy key
+    env.write_text("PRIVACY_NAME_DETECTOR=false\nANKI_DECK=Other\n", encoding="utf-8")
     assert watch.stale()
-    overridden = versions.PolicyWatch(b"k" * 32, env, environ={"cloud_parent_text": "true"})
-    assert overridden.loaded == versions.fingerprint(b"k" * 32, {"CLOUD_PARENT_TEXT": "true"})
+    overridden = versions.PolicyWatch(b"k" * 32, env, environ={"privacy_name_detector": "true"})
+    assert overridden.loaded == versions.fingerprint(b"k" * 32, {"PRIVACY_NAME_DETECTOR": "true"})
     assert versions.policy_values(tmp_path / "missing.env", environ={}) == {}

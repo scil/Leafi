@@ -21,7 +21,6 @@ from typing import Any
 
 from leafi.core.ports import SYSTEM, Provenance, Section
 from leafi.core.provenance import Leaf
-from leafi.privacy import settings as privacy_settings
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
 from leafi.study.brain import prompts, routing
@@ -50,12 +49,9 @@ class Content:
 
 
 def context(s, deadline: float, *, activity_id: int | None = None) -> bc.CallContext:
-    """The session's `CallContext` for one call: its ledger, its learner's `cloud.text` (answer/judge
-    eligibility, D10), the session's audit backlog."""
-    privacy = privacy_settings.read(s.store, s.learner_id)
+    """The session's `CallContext` for one call: its ledger and the session's audit backlog."""
     return bc.CallContext(store=s.store, session_id=s.session_id, learner_id=s.learner_id, deadline=deadline,
-                          budget_for=lambda tier: bc.SessionBudget(s.ledger, tier),
-                          may_use_cloud_text=privacy.cloud_text_allowed, activity_id=activity_id,
+                          budget_for=lambda tier: bc.SessionBudget(s.ledger, tier), activity_id=activity_id,
                           prompt_version=prompts.PROMPT_VERSION, pending_audit=s.pending_audit_brain)
 
 

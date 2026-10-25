@@ -49,8 +49,8 @@ async def test_a_new_learner_is_asked_for_a_school(settings):
     assert privacy.read(store, _owner(store, sid)["id"]).school == "none"
     sid = await run(env(settings, ["I'm Eve", "yes", "I don't know", "/stop"]))
     eve = _owner(store, sid)["id"]
-    # unanswered: the school cannot be replaced, but it no longer keeps her words local (owner, 2026-10-24)
-    assert privacy.read(store, eve).school is None and privacy.read(store, eve).cloud_text_allowed
+    # unanswered: the school cannot be replaced by the lists; it keeps nothing local (owner, 2026-10-24; ADR-0021)
+    assert privacy.read(store, eve).school is None
 
 
 def test_parse_school():

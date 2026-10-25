@@ -10,7 +10,6 @@ import pytest
 from leafi.core.ports import CallAttempt, ModelRequest, Section, Turn
 from leafi.core.provenance import Leaf, Provenance
 from leafi.privacy import destinations as dests
-from leafi.privacy import settings as privacy
 from leafi.services.brain.claude import ClaudeBrain
 from leafi.study.brain import schemas
 from tests.test_egress import _MESSAGE, server, world  # noqa: F401  (fixtures)
@@ -61,10 +60,8 @@ async def test_the_learner_context_ends_with_its_own_cache_breakpoint_on_the_wir
 
 
 async def test_a_learners_words_leave_redacted_never_as_their_substitute(claude):
-    """ADR-0021 E1: with `cloud.text` off a learner's words still leave, redacted by content; the substitute is
-    no longer used."""
+    """ADR-0021 E1: a learner's words leave redacted by content; the substitute is no longer used."""
     w, brain = claude
-    privacy.write(w.store, w.rocco, "cloud.text", False)
     w.server.replies.append((200, _MESSAGE(json.dumps({"evidence": "", "strategy": "", "intention": ""})), {}))
     leaves = [Leaf("Rocco said hose", Provenance("learner", (w.rocco,)), substitute="expected 'horse': substitution"),
               Leaf("a note about him", Provenance("derived_from_learner", (w.rocco,)))]
@@ -75,9 +72,8 @@ async def test_a_learners_words_leave_redacted_never_as_their_substitute(claude)
     assert b"Rocco" not in body
 
 
-async def test_an_assistant_turn_leaves_redacted_after_cloud_text_is_switched_off(claude):
+async def test_an_assistant_turn_leaves_redacted(claude):
     w, brain = claude
-    privacy.write(w.store, w.rocco, "cloud.text", False)
     w.server.replies.append((200, _MESSAGE(json.dumps({"evidence": "", "strategy": "", "intention": ""})), {}))
     turns = (Turn("user", (Section("page", (Leaf("The fox.", Provenance("page")),)),)),
              Turn("assistant", (Section("plan", (Leaf("Rocco struggles with fox",

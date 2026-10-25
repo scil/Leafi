@@ -58,15 +58,14 @@ async def test_item_used_is_one_judge_call_and_cannot_tell_is_unavailable(tmp_pa
     assert await item_used(s3, typed_utterance("I threw it"), "through", "Use it.") == "fail"
 
 
-async def test_item_used_without_an_eligible_backend_or_a_confident_answer_is_unavailable(tmp_path):
+async def test_item_used_by_a_guest_is_judged_and_an_unconfident_answer_is_unavailable(tmp_path):
     from leafi.study.brain.scoring import item_used
 
-    s, model = _judged(tmp_path, {"verdict": "yes"}, locality="cloud")  # a guest: cloud text never allowed
+    s, model = _judged(tmp_path, {"verdict": "yes"}, locality="cloud")  # ADR-0021 E5: a guest is judged too
     s.learner_id = s.store.insert("learners", kind="guest", display_name="Guest", settings="{}",
                                   created_at="2026-10-24T00:00:00+00:00")
-    assert await item_used(s, typed_utterance("The cat ran through the door."), "through", "Use it.") == \
-        "unavailable"
-    assert model.requests == []
+    assert await item_used(s, typed_utterance("The cat ran through the door."), "through", "Use it.") == "success"
+    assert len(model.requests) == 1
     s2, model2 = _judged(tmp_path / "b", {"verdict": "yes"})
     assert await item_used(s2, _spoken("the cat ran through", 0.5), "through", "Use it.") == "unavailable"
     assert model2.requests == []  # an unconfident spoken answer is never sent

@@ -13,7 +13,7 @@ CHANGED = {"NOTIFY_WITH_SNAPSHOT": "true", "BOOK_LOOKUP": "openlibrary", "AUDIO_
            "TTS_BACKEND_EN": "edge", "TTS_BACKEND_ZH": "kokoro", "LEAFI_NO_NETWORK": "true",
            "OLLAMA_URL": "http://ollama.example.com", "TELEGRAM_CHAT_ID": "12345",
            # ADR-0018 §5 † keys
-           "CLOUD_PARENT_TEXT": "false", "PRIVACY_TTS_LEARNER_LINES": "cloud", "TTS_EDGE_MODE": "library",
+           "TTS_EDGE_MODE": "library",
            "PRIVACY_NAME_DETECTOR": "false", "LOCAL_MODELS": "ollama:qwen3:8b",
            "MAGPIE_URL": "http://magpie.example.com",
            # M7 design D9: the Brain's tiers and routes

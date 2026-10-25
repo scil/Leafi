@@ -14,7 +14,7 @@ PRIVACY_FLOOR = frozenset({"NOTIFY_WITH_SNAPSHOT", "BOOK_LOOKUP", "AUDIO_KEEP_CL
                            "LEAFI_NO_NETWORK",  # switching the network guard off widens what may leave the house
                            "OLLAMA_URL",  # the vision judge posts camera frames there: off the LAN = images leave
                            "TELEGRAM_CHAT_ID",  # where NOTIFY_WITH_SNAPSHOT frames and alerts are delivered
-                           "CLOUD_PARENT_TEXT", "PRIVACY_TTS_LEARNER_LINES", "TTS_EDGE_MODE",
+                           "TTS_EDGE_MODE",
                            "PRIVACY_NAME_DETECTOR", "LOCAL_MODELS", "MAGPIE_URL",
                            # M7 design D9: a tier or route change moves learner text between backends
                            "BRAIN_TIER_FAST", "BRAIN_TIER_STANDARD", "BRAIN_TIER_DEEP", "BRAIN_ROUTES"})

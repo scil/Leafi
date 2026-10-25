@@ -1,8 +1,8 @@
 """Parent notifier (Bark and/or Telegram), through `leafi.privacy.egress` (ADR-0018 §2, M5 design D5).
 
 `notify(counts)` is the study track's one parent notification, built from a fixed template: the learner's name
-(sent as their surrogate, owner decision 2026-10-23) and integer counts; a guest, or a learner whose own words
-may not leave, is "a reader". `send(text)` is the operational alert (ADR-0016): a catalog sentence, Telegram
+(sent as their surrogate, owner decision 2026-10-23) and integer counts; a guest, or a learner being forgotten,
+is "a reader" (ADR-0021: no `cloud.text` any more). `send(text)` is the operational alert (ADR-0016): a catalog sentence, Telegram
 only, purpose `ops`. Nothing else is sent; there is no frame parameter.
 """
 
@@ -64,17 +64,16 @@ class NotifierDevice:
 
     def body(self, counts: Counts):
         """The template's one variable part besides the counts: who read (design D5)."""
-        from leafi.privacy import settings as privacy
         from leafi.privacy.egress import Text
 
         tail = (f" read: pages {counts.pages}, words read {counts.words_read}, words to practise "
                 f"{counts.to_practise}, new items {counts.new_items}")
         if counts.learner_id is not None:
             e = self.egress()
-            row = e._conn().execute("SELECT kind, forgetting, settings, display_name FROM learners WHERE id=?",
+            row = e._conn().execute("SELECT kind, forgetting, display_name FROM learners WHERE id=?",
                                     (counts.learner_id,)).fetchone()
-            if row is not None and privacy.from_row(counts.learner_id, row).cloud_text_allowed:
-                return Text(row[3] + tail, "derived_from_learner", (counts.learner_id,))
+            if row is not None and row[0] == "learner" and not row[1]:  # egress replaces the name (ADR-0021 E6)
+                return Text(row[2] + tail, "derived_from_learner", (counts.learner_id,))
         return "A reader" + tail
 
     async def notify(self, counts: Counts) -> None:

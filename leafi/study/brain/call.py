@@ -81,7 +81,6 @@ class CallContext:
     learner_id: int | None
     deadline: float                      # monotonic: the moment's end (minus the output reserve) or the session's
     budget_for: Callable[[str], Any]     # tier -> a Budget
-    may_use_cloud_text: bool = False     # the learner's `cloud_text_allowed` (answer/judge eligibility, D10)
     activity_id: int | None = None
     prompt_version: str = ""
     pending_audit: list = field(default_factory=list)
@@ -108,15 +107,9 @@ class Brain:
         return {t for t, entries in self.tiers.items() if entries}
 
     def eligible(self, tier: str, purpose: str, ctx: CallContext) -> list[tuple[BrainBackend, str]]:
-        """ADR-0018 §2: `answer` and `judge` carry the learner's words, so a cloud backend needs the learner's
-        `cloud_text_allowed`; the other purposes filter their payload instead (D3)."""
-        out = []
-        for backend, model in self.tiers.get(tier, []):
-            if purpose in ("answer", "judge") and self.locality(backend, model) == "cloud" \
-                    and not ctx.may_use_cloud_text:
-                continue
-            out.append((backend, model))
-        return out
+        """Every configured backend of the tier, for every purpose: since ADR-0021 E6 `answer` and `judge` no
+        longer need the learner's `cloud.text` for a cloud backend; egress redacts what they carry."""
+        return list(self.tiers.get(tier, []))
 
     def routable(self, purpose: str, ctx: CallContext, d: str = "normal") -> bool:
         return any(self.eligible(s.tier, purpose, ctx) and ctx.budget_for(s.tier).can_cover(True)

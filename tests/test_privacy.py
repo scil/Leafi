@@ -120,27 +120,26 @@ async def test_no_canary_leaves_in_any_outbound_body(settings):
 
 def test_the_parent_notification_names_a_learner_without_a_school_answer(settings):
     """Owner decision 2026-10-24 (M7 design A1, rev 6 review #17): with no school answer the notification now names
-    the learner, as learner-derived text (so egress replaces the name by its surrogate); `cloud.text` off still
-    sends "A reader"."""
+    the learner, as learner-derived text (so egress replaces the name by its surrogate); a guest is "A reader"
+    (ADR-0021: there is no `cloud.text` to switch off)."""
     from leafi.core import learner_store
     from leafi.core.ports import Counts
     from leafi.devices.notifiers import NotifierDevice
-    from leafi.privacy import settings as privacy
 
     e, _ = _wire(settings)
     store = Store(settings.db_path)
     kid = learner_store.create(store, NAME)
+    guest = learner_store.create(store, "Guest", kind="guest")
     notifier = NotifierDevice(options={"egress": e}, settings=settings)
     body = notifier.body(Counts(kid, None, pages=1))
     assert body.value.startswith(NAME) and (body.provenance, body.sources) == ("derived_from_learner", (kid,))
-    privacy.write(store, kid, "cloud.text", False)
-    assert notifier.body(Counts(kid, None, pages=1)).startswith("A reader")
+    assert notifier.body(Counts(guest, None, pages=1)).startswith("A reader")
 
 
-async def test_a_learners_own_words_leave_only_pseudonymised_whatever_cloud_text_says(settings):
+async def test_a_learners_own_words_leave_only_pseudonymised(settings):
     """ADR-0018 §3 lists, ADR-0021 E1: a learner's words reach the Brain with every listed name — the learner's, a
-    sibling's in Chinese, a Latin name inside Chinese text, the school (answered here, so listed) — replaced; with
-    `cloud.text` off they still leave, redacted the same way (content only, owner 2026-10-24)."""
+    sibling's in Chinese, a Latin name inside Chinese text, the school (answered here, so listed) — replaced, every
+    time (content only, owner 2026-10-24)."""
     from leafi.core import learner_store
     from leafi.privacy import settings as privacy
     from leafi.privacy.egress import Outgoing, Text
@@ -162,12 +161,6 @@ async def test_a_learners_own_words_leave_only_pseudonymised_whatever_cloud_text
     (req,) = sent
     _no_canary(sent, [NAME, SCHOOL, "Quillfield", "小明"])
     assert "the school" in req.content.decode() and "'s favourite word" in req.content.decode()
-    privacy.write(store, kid, "cloud.text", False)
-    p = e.prepare("anthropic", "generate", brain_body(), learner_id=kid)
-    async with e.client("anthropic") as c:
-        await c.send(p.request())
-    assert len(sent) == 2
-    _no_canary(sent, [NAME, SCHOOL, "Quillfield", "小明"])
 
 
 async def test_operational_alerts_leave_only_as_catalog_sentences(settings, monkeypatch):

@@ -2026,49 +2026,6 @@
       },
       "help": "days an unconfirmed guest's session is kept before it is forgotten; 0-30, 0 = delete at wrap (ADR-0018 §1)"
     },
-    "CLOUD_PARENT_TEXT": {
-      "group": "privacy",
-      "type": "bool",
-      "readers": [
-        "leafi"
-      ],
-      "default": {
-        "leafi": {
-          "value": "true",
-          "empty": "error"
-        }
-      },
-      "help": "parent text (a parent's corrections) may go to the cloud, pseudonymised (ADR-0018 §3, §5)",
-      "privacy": true,
-      "example": {
-        "value": "true",
-        "commented": false
-      }
-    },
-    "PRIVACY_TTS_LEARNER_LINES": {
-      "group": "privacy",
-      "type": "enum",
-      "options": [
-        "local",
-        "cloud"
-      ],
-      "domain": "leafi.services.tts:LEARNER_LINES",
-      "readers": [
-        "leafi"
-      ],
-      "default": {
-        "leafi": {
-          "value": "local",
-          "empty": "empty"
-        }
-      },
-      "help": "local | cloud — local: a learner's own words and any line naming a listed person, school or term are spoken by Kokoro, never by edge-tts (ADR-0018 §2)",
-      "privacy": true,
-      "example": {
-        "value": "local",
-        "commented": false
-      }
-    },
     "TTS_EDGE_MODE": {
       "group": "privacy",
       "type": "enum",

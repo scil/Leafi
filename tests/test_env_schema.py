@@ -47,7 +47,7 @@ def test_generated_example_is_canonical_and_its_active_values_validate():
     (lambda d: d["keys"]["WEEKLY_REPORT"]["validator"].update(fn="agent.parsers:nope"), "WEEKLY_REPORT: validator"),
     (lambda d: (d["keys"]["BARK_URL"].pop("secret", None), d["keys"]["BARK_URL"].update(type="text")),
      "BARK_URL: must be secret"),
-    (lambda d: d["keys"]["CLOUD_PARENT_TEXT"].pop("privacy"), "CLOUD_PARENT_TEXT: must be a privacy key"),
+    (lambda d: d["keys"]["PRIVACY_NAME_DETECTOR"].pop("privacy"), "PRIVACY_NAME_DETECTOR: must be a privacy key"),
     (lambda d: d["keys"]["ASR_HOTWORDS"].pop("gate"), "ASR_HOTWORDS=lexicon: must be gated"),
     (lambda d: d["keys"]["NOTIFY_WITH_SNAPSHOT"].update(example={"value": "true"}), "NOTIFY_WITH_SNAPSHOT: privacy key"),
     (lambda d: d["keys"]["ASR_BACKEND"].update(example={"value": "Sherpa"}), "ASR_BACKEND: active example"),

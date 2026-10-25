@@ -22,7 +22,7 @@ from leafi.core.config import LEGACY_TIER_KEYS, TIER_KEYS, effective_tiers, proc
 from leafi.core.storage import loads
 
 # The household keys whose change must stop requests prepared before it (design D12).
-POLICY_KEYS = ("CLOUD_PARENT_TEXT", "PRIVACY_TTS_LEARNER_LINES", "TTS_EDGE_MODE", "PRIVACY_NAME_DETECTOR",
+POLICY_KEYS = ("TTS_EDGE_MODE", "PRIVACY_NAME_DETECTOR",
                "LOCAL_MODELS", "MAGPIE_URL", "OLLAMA_URL", "PRIVACY_OPS_LOG_DAYS", "HOUSEHOLD_TZ", "BRAIN_ROUTES")
 # The Brain tiers enter the fingerprint by their EFFECTIVE value (M7 design D9): writing the tier keys while
 # commenting out an equal legacy key changes nothing for a running process; changing what is routed does.

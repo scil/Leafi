@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from leafi.core import learner_store
 from leafi.core.provenance import Provenance
-from leafi.privacy import settings as privacy_settings
 from leafi.services.brain.mock import MockModel
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
@@ -193,14 +192,13 @@ async def test_a_degraded_answer_is_prefaced(settings):
         texts.index(next(t for t in texts if "It was night." in t))
 
 
-async def test_without_an_eligible_backend_the_question_is_not_sent(settings):
-    """ADR-0018 §2, D10: `answer` carries the learner's words; a cloud tier needs `cloud.text`."""
+async def test_a_cloud_tier_answers_the_question_whatever_the_learner(settings):
+    """ADR-0021 E6: `answer` carries the learner's words and may use a cloud tier for every learner; egress
+    redacts them (before ADR-0021 a learner with `cloud.text` off got no answer)."""
     w = await _asked(settings, "why was it dark", "done")
-    privacy_settings.write(w.store, w.s.learner_id, "cloud.text", False)
-    model = _brain(w, {"answer": {"answer": "x", "grounded": True}}, locality="cloud")
+    model = _brain(w, {"answer": {"answer": "It was night.", "grounded": True}}, locality="cloud")
     status, outcome, _ = await run(w, "learner_questions", {"max_turns": 2})
-    assert model.requests == [] and status == "completed" and outcome == {"questions": 1, "answered": 0}
-    assert any("I can't answer that one right now." in t for t in w.face.texts)
+    assert len(model.requests) == 1 and status == "completed" and outcome == {"questions": 1, "answered": 1}
 
 
 # ---------------------------------------------------------------- read_aloud, add_cards with Brain content
