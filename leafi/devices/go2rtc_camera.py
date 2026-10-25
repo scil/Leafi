@@ -11,11 +11,17 @@ Facts ported from `agent/speaker.py` and `agent/tts.py` (keep them true):
 - A rejected push is logged with the src string and retried once; no retry storm.
 Completion: `play()` returns at HTTP accepted + head pad + clip duration; `drain_s` (0.6 s) covers the
 tail. `stop()` issues `DELETE /api/streams?src=<pushed src>`.
+
+The padded copies are transient (ADR-0021 E9): every play writes its own `<key>.<seq>.cam.*`, so two plays of one
+word never share a file; `play()` tries one unlink at its end without waiting (go2rtc's ffmpeg may still hold the
+file for the tail, and Windows refuses to delete an open file); each `prepare` and `clear_stale()` (called once at
+session start) delete the leftovers. So a copy of a line outlives its play only until the next play or session.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import shutil
 from pathlib import Path
@@ -56,6 +62,7 @@ class Go2rtcCamera:
         self._transport = transport
         self._sleep = sleep
         self._current_src: str | None = None
+        self._seq = itertools.count(1)  # per-play copy names; nothing is deleted here (`leafi devices` builds one too)
 
     def _client(self, timeout: float = 10.0) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=timeout, transport=self._transport)
@@ -77,17 +84,35 @@ class Go2rtcCamera:
             return None
 
     # ---- Mouth
+    def _clear(self) -> int:
+        """Delete the `*.cam.*` copies at the top of `local_dir`; one still held open is left for next time."""
+        n = 0
+        if not self.local_dir.is_dir():
+            return 0
+        for f in self.local_dir.glob("*.cam.*"):
+            try:
+                if f.is_file():
+                    f.unlink()
+                    n += 1
+            except OSError:
+                log.debug("camera copy %s still held; left for the next clear", f.name)
+        return n
+
+    def clear_stale(self) -> int:
+        """Copies left by an earlier process or a held-open file: called once at session start (ADR-0021 E9)."""
+        return self._clear()
+
     async def prepare(self, clip: AudioClip) -> Path:
-        """Write the padded clip into `local_dir` (the directory go2rtc sees as `src_dir`)."""
+        """Write the padded clip into `local_dir` (the directory go2rtc sees as `src_dir`) under a name of its
+        own, after deleting the earlier copies."""
         self.local_dir.mkdir(parents=True, exist_ok=True)
+        self._clear()
+        seq = next(self._seq)
         if clip.codec == "wav":
-            dst = self.local_dir / f"{clip.path.stem}.cam.wav"
-            if not dst.exists():
-                pad_wav(clip.path, dst, PAD_HEAD_S, PAD_TAIL_S)
+            dst = self.local_dir / f"{clip.path.stem}.{seq}.cam.wav"
+            pad_wav(clip.path, dst, PAD_HEAD_S, PAD_TAIL_S)
             return dst
-        dst = self.local_dir / f"{clip.path.stem}.cam{clip.path.suffix}"
-        if dst.exists():
-            return dst
+        dst = self.local_dir / f"{clip.path.stem}.{seq}.cam{clip.path.suffix}"
         if shutil.which("ffmpeg"):
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-y", "-loglevel", "quiet", "-i", str(clip.path),
@@ -107,6 +132,15 @@ class Go2rtcCamera:
 
     async def play(self, clip: AudioClip) -> None:
         file = await self.prepare(clip)
+        try:
+            await self._push(file, clip)
+        finally:
+            try:  # one try, no wait: ffmpeg may still hold it for the tail; the next prepare deletes it then
+                file.unlink(missing_ok=True)
+            except OSError:
+                log.debug("camera copy %s still held after play", file.name)
+
+    async def _push(self, file: Path, clip: AudioClip) -> None:
         try:
             src = self.source_for(file)
         except SourceRejected:

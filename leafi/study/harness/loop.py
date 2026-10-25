@@ -268,6 +268,13 @@ async def run_session(env: Env) -> int:
         # ADR-0021 E9: spoken-line cache folders of forgotten learners and ended guests, before any synthesis
         cache = getattr(cfg, "cache_dir", None)  # a settings object without one sweeps nothing
         records.sweep_tts_cache(store, Path(cache) if cache is not None else None)
+        for mouth in env.hub.mouths.values():  # the camera Mouth's leftover copies (ADR-0021 E9)
+            clear = getattr(mouth, "clear_stale", None)
+            if clear is not None:
+                try:
+                    clear()
+                except Exception:
+                    log.warning("mouth cleanup failed", exc_info=True)
         guest = guests.new_guest(store)
         listener = env.listener or env.hub.listener()
         mode = "voice" if getattr(listener, "is_voice", False) else "text"

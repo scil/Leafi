@@ -41,6 +41,21 @@ async def test_stop_mid_sentence_completes_it_and_settles_open_candidates_as_ski
     assert e.store.one("SELECT tokens_unread FROM page_reads")["tokens_unread"] == 3  # "by the door"
 
 
+async def test_session_start_clears_the_mouths_leftover_copies(settings):
+    """ADR-0021 E9 (Y2): once, after the lease, before any synthesis; never in a Mouth's constructor."""
+    cleared: list[int] = []
+
+    class CameraLike(FakeMouth):
+        def clear_stale(self) -> int:
+            cleared.append(1)
+            return 0
+
+    e = env(settings, ["/stop"], page=P1, learner="Ada")
+    e.hub.mouths["cam"] = CameraLike()
+    await run(e)
+    assert cleared == [1]
+
+
 async def test_control_precedence_wins_over_page_text_except_beyond_six_words(settings):
     page = "Stop and look both ways. Then stop at home and rest."
     e = env(settings, [None, "Stop"], page=page, learner="Ada")

@@ -131,17 +131,75 @@ def test_src_dir_mismatch_is_warned_and_empty_src_dir_falls_back_to_local_dir(tm
 
 
 async def test_play_pads_the_clip_and_pushes_a_space_free_source(go2rtc, tmp_path):
-    cam, sleeps = _cam(go2rtc, tmp_path)
+    padded = tmp_path / "camera" / "abc123.1.cam.wav"
+    lengths: list[float] = []
+
+    async def during_playback(s):
+        pcm, sr, _ = read_wav(padded)  # the copy exists while go2rtc plays it
+        lengths.append(len(pcm) / (2 * sr))
+
+    cam = Go2rtcCamera("desk_cam", {"go2rtc_url": go2rtc.url, "stream": "cam_xiaomi", "audio_codec": "opus",
+                                    "src_dir": "E:/GitHub/scil/Leafi/cache/tts/camera",
+                                    "local_dir": str(tmp_path / "camera")}, sleep=during_playback)
     clip = _clip(tmp_path, 1.0)
     await cam.play(clip)
     (method, path, q), = go2rtc.requests
     assert (method, path) == ("POST", "/api/streams")
-    assert q == {"dst": "cam_xiaomi", "src": "ffmpeg:E:/GitHub/scil/Leafi/cache/tts/camera/abc123.cam.wav#audio=opus"}
-    padded = tmp_path / "camera" / "abc123.cam.wav"
-    pcm, sr, _ = read_wav(padded)
-    assert len(pcm) / (2 * sr) == pytest.approx(PAD_HEAD_S + 1.0 + PAD_TAIL_S, abs=0.01)
-    assert sleeps == [pytest.approx(PAD_HEAD_S + clip.duration_s)]  # returns at the estimated playback end
+    assert q == {"dst": "cam_xiaomi",
+                 "src": "ffmpeg:E:/GitHub/scil/Leafi/cache/tts/camera/abc123.1.cam.wav#audio=opus"}
+    assert lengths == [pytest.approx(PAD_HEAD_S + 1.0 + PAD_TAIL_S, abs=0.01)]
+    assert not padded.exists()  # ADR-0021 E9: deleted after playback
     assert cam.drain_s == PAD_TAIL_S
+
+
+async def test_play_returns_at_the_estimated_playback_end(go2rtc, tmp_path):
+    cam, sleeps = _cam(go2rtc, tmp_path)
+    clip = _clip(tmp_path, 1.0)
+    await cam.play(clip)
+    assert sleeps == [pytest.approx(PAD_HEAD_S + clip.duration_s)]
+
+
+async def test_two_plays_of_one_word_never_share_a_copy(go2rtc, tmp_path):
+    """Practice says the same word twice in a row: each play has its own file (ADR-0021 E9, Y1)."""
+    cam, _ = _cam(go2rtc, tmp_path)
+    clip = _clip(tmp_path)
+    await cam.play(clip)
+    await cam.play(clip)
+    srcs = [q["src"] for _, _, q in go2rtc.requests]
+    assert srcs[0].endswith("/abc123.1.cam.wav#audio=opus") and srcs[1].endswith("/abc123.2.cam.wav#audio=opus")
+
+
+async def test_prepare_deletes_earlier_copies_and_nothing_else(go2rtc, tmp_path):
+    cam, _ = _cam(go2rtc, tmp_path)
+    camera = tmp_path / "camera"
+    camera.mkdir()
+    (camera / "old.3.cam.wav").write_bytes(b"x")
+    (camera / "notes.txt").write_bytes(b"x")
+    dst = await cam.prepare(_clip(tmp_path))
+    assert sorted(p.name for p in camera.iterdir()) == sorted([dst.name, "notes.txt"])
+
+
+async def test_a_copy_still_held_open_does_not_fail_the_play(go2rtc, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    def held(self, missing_ok=False):
+        raise PermissionError("WinError 32: held by ffmpeg")
+
+    cam, sleeps = _cam(go2rtc, tmp_path)
+    monkeypatch.setattr(Path, "unlink", held)
+    await cam.play(_clip(tmp_path))
+    assert len(sleeps) == 1
+
+
+def test_clear_stale_deletes_copies_and_construction_deletes_nothing(tmp_path):
+    camera = tmp_path / "camera"
+    camera.mkdir()
+    for name in ("a.1.cam.wav", "b.2.cam.mp3", "keep.wav"):
+        (camera / name).write_bytes(b"x")
+    cam = Go2rtcCamera("c", {"go2rtc_url": "http://127.0.0.1:9", "stream": "s", "local_dir": str(camera)})
+    assert len(list(camera.iterdir())) == 3  # building a Mouth (`leafi devices`, tests) deletes nothing
+    assert cam.clear_stale() == 2
+    assert [p.name for p in camera.iterdir()] == ["keep.wav"]
 
 
 async def test_codec_comes_from_options(go2rtc, tmp_path):
@@ -179,4 +237,4 @@ async def test_stop_deletes_the_pushed_source(go2rtc, tmp_path):
     await cam.stop()
     task.cancel()
     deletes = [r for r in go2rtc.requests if r[0] == "DELETE"]
-    assert deletes == [("DELETE", "/api/streams", {"src": "ffmpeg:D:/tts/abc123.cam.wav#audio=opus"})]
+    assert deletes == [("DELETE", "/api/streams", {"src": "ffmpeg:D:/tts/abc123.1.cam.wav#audio=opus"})]
