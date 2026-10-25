@@ -1,0 +1,211 @@
+# OCR evaluation stack (trial, docs/research/2026-10-25-ocr-eval-tools-trial.md): Langfuse, Phoenix, Label Studio.
+#
+# Egress is blocked by construction: every tool sits only on `tools`, an `internal: true` network with no route
+# out of Docker. `gate` (nginx, TCP pass-through) is the one container on both networks; it publishes the ports on
+# 127.0.0.1 and forwards them in. It opens no connection of its own except to the services below.
+#
+#   scripts\evals\ocr\stack.ps1 up      (writes cache\evals\stack.env with fresh secrets on first run)
+#
+# Host ports (Windows reserves the usual ones): Langfuse 19300, its MinIO 19090, Phoenix 19006,
+# Label Studio 19080. Langfuse is pinned to the release checked on 2026-10-25 (v4.70.0); the service layout is
+# the upstream docker-compose.yml of that tag, minus the ports the trial does not need.
+
+name: leafi-eval
+
+networks:
+  tools:
+    internal: true
+  edge: {}
+
+x-langfuse-env: &langfuse-env
+  NEXTAUTH_URL: http://localhost:19300
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+  SALT: ${LANGFUSE_SALT}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+  TELEMETRY_ENABLED: "false"
+  NEXT_TELEMETRY_DISABLED: "1"
+  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${REDIS_AUTH}
+
+services:
+  gate:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    networks: [tools, edge]
+    volumes:
+      - ./gate.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - 127.0.0.1:19300:19300
+      - 127.0.0.1:19090:19090
+      - 127.0.0.1:19006:19006
+      - 127.0.0.1:19080:19080
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.70.0
+    restart: unless-stopped
+    networks: [tools]
+    depends_on: &langfuse-deps
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+    environment: *langfuse-env
+
+  langfuse-web:
+    image: docker.langfuse.com/langfuse/langfuse:4.70.0
+    restart: unless-stopped
+    networks: [tools]
+    depends_on: *langfuse-deps
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      # Presigned media URLs are opened by the host (SDK, browser): through the gate's MinIO port.
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:19090
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://minio:9000
+      AUTH_DISABLE_SIGNUP: "true"
+      LANGFUSE_INIT_ORG_ID: leafi
+      LANGFUSE_INIT_ORG_NAME: Leafi
+      LANGFUSE_INIT_PROJECT_ID: leafi-ocr
+      LANGFUSE_INIT_PROJECT_NAME: leafi-ocr
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: owner@leafi.test
+      LANGFUSE_INIT_USER_NAME: owner
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_USER_PASSWORD}
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    restart: unless-stopped
+    networks: [tools]
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    restart: unless-stopped
+    networks: [tools]
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_UPDATE: "off"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    networks: [tools]
+    command: --requirepass ${REDIS_AUTH} --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_AUTH}", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    networks: [tools]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  phoenix:
+    image: arizephoenix/phoenix:version-20.26.1
+    restart: unless-stopped
+    networks: [tools]
+    environment:
+      PHOENIX_TELEMETRY_ENABLED: "false"
+      # Without these the UI (in the browser, outside the internal network) fetches Google Fonts, the PyPI
+      # release and the GitHub star count (measured 2026-10-25).
+      PHOENIX_ALLOW_EXTERNAL_RESOURCES: "false"
+      PHOENIX_AGENTS_DISABLE_GITHUB: "true"
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+
+  label-studio:
+    image: heartexlabs/label-studio:1.23.2
+    restart: unless-stopped
+    networks: [tools]
+    environment:
+      COLLECT_ANALYTICS: "false"
+      LATEST_VERSION_CHECK: "false"
+      CONVERTER_DOWNLOAD_RESOURCES: "false"
+      SENTRY_DSN: ""
+      FRONTEND_SENTRY_DSN: ""
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      LABEL_STUDIO_USERNAME: owner@leafi.test
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD}
+      LABEL_STUDIO_USER_TOKEN: ${LABEL_STUDIO_TOKEN}
+      # 1.23 creates the organisation with legacy tokens off; the scripts use this fixed token (read once at
+      # organisation creation: change it with `docker volume rm leafi-eval_label_studio_data`).
+      LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN: "true"
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /photos
+      LABEL_STUDIO_HOST: http://localhost:19080
+    volumes:
+      - label_studio_data:/label-studio/data
+      - ${EVAL_PHOTOS}:/photos/ocr:ro
+
+volumes:
+  clickhouse_data:
+  clickhouse_logs:
+  minio_data:
+  redis_data:
+  postgres_data:
+  phoenix_data:
+  label_studio_data:

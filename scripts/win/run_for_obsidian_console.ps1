@@ -51,6 +51,16 @@ switch ($Button) {
     'check-ocr' { .venv\Scripts\python.exe scripts\probes\checks.py ocr; Done @(1) }  # OCR(新拍)
     'check-ocr-last' { .venv\Scripts\python.exe scripts\probes\checks.py ocr-last; Done @(1) }  # OCR(最新截图)
     'ocr-review' { cmd /c start "Leafi 动作与设置" /d E:\GitHub\scil\Leafi .venv\Scripts\python.exe -m agent.webui --tab ocr; Done }  # OCR 识别成果(网页)
+    'eval-start' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 start; Done }  # 启动评测工具
+    'eval-stop' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 stop; Done }  # 停止评测工具
+    'eval-status' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 status; Done }  # 评测工具状态
+    'eval-add-snapshot' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 add-snapshot; Done }  # 最新截图加入评测集
+    'eval-labels-push' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 labels-push; Done }  # 照片同步到 Label Studio
+    'eval-labels-pull' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 labels-pull; Done }  # 取回标注
+    'eval-run-default' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline default; Done }  # OCR 评测(默认)
+    'eval-run-probe-k2' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline probe-k2; Done }  # OCR 评测(probe-k2)
+    'eval-run-scan-only' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline scan-only; Done }  # OCR 评测(scan-only)
+    'eval-netwatch' { pwsh -NoProfile -File scripts\evals\ocr\netwatch.ps1 -Seconds 60 -Control; Done }  # 出站流量检查
     'check-mic' { .venv\Scripts\python.exe scripts\probes\checks.py mic; Done @(1) }  # 麦克风测试
     'check-tts' { .venv\Scripts\python.exe scripts\probes\checks.py tts; Done }  # 语音合成测试
     'check-speaker' { .venv\Scripts\python.exe scripts\probes\checks.py speaker; Done }  # PC 喇叭试音
