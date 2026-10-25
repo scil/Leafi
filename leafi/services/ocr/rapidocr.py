@@ -14,7 +14,7 @@ import io
 
 from leafi.core.ports import Frame
 from leafi.services._registry import has_package
-from leafi.services.ocr import OcrLine, OcrResult, reading_order
+from leafi.services.ocr import OcrLine, OcrResult, drop_overlay, reading_order
 
 VERSIONS = ("PP-OCRv6", "PP-OCRv5")
 DEFAULT_VERSION = "PP-OCRv6"
@@ -51,7 +51,7 @@ def to_result(res) -> OcrResult:
         ys = [float(p[1]) for p in box]
         lines.append(OcrLine(str(text), float(scores[k]) if k < len(scores) else 0.0,
                              (min(xs), min(ys), max(xs), max(ys))))
-    return OcrResult(reading_order(lines))
+    return OcrResult(reading_order(drop_overlay(lines)))
 
 
 ROTATIONS = (90, 270, 180)  # P-3: a book lying sideways is the common case; upside down the rare one

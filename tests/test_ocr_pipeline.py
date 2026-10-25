@@ -54,7 +54,26 @@ def test_a_sideways_page_is_rotated_even_when_background_text_reads_upright(monk
     ocr = rapidocr.RapidOcr(SimpleNamespace(ocr_version="PP-OCRv6", ocr_auto_rotate=True))
     ocr._engine = lambda data: lines(page if data == b"270" else background)
     res = ocr._read(b"frame")
-    assert res.rotation == 270 and res.good_lines == 12
+    assert res.rotation == 270 and res.good_lines == 11  # the clock overlay is not a page line
+
+
+def test_the_camera_clock_and_logo_are_not_page_text():
+    """2026-10-25 evaluation window: the camera's burnt-in clock read as a confident line, counted toward a
+    page and would have become text for the child to read; the "mi" logo beside it likewise."""
+    from types import SimpleNamespace
+
+    from leafi.services.ocr import drop_overlay
+    from leafi.services.ocr.rapidocr import to_result
+
+    lines = [OcrLine("MI", 0.95, (0, 0, 40, 40)), OcrLine("2026/10/25 00:03:01", 0.99, (50, 0, 460, 40)),
+             OcrLine("Chapter 3", 0.97, (100, 200, 400, 240)), OcrLine("Yes", 0.97, (0, 300, 60, 340)),
+             OcrLine("At 10:30 the bus left.", 0.97, (100, 400, 600, 440))]
+    assert [ln.text for ln in drop_overlay(lines)] == ["Chapter 3", "Yes", "At 10:30 the bus left."]
+    raw = SimpleNamespace(txts=[ln.text for ln in lines], scores=[ln.conf for ln in lines],
+                          boxes=[[[x0, y0], [x1, y0], [x1, y1], [x0, y1]] for x0, y0, x1, y1 in
+                                 (ln.box for ln in lines)])
+    res = to_result(raw)
+    assert "2026" not in res.text and "MI" not in res.text and res.good_lines == 2
 
 
 def test_reading_order_is_top_to_bottom_then_left_to_right():
