@@ -241,8 +241,9 @@ def finalize(s: Session, w: World, env: Env) -> dict:
         w.end_page_read()
         summ = records.summary(store, s.session_id)
         summ.update(end=reason, arm=s.arm, interrupted=False)
-        if w.inputs.panel_lines:  # the owner's lines, as text and fate; local only (panel design D8)
-            summ["panel_lines"] = [{k: e.get(k) for k in ("wall", "line", "activity_id", "fate", "reason")}
+        if w.inputs.panel_lines:  # the owner's lines as command and fate (panel design D8)
+            summ["panel_lines"] = [{"command": _command(e["line"])} |
+                                   {k: e.get(k) for k in ("wall", "activity_id", "fate", "reason")}
                                    for e in w.inputs.panel_lines]
             summ["panel_inputs_boundary"] = w.inputs.boundary_panel_inputs
         store.execute("UPDATE reading_sessions SET ended_at=?, summary=? WHERE id=?",
@@ -252,6 +253,15 @@ def finalize(s: Session, w: World, env: Env) -> dict:
     if w.book_id is not None:
         lexicon.rebuild(store, w.book_id)
     return summ
+
+
+def _command(line: str) -> str:
+    """A panel line as an enum for the summary, which holds counts and enum strings only (written by a raw UPDATE,
+    `tests/test_architecture.py::MAINTENANCE_COLUMNS`): `say`, `fix`, `page`, `do <kind>`, `skip`, … never the
+    owner's text, whose answers are already stored as `utterances` through the fenced writer."""
+    parts = line.strip().lstrip("/").split()
+    cmd = parts[0].lower() if parts else ""
+    return f"do {parts[1].lower()}" if cmd == "do" and len(parts) > 1 else cmd
 
 
 async def deliver(s: Session, w: World, env: Env, summ: dict) -> None:

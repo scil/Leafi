@@ -2167,6 +2167,20 @@
       },
       "help": "expected book language"
     },
+    "STUDY_PANEL_PORT": {
+      "group": "study-ops",
+      "type": "int",
+      "readers": [
+        "leafi"
+      ],
+      "default": {
+        "leafi": {
+          "value": "0",
+          "empty": "error"
+        }
+      },
+      "help": "study --panel: the loopback port of the session panel (127.0.0.1 only); 0 = any free port, which the web UI finds through data/run"
+    },
     "SUPERVISOR_BAD_STREAK": {
       "group": "study-ops",
       "type": "int",

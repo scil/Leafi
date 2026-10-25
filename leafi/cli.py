@@ -555,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--text", action="store_true", help="typed input on the console, no hardware")
     s.add_argument("--book", help="book title (else identified from the camera or asked)")
     s.add_argument("--page-text", type=Path, help="text file for the page (manual, fully verified revision)")
+    s.add_argument("--panel", action="store_true",
+                   help="serve the session panel on 127.0.0.1 for the web UI's Reading tab (STUDY_PANEL_PORT)")
     s.add_argument("--page", type=int, help="printed page number for --page-text")
     s.add_argument("--mock", action="store_true", help="mock services and no camera (safe in the home)")
     s.add_argument("--voice-policy", choices=["all", "primary", "none"])

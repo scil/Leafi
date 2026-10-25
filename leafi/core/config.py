@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     sentence_pause_s: float = 1.2
     page_poll_s: float = 1.0  # how often the session checks the Eye for a physical page turn
     study_language: str = "en"
+    study_panel_port: int = 0  # `study --panel`: the loopback port of the session panel; 0 = any free one
     pages_retain_days: int = 7
     review_known_interval_days: int = 21
     review_max_cards: int = 5

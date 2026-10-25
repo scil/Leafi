@@ -15,9 +15,13 @@ log = logging.getLogger("leafi.runner")
 async def run_study(settings: Settings, args: argparse.Namespace) -> int:
     from leafi import app as composition
 
+    config = composition.load_config(settings) if not args.mock else _mock_config()
+    if getattr(args, "panel", False) and not any(d.adapter == "panel" for d in config.devices):
+        from leafi.core.hub import DeviceSpec
+
+        config.devices.append(DeviceSpec("panel", "panel", ["listener", "face"]))  # session panel design D1
     built = composition.build(settings, text_mode=bool(args.text), voice_policy=args.voice_policy,
-                              tts_backend="mock" if args.mock else None,
-                              config=composition.load_config(settings) if not args.mock else _mock_config())
+                              tts_backend="mock" if args.mock else None, config=config)
     if getattr(args, "mouth", None):
         # `--mouth pc`: speak only through the named devices (a voice session at the desk without the camera
         # speaker; AGENTS.md forbids camera audio unless the owner asks for it).
@@ -64,11 +68,10 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
             log.warning("page camera off: ocr %s %s %s", settings.ocr_backend, state, detail)
         if settings.book_lookup != "off":
             catalog = catalog_service.REGISTRY.create(settings.book_lookup, settings)
+    from leafi import app as composition
     from leafi.core import learner_store
     from leafi.privacy import runtime
     from leafi.services.wordinfo import LocalWordInfo
-
-    from leafi import app as composition
 
     runtime.get(settings).start_detector()  # loads in a thread while the session starts (M7 design D8)
     lexicon = [r["word"] for r in store.all("SELECT DISTINCT word FROM lexicon")]
@@ -81,6 +84,7 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
                    anki=None if args.mock else AnkiClient(settings.anki_url), pron=pron,
                    word_info=LocalWordInfo(settings.models_dir, lexicon), book_title=args.book, page_text=page_text,
                    page_number=args.page, learner=getattr(args, "learner", None))
+    panel = _attach_panel(env, built, store) if getattr(args, "panel", False) else None
     try:
         sid = await loop.run_session(env)
     except LeaseHeld as e:
@@ -90,10 +94,38 @@ async def _run(settings: Settings, args: argparse.Namespace, built, store: Store
         print(f"Leafi: {e}")
         return 2
     finally:
+        if panel is not None:
+            await panel.close()  # idempotent; a panel refused the lease never started (design D1)
         if hasattr(ocr, "aclose"):
             await ocr.aclose()  # a read still running in the executor finishes before the loop ends (design O5)
     print(f"session {sid} saved to {settings.db_path}")
     return 0
+
+
+def _attach_panel(env, built, store):
+    """`study --panel` (session panel design D1, D2): the device starts in `on_built`, which `run_session` calls once
+    the speech lease is held, and is told of every change; the console goes quiet at end of input without a
+    terminal, so a session driven from the panel is not stopped by an empty stdin."""
+    import sys
+
+    from leafi.study.harness.snapshot import snapshot
+
+    panel = built.devices.get("panel")
+    if panel is None:
+        log.warning("--panel: no panel device was built")
+        return None
+    if not sys.stdin.isatty():
+        for lis in built.hub.listeners.values():
+            if getattr(lis, "name", None) == "console" and hasattr(lis, "options"):
+                lis.options["eof_stops"] = False
+
+    def on_built(s, w) -> None:
+        panel.start(lambda: snapshot(s, w), session_id=s.session_id, store=store)
+        s.hooks.append(panel.mark_dirty)
+        w.inputs.on_change = panel.mark_dirty
+
+    env.on_built = on_built
+    return panel
 
 
 def _mock_config():

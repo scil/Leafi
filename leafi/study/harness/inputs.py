@@ -201,6 +201,8 @@ class Inputs:
                 raise
             self._busy[name] = False
             await self._deliver(u, name, asked)
+            if getattr(self._sources.get(name), "always_read", False):
+                self._request(name)  # the session panel: a press is taken at once (panel design D7)
 
     async def _deliver(self, u: Utterance | None, name: str, asked: float) -> None:
         if u is None:

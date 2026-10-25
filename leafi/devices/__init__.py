@@ -13,6 +13,7 @@ ADAPTERS: dict[str, str] = {
     "notifier": "leafi.devices.notifiers:NotifierDevice",
     "go2rtc_camera": "leafi.devices.go2rtc_camera:Go2rtcCamera",
     "local_pc": "leafi.devices.local_pc:LocalPcDevice",
+    "panel": "leafi.devices.panel:PanelDevice",  # `study --panel` (session panel design D1)
 }
 
 

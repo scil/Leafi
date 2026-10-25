@@ -1,6 +1,6 @@
 """Panel lines in the records (session panel design D8, step 5): each counted once into its activity's outcome on
-every finish path, or into the session summary when no activity ran; the summary keeps them as text and fate
-(local only); the Brain's view of the last activity gets the two counts and never the text. Real Store and Inputs,
+every finish path, or into the session summary when no activity ran; the summary keeps each as its command and
+fate, never its text; the Brain's view of the last activity gets the two counts and never the text. Real Store and Inputs,
 scripted inputs; nothing speaks."""
 
 from __future__ import annotations
@@ -51,7 +51,8 @@ async def test_panel_lines_at_a_boundary_go_to_the_summary_with_every_line_and_i
     summ = hsess.summary(e.store, sid)
     assert summ["panel_inputs_boundary"] == 1
     (line,) = summ["panel_lines"]
-    assert line["line"] == "/say hello" and line["activity_id"] is None and line["fate"] == "answered"
+    assert line["command"] == "say" and line["activity_id"] is None and line["fate"] == "answered"
+    assert "hello" not in str(summ)  # the summary holds enums and counts only, never the owner's text
     assert line["wall"]  # when, in wall time: the monotonic stamp means nothing after the process
     assert all("panel_inputs" not in o for _, _, o in _outcomes(e.store, sid))  # none ran inside an activity
 

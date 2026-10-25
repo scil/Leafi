@@ -167,4 +167,17 @@ mechanism; this table only lists the buttons.
   row (an older gap) and names the two counts in it and in the notes row. `PROMPT_VERSION` is not bumped: it freezes
   the system text and schema bytes, not observation data (the design's D9 said otherwise).
   `tests/test_panel_records.py` (4 tests); full suite 1173 passed.
-- [ ] Design steps 6–8.
+- [x] 2026-10-25 design step 6: `leafi/devices/panel.py` (`PanelDevice`: Face ring buffer, `always_read` typed
+  Listener stamped with the snapshot's `publish_t`, loopback `ThreadingHTTPServer` with `SO_EXCLUSIVEADDRUSE` on
+  Windows, bearer + Host + no-Origin checks, the fixed command list, 409 for another or an ending session, publish by
+  reference with a trailing refresh, faults kept in the device, idempotent `close`); runtime file
+  `data/run/study-panel-<pid>.json` with `runtime_files`, `live` (pid + create time) and `sweep`; adapter `panel`;
+  `STUDY_PANEL_PORT` (Settings, schema, regenerated `.env.example`); `study --panel` (runner adds the device, starts
+  it in `on_built`, closes it, and quiets the console's end of input without a terminal). `tests/test_panel.py`
+  (16 tests, one a whole session driven over HTTP only); full suite 1189 passed. Smoke run of
+  `study --text --mock --panel` with a scratch `DATA_DIR`: status, a POSTed `/stop`, exit 0, file removed.
+  Fix to step 5: `summary.panel_lines` holds each line's command (`say`, `do break`, …), not its text, because the
+  summary is "counts and enum strings by construction" (`tests/test_architecture.py::MAINTENANCE_COLUMNS`); answers
+  that reach an activity are stored as `utterances` as before. Not measured: whether Windows Firewall prompts for the
+  127.0.0.1 bind (research G2); none appeared to the agent, which cannot see the desktop.
+- [ ] Design steps 7–8.
