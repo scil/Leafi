@@ -1,6 +1,6 @@
 apscheduler>=3.10,<4
 paho-mqtt>=2.1
-edge-tts>=6.1
+edge-tts>=7.3.1  # 7.3.0's Sec-MS-GEC v2 token; 7.2.8 gets 403 at the handshake (2026-10-24)
 httpx2>=2.16        # `import httpx` resolves to httpx2 (alias in leafi/ and agent/ __init__, TD-1)
 pydantic-settings>=2.4
 pyyaml>=6.0          # config/tasks.yml(动作注册表,由 agent.webui 读写)
