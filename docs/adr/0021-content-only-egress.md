@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: accepted
+accepted: 2026-10-24 (owner decision; implemented in M5e-1 … M5e-3c, the owner's database migrated to schema 7)
 date: 2026-10-24
 supersedes: 0018 (§2's data-class table and the source half of its text-to-speech routing; §3's provenance columns and filter; §5's rows `cloud.text`, `cloud.parent_text`, `privacy.tts_learner_lines`)
 amends: 0018 (§1 guests and forget, §4.2 consent purposes), 0017 (eligibility of `answer` and `judge`)

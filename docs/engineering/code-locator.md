@@ -91,7 +91,7 @@ Search this file for the symptom or the user's words; read only the matching ent
 
 ## "something went to the cloud" / privacy
 - Start: `docs/architecture/quality-attributes/security.md` (egress table, privacy settings), `data/leafi.db` table `egress_log` (one row per attempt: destination, purpose, learner, status, transmissions; an HMAC, never a body), `leafi/privacy/egress.py` (`prepare`, the mediating transport), `leafi/privacy/destinations.py`, `leafi/privacy/pseudonym.py` (lists, surrogates), `leafi/privacy/detector.py`, `leafi/core/netguard.py` + `leafi/bootstrap.py` (the socket guard).
-- A refusal: the caller got a 403 `{"refused": reason}` or `egress.Refused`; the reason names the rule (`cloud.text` off, parent text with CLOUD_PARENT_TEXT off, a model-bound destination without its model, a version changed, the `.env` fingerprint changed: restart).
+- A refusal: the caller got a 403 `{"refused": reason}` or `egress.Refused`; the reason names the rule (a model-bound destination without its model, a version changed, the `.env` fingerprint changed: restart).
 - A spoken line went to edge-tts / stayed local: `leafi/services/tts/__init__.py::TtsService._must_stay_local` (provenance, protected names).
 - Check: `tests/test_privacy.py` (the wire beneath egress, canaries, `LEAFI_NO_NETWORK=1` subprocess), `tests/test_egress.py`, `tests/test_netguard.py`, `tests/test_pseudonym.py`, `tests/test_architecture.py`.
 

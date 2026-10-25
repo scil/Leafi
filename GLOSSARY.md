@@ -51,7 +51,7 @@ A model-backed function the agent calls: ASR, TTS, OCR, Pronunciation, Brain, Vi
 _Avoid_: engine, provider (xiaozhi's word), model
 
 **Brain**:
-The language-model service that writes what Leafi says and decides tutoring moves. Cloud by default (text only, through Egress, pseudonymised), local fallback; a Learner's own words reach it only when their `cloud.text` allows.
+The language-model service that writes what Leafi says and decides tutoring moves. Cloud by default (text only, through Egress, redacted by content), local fallback; every Learner's and guest's words reach it redacted (ADR-0021).
 _Avoid_: LLM (in prose), coach (that is the behaviour, not the service)
 
 **Vision judge**:
@@ -142,10 +142,14 @@ _Avoid_: user (the parent is also a user), student
 `learner` (enrolled), `guest` (a session not yet, or never, tied to an enrolled Learner) or `anonymous` (the one row that keeps the counts of deleted guest sessions).
 
 **Guest**:
-A session's owner until identification adopts it into a Learner; a guest who declines or is never confirmed is kept for `GUEST_KEEP_DAYS`, then forgotten. A guest's own words never leave the house.
+A session's owner until identification adopts it into a Learner; a guest who declines or is never confirmed is kept for `GUEST_KEEP_DAYS`, then forgotten. A guest's words leave redacted like a Learner's (ADR-0021).
 
-**Provenance**:
-Where a stored, spoken or sent text came from: `page`, `system`, `parent`, `learner` or `derived_from_learner`, with the Learners it came from (ADR-0018 §3). Egress and TTS routing decide by it.
+**Book field**:
+A text that comes from the book — page text, a sentence, an expected word, a title — marked `book=True` on the `Text` or `Leaf` that carries it. The name detector skips it so the book's characters keep their names; the protected-name lists still apply (ADR-0021 E2).
+
+**Provenance** (retired 2026-10-24):
+Where a text came from (`page`, `system`, `parent`, `learner`, `derived_from_learner`). Egress, TTS routing and storage no longer track it: ADR-0021 redacts by content. Only Book field remains of it.
+_Avoid_: as a current concept; say Book field or "redacted by content".
 
 **Surrogate name**:
 The stable stand-in first name that replaces a Learner's (or a protected person's) real name in everything that leaves the house; replies are mapped back for what was sent.
@@ -155,7 +159,7 @@ _Avoid_: alias (`learners.alias` is a nickname the Learner uses, protected like 
 The protected names, schools and other terms of the household (`household_terms`), replaced before any text leaves; edited with `leafi privacy terms`.
 
 **Egress**:
-The one way anything in `leafi/` reaches a cloud service (`leafi.privacy.egress`): it prepares a request (provenance gate, pseudonymisation, an attempt row) and its transport sends only that request.
+The one way anything in `leafi/` reaches a cloud service (`leafi.privacy.egress`): it prepares a request (redaction by content — the lists on everything, the detector on every non-Book field —, an attempt row) and its transport sends only that request; nothing is refused for its source (ADR-0021).
 
 **Grant**:
 A short permission from egress for one connection to one host and port; the socket guard refuses any connection without one to a cloud address or a Gateway port.

@@ -15,7 +15,7 @@ Leafi is a household AI agent. It does family tasks through whatever hardware th
 ## Principles (non-negotiable)
 
 1. Images, faces and poses never leave the LAN, except one item a learner agreed to show the remote teacher, under a consent used once (ADR-0018 §4; not built before M9). Book-page images are images. Vision runs locally.
-2. The learner's voice stays local. ASR and pronunciation scoring run locally; the cloud receives text only, through one gate (`leafi.privacy.egress`): every household name, school and listed term is replaced, and a learner's own words leave only when that learner's `cloud.text` allows it (ADR-0018 §2–§3). Never audio, never identity.
+2. The learner's voice stays local. ASR and pronunciation scoring run locally; the cloud receives text only, through one gate (`leafi.privacy.egress`): every household name, school and listed term is replaced, and the name detector catches others in everything but the book's own text; a learner's words leave redacted, whoever said them (ADR-0021, superseding ADR-0018 §2–§3). Never audio; identity only as far as the lists and the detector catch it — what they miss can leave, an accepted cost.
 3. Cameras never enter the bathroom. For study, the camera looks at the desk and the book.
 4. Transparent to the child: Leafi is a coach and teammate, not surveillance. Coach voice everywhere.
 5. Hardware is a configuration, not a dependency. Zero mouths, one mouth or three mouths must all work; the study loop must run with typed text and no camera.
