@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from leafi.core.storage import loads
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
 from leafi.study.brain import generate, notes, prompts, schemas
@@ -61,14 +62,19 @@ def gather(s, w, menu: set[str], chain: list[str]) -> ObservationInput:
         return tuple(Item(r["id"], r["key"], r["kind"]) for r in store.all(
             f"SELECT id, key, kind FROM knowledge_items WHERE id IN ({marks}) AND learner_id=?", (*ids, learner)))
 
-    last = store.one("SELECT id, kind, status FROM activities WHERE session_id=? ORDER BY id DESC LIMIT 1",
-                     (s.session_id,))
+    row = store.one("SELECT id, kind, status, outcome FROM activities WHERE session_id=? ORDER BY id DESC LIMIT 1",
+                    (s.session_id,))
+    last = None
+    if row is not None:  # Leafi's own record: kind, status and, when the owner moved it, two counts (panel D8)
+        out = loads(row["outcome"], {}) if row["outcome"] else {}
+        last = {"id": row["id"], "kind": row["kind"], "status": row["status"]}
+        last |= {k: out[k] for k in ("panel_inputs", "ended_by") if out.get(k) is not None}
     return ObservationInput(
         page_read_id=w.read_id, sentences=sentences, unread_from=unread, difficulties=difficulties,
         candidates=cands, new_items=items(facts.new_item_candidates), recall_due=items(facts.recall_due),
         cardable=items(facts.cardable_items), notes=tuple(t for _, t in notes.current_notes(store, learner)),
         menu=tuple(k for k in MENU_ORDER if k in menu),
-        default_chain=tuple(chain), last_activity=dict(last) if last else None,
+        default_chain=tuple(chain), last_activity=last,
         session={"elapsed_min": round(s.ledger.minutes(), 1), "autonomy": s.autonomy,
                  "brain_units_left": round(s.ledger.limits.brain_calls - s.ledger.brain_spent, 2)},
         turn=s.latch.epoch.turn_id)

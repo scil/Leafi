@@ -160,4 +160,11 @@ mechanism; this table only lists the buttons.
   panel line's fate, `last_line`, `listening`, `on_change`; `Want.entry` and `latch.set_fate` for `/do` fates.
   Beyond the design's fate list: `stopped` (a panel `/stop`). `tests/test_snapshot.py` (5 tests, the store swapped
   for one that fails on any use); full suite 1169 passed.
-- [ ] Design steps 5–8.
+- [x] 2026-10-25 design step 5: each panel line counted once in `Inputs._deliver`, into the running activity's
+  `progress.panel_inputs` (merged into the outcome on every finish path) or `boundary_panel_inputs`; `finalize`
+  writes `summary.panel_lines` (wall time, text, activity, fate; local only) and `panel_inputs_boundary`;
+  `sequence.gather`'s `last_activity` gains `panel_inputs` and `ended_by`; `security.md` gains the missing `decide`
+  row (an older gap) and names the two counts in it and in the notes row. `PROMPT_VERSION` is not bumped: it freezes
+  the system text and schema bytes, not observation data (the design's D9 said otherwise).
+  `tests/test_panel_records.py` (4 tests); full suite 1173 passed.
+- [ ] Design steps 6–8.

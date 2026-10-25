@@ -29,6 +29,7 @@ from leafi.core import alerts
 from leafi.core import lease as speech_lease
 from leafi.core.hub import Hub, ListeningGate, main_capable
 from leafi.core.ports import Display, ListenerLost, Utterance
+from leafi.core.storage import now_iso
 from leafi.core.text import typed_utterance
 from leafi.study import controls, phrases
 from leafi.study.harness.latch import Jump, Latch, Want
@@ -99,6 +100,9 @@ class Inputs:
         self.accepting = True  # false once the session body ended: later lines are dropped (panel design D7)
         self.panel_log: deque[dict] = deque(maxlen=PANEL_LOG)  # each panel line and its fate (panel design D3)
         self.activity_id: int | None = None  # the running activity's row, for the log (set by run_activity)
+        self.activity_progress: dict | None = None  # its `Session.progress`, where panel lines are counted
+        self.panel_lines: list[dict] = []  # every panel line of the session, for its summary (panel design D8)
+        self.boundary_panel_inputs = 0  # panel lines that arrived while no activity ran
         self.listening = False
         self.last_line: str | None = None
         self.on_change: Callable[[], None] | None = None  # the snapshot's "something changed" (set by the runner)
@@ -206,8 +210,14 @@ class Inputs:
         owner = self.owner_at(u.ended_at if u.ended_at is not None else time.monotonic())
         entry = None
         if u.source == controls.PANEL:  # one entry per panel line; its fate is set where the line is used
-            entry = {"at": time.monotonic(), "line": u.text, "activity_id": self.activity_id, "fate": "pending"}
+            entry = {"at": time.monotonic(), "wall": now_iso(), "line": u.text, "activity_id": self.activity_id,
+                     "fate": "pending"}
             self.panel_log.append(entry)
+            self.panel_lines.append(entry)
+            if self.activity_progress is not None:  # counted once, here, whatever becomes of it (panel design D8)
+                self.activity_progress["panel_inputs"] = self.activity_progress.get("panel_inputs", 0) + 1
+            else:
+                self.boundary_panel_inputs += 1
             self.changed()
         ctl = controls.of(u)
         if ctl is not None and ctl.kind == "say":  # `/say TEXT`: TEXT as typed; from the panel, data (design D6)

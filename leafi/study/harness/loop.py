@@ -165,8 +165,12 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
     s.changed()
 
     def logged(status) -> None:
+        """The end, in memory: the panel-line count joins the outcome on every finish path (panel design D8)."""
+        nonlocal outcome
+        if s.progress.get("panel_inputs"):
+            outcome = dict(outcome or {}) | {"panel_inputs": s.progress["panel_inputs"]}
         entry["status"], entry["outcome"] = ActivityStatus(status).value, outcome
-        w.inputs.activity_id = None
+        w.inputs.activity_id = w.inputs.activity_progress = None
         s.changed()
 
     def finish_now(status) -> ActivityStatus:
@@ -184,7 +188,7 @@ async def run_activity(s: Session, w: World, act: Activity, *, continuation: boo
         return ActivityStatus(status)
 
     w.inputs.activity_started_at = time.monotonic()  # an Ear switch after this ends the activity (D21)
-    w.inputs.activity_id = aid
+    w.inputs.activity_id, w.inputs.activity_progress = aid, s.progress
     try:
         status, outcome = await KINDS[act.kind](w, replace(act, params=params), aid)
     except StaleInput:
@@ -237,6 +241,10 @@ def finalize(s: Session, w: World, env: Env) -> dict:
         w.end_page_read()
         summ = records.summary(store, s.session_id)
         summ.update(end=reason, arm=s.arm, interrupted=False)
+        if w.inputs.panel_lines:  # the owner's lines, as text and fate; local only (panel design D8)
+            summ["panel_lines"] = [{k: e.get(k) for k in ("wall", "line", "activity_id", "fate", "reason")}
+                                   for e in w.inputs.panel_lines]
+            summ["panel_inputs_boundary"] = w.inputs.boundary_panel_inputs
         store.execute("UPDATE reading_sessions SET ended_at=?, summary=? WHERE id=?",
                       (now_iso(), dumps(summ), s.session_id))
     if learner_store.get(store, s.learner_id)["kind"] == "learner":
