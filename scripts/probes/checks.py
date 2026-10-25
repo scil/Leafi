@@ -1,7 +1,8 @@
 """One console check per independently verifiable step of a study session, each on the code path a session uses.
 
     .venv\\Scripts\\python scripts/probes/checks.py snapshot   # the study Eye's frame (go2rtc), saved and opened
-    .venv\\Scripts\\python scripts/probes/checks.py ocr [FILE] # that frame (or FILE) through the page OCR
+    .venv\\Scripts\\python scripts/probes/checks.py ocr [FILE] # a fresh frame (or FILE) through the page OCR
+    .venv\\Scripts\\python scripts/probes/checks.py ocr-last   # the latest snapshot again, without a new capture
     .venv\\Scripts\\python scripts/probes/checks.py mic        # 3 s from the study Ear as the session opens it
     .venv\\Scripts\\python scripts/probes/checks.py tts        # one English and one Chinese line, written, not played
     .venv\\Scripts\\python scripts/probes/checks.py speaker    # plays tts's two clips on the PC speaker (makes sound)
@@ -177,7 +178,7 @@ async def speaker(settings: Settings) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("check", choices=("snapshot", "ocr", "mic", "tts", "speaker"))
+    p.add_argument("check", choices=("snapshot", "ocr", "ocr-last", "mic", "tts", "speaker"))
     p.add_argument("file", nargs="?", type=Path, help="ocr: an image to read instead of a fresh snapshot")
     args = p.parse_args()
     settings = Settings()
@@ -186,6 +187,13 @@ def main() -> int:
         return 0 if asyncio.run(snapshot(settings)) else 1
     if args.check == "ocr":
         return asyncio.run(ocr(settings, args.file))
+    if args.check == "ocr-last":
+        last = _out(settings) / "snapshot.jpg"
+        if not last.exists():
+            print("FAIL no snapshot yet: click 摄像头截图 or OCR(新拍) first")
+            return 1
+        print(f"     latest snapshot, taken {time.strftime('%H:%M:%S', time.localtime(last.stat().st_mtime))}")
+        return asyncio.run(ocr(settings, last))
     if args.check == "mic":
         return asyncio.run(mic(settings))
     if args.check == "speaker":
