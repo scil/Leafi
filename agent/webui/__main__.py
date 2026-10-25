@@ -13,6 +13,10 @@ POST 再查 Content-Type、Origin 和启动时生成、嵌在页面里的 token(
 第三个标签页"OCR"只读:页面文字的每个版本(新的在前)和相对上一版改了哪些词(leafi/study/page_history.py)。
 它的两个 GET 也要 token:页面照片拍的是家里,别的网页不能用 <img> 把它载进来(主人 2026-10-25:点了才看照片)。
 `--tab ocr` 直接打开这一页;服务已经在跑时只开浏览器。
+
+The fourth tab, "Reading" (`--tab read`), is the session panel (docs/plans/active/2026-10-25-study-session-panel-design.md
+D5, D6): it shows the live study session started with `python -m leafi study --panel` and sends it typed lines from a
+fixed table (`agent/webui/study.py`). Its status needs the page token; its actions need our Origin too.
 """
 import argparse
 import json
@@ -25,6 +29,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from leafi import envedit
+
+from . import study
 
 from ..config import settings
 from ..tasks import (
@@ -45,7 +51,7 @@ log = logging.getLogger("webui")
 
 HOST, PORT = "127.0.0.1", 8770
 PAGE = Path(__file__).with_name("index.html")
-TABS = ("tasks", "env", "ocr")
+TABS = ("tasks", "env", "ocr", "read")
 
 
 def _ocr_store(settings_factory):
@@ -110,10 +116,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post_ok(self) -> bool:
         origin = self.headers.get("Origin")
+        fetch_site = self.headers.get("Sec-Fetch-Site")  # another 127.0.0.1 port is `same-site`: refused too
         return (self._host_ok()
                 and (self.headers.get("Content-Type") or "").split(";")[0].strip() == "application/json"
                 and (origin is None or origin in {f"http://{o}" for o in self._origins()})
+                and (fetch_site is None or fetch_site in ("same-origin", "none"))
                 and secrets.compare_digest(self.headers.get("X-Leafi-Token", ""), self.server.token))
+
+    def _origin_present(self) -> bool:
+        """The Reading tab's actions move a child's session: a missing Origin is not taken as our own page."""
+        return self.headers.get("Origin") in {f"http://{o}" for o in self._origins()}
 
     def _token_ok(self) -> bool:
         return self._host_ok() and secrets.compare_digest(self.headers.get("X-Leafi-Token", ""), self.server.token)
@@ -183,6 +195,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._forbidden()
                 return
             self._ocr(parse_qs(urlsplit(self.path).query))
+        elif urlsplit(self.path).path == "/api/study/status":
+            if not self._token_ok():  # the child's words and name: other pages may not read them
+                self._forbidden()
+                return
+            since = parse_qs(urlsplit(self.path).query).get("since", [None])[0]
+            code, view = study.status(self.server.leafi_settings(), since)
+            if code == 204:
+                self._send(204, b"", "application/json")
+            else:
+                self._json(code, view)
         else:
             self._json(404, {"error": "没有这个地址"})
 
@@ -198,6 +220,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             result = envedit.save(payload, path=self.server.env_path, data_dir=self.server.data_dir)
             self._json(result.status, result.body)
+            return
+        if self.path == "/api/study/action":
+            if not self._origin_present():
+                self._forbidden()
+                return
+            try:
+                payload = self._body()
+            except ValueError:
+                self._json(400, {"error": "the body is not a JSON object"})
+                return
+            code, result = study.action(self.server.leafi_settings(), payload)
+            self._json(code, result)
             return
         if self.path != "/api/tasks":
             self._json(404, {"error": "没有这个地址"})

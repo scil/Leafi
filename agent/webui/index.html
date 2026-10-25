@@ -112,13 +112,43 @@ code{font-family:var(--mono);font-size:.9em;background:var(--sunk);padding:1px 5
 .rev ins{color:var(--mint);background:var(--mint-wash);text-decoration:none}
 .rev .ops{margin-top:10px;display:flex;gap:10px;align-items:center}
 .rev img{display:block;max-width:100%;margin-top:10px;border:1px solid var(--line);border-radius:3px}
+/* Reading: the live study session (session panel design D5) */
+.readwrap{max-width:1000px;margin:0 auto;padding:20px 20px 60px}
+.readwrap .card{padding:14px 18px;margin-bottom:12px}
+.readwrap .m{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.readwrap h3{font-size:12px;font-family:var(--mono);letter-spacing:.08em;color:var(--mint);margin:0 0 8px;font-weight:500}
+.statusbar{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline;font-size:13.5px}
+.statusbar b{font-weight:600}
+.statusbar .m{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.badge{font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:3px;border:1px solid var(--line-2);color:var(--ink-3)}
+.badge.on{border-color:var(--mint);color:var(--mint);background:var(--mint-wash)}
+.stale{opacity:.55}
+.banner{border-radius:3px;padding:10px 14px;margin-bottom:12px;font-size:14px;border:1px solid var(--line-2)}
+.banner.wait{border-color:var(--amber);color:var(--amber)}
+.banner.ok{border-color:var(--mint);color:var(--mint);background:var(--mint-wash)}
+.banner.bad{border-color:var(--rust);color:var(--rust);background:var(--rust-wash)}
+.said{font-size:15px;line-height:1.6}
+.toks{font-size:15.5px;line-height:2}
+.tok{padding:1px 3px;border-radius:2px;margin-right:2px}
+.tok.committed,.tok.settled{color:var(--mint)}
+.tok.provisional{color:var(--ink-2);text-decoration:underline dotted}
+.tok.candidate{color:var(--rust);background:var(--rust-wash)}
+.tok.unread{color:var(--ink-3);text-decoration:line-through}
+.tok.unattempted{color:var(--ink-3)}
+.acts .r{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.acts .r input,.acts .r select{width:auto;min-width:0;flex:1 1 160px}
+.acts .r textarea{flex:1 1 100%}
+.acts .hint{font-size:12px;color:var(--ink-3);margin:-4px 0 10px;line-height:1.5}
+.loglist{margin:0;padding-left:18px;font-size:13px}
+.loglist li{margin:2px 0}
+.loglist .m{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
 </style>
 </head>
 <body>
 
 <header>
   <h1>Leafi</h1>
-  <div class="tabs"><button id="tab-tasks" class="on">动作</button><button id="tab-env">设置 (.env)</button><button id="tab-ocr">OCR 识别</button></div>
+  <div class="tabs"><button id="tab-tasks" class="on">动作</button><button id="tab-env">设置 (.env)</button><button id="tab-ocr">OCR 识别</button><button id="tab-read">Reading</button></div>
   <span class="sub" id="file">config/tasks.yml</span>
   <span class="spacer"></span>
   <span class="sub" id="dirty"></span>
@@ -133,6 +163,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--sunk);padding:1px 5
 
 <div class="envwrap" id="envview" hidden></div>
 <div class="ocrwrap" id="ocrview" hidden></div>
+<div class="readwrap" id="readview" hidden><div id="readinfo"></div><div id="readacts"></div><div id="readmore"></div></div>
 <div class="envbar" id="envbar" hidden></div>
 
 <div class="toast" id="toast"></div>
@@ -412,20 +443,23 @@ let ENV = null, PENDING = {}, ENVERR = {}, ENVRESULT = '', LOCKED = false;
 const STATE = {set:'已设置', empty:'已设为空', default:'未设置(用默认)'};
 
 function showTab(which){
-  const env = which === 'env', ocr = which === 'ocr', tasks = !env && !ocr;
+  const env = which === 'env', ocr = which === 'ocr', read = which === 'read', tasks = !env && !ocr && !read;
   $('#tab-tasks').classList.toggle('on', tasks); $('#tab-env').classList.toggle('on', env);
-  $('#tab-ocr').classList.toggle('on', ocr);
+  $('#tab-ocr').classList.toggle('on', ocr); $('#tab-read').classList.toggle('on', read);
   $('#tasksview').hidden = !tasks; $('#taskbtns').hidden = !tasks; $('#dirty').hidden = !tasks;
-  $('#envview').hidden = !env; $('#envbar').hidden = !env; $('#ocrview').hidden = !ocr;
-  $('#file').textContent = env ? '.env' : ocr ? 'data/leafi.db · 页面文字版本' : 'config/tasks.yml';
+  $('#envview').hidden = !env; $('#envbar').hidden = !env; $('#ocrview').hidden = !ocr; $('#readview').hidden = !read;
+  $('#file').textContent = env ? '.env' : ocr ? 'data/leafi.db · 页面文字版本' : read ? 'study session · live' : 'config/tasks.yml';
   if (env && !ENV) loadEnv();
   clearInterval(OCRTIMER); OCRTIMER = null;
   if (ocr){ loadOcr(); OCRTIMER = setInterval(() => { if (!document.hidden) loadOcr(); }, 10000); }
+  clearInterval(READTIMER); READTIMER = null;
+  if (read){ buildActs(); loadRead(); READTIMER = setInterval(() => { if (!document.hidden) loadRead(); }, 1000); }
   history.replaceState(null, '', tasks ? location.pathname : '#' + which);
 }
 $('#tab-tasks').onclick = () => showTab('tasks');
 $('#tab-env').onclick = () => showTab('env');
 $('#tab-ocr').onclick = () => showTab('ocr');
+$('#tab-read').onclick = () => showTab('read');
 
 // ================================================================ OCR 识别(只读)
 // 每个页面文字版本,新的在前;和上一版比:删掉的词划线,新加的词标绿。每 10 秒自动刷新。
@@ -475,6 +509,159 @@ async function togglePhoto(id, d, fresh){
   if (!r.ok){ toast(r.status === 404 ? '照片已过保留期被删除' : '取照片失败', true); return; }
   OCROPEN[id] = URL.createObjectURL(await r.blob());
   renderOcr(d, fresh);
+}
+
+// ================================================================ Reading (session panel design D5, D6)
+// The live study session, polled once a second while the tab is visible. Buttons send one typed line each; the
+// server maps them through a fixed table and forwards only to the session shown. /do acts at a safe point.
+let READTIMER = null, READ = null, READVER = null, READBUSY = false;
+const READSEEN = {};  // a panel line's first moment with a final fate, so its result shows for 5 s
+const KINDS = ['read_listen', 'read_aloud', 'practise_errors', 'review_anki', 'teach_items', 'recall_items', 'quiz',
+  'learner_questions', 'add_cards', 'break', 'end'];
+const WAITFOR = {brain: 'after the Brain answers', speech: 'after Leafi finishes speaking', step: 'after this step',
+  setup: 'once Leafi knows who is reading and which book'};
+const FATE = {pending: 'waiting', queued: 'sent, waiting for the session', switched: 'switched', answered: 'answered',
+  replaced: 'replaced by a newer choice', want_refused: 'refused', dropped: 'dropped', refused: 'refused',
+  dropped_stale: 'dropped: the question had moved on', parked: 'kept for the next step', skipped: 'skipped',
+  cut: 'cut the line', turned: 'turned the page', ignored: 'not used here', stopped: 'stopped the session'};
+const GOOD = new Set(['switched', 'answered', 'skipped', 'cut', 'turned', 'stopped']);
+const READING_KINDS = new Set(['read_listen', 'read_aloud', 'practise_errors']);
+
+async function loadRead(){
+  let r;
+  try { r = await fetch('/api/study/status' + (READVER ? '?since=' + encodeURIComponent(READVER) : ''),
+                        {headers: {'X-Leafi-Token': TOKEN}}); }
+  catch (e) { return; }
+  if (r.status === 204) { renderRead(); return; }  // unchanged: only the clocks move
+  if (r.status === 403) { READ = {state: 'db_error', error: 'Refused: the page has expired. Reload the browser.'}; READVER = null; renderRead(); return; }
+  const d = await r.json();
+  if (d.state === 'live') {
+    if (d.version !== READVER) READBUSY = false;  // a newer view: the buttons come back
+    READ = d; READ._at = Date.now(); READVER = d.version;
+  } else if (d.state === 'busy' && READ && READ.session_id === d.session_id) {
+    READ.state = 'busy';  // keep the last view, greyed, without buttons
+  } else { READ = d; READVER = null; }
+  renderRead();
+}
+
+function since(d){ return (Date.now() - (d._at || Date.now())) / 1000; }
+function mins(s){ if (s == null) return '–'; const v = Math.max(0, s); return `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, '0')}`; }
+
+function bannerHtml(d){
+  if (d.want) {
+    const w = WAITFOR[d.want.waiting_for] || 'at the next safe point';
+    return `<div class="banner wait">Switching to <b>${esc(d.want.kind)}</b> ${esc(w)} · ${Math.round(d.want.age_s + since(d))} s</div>`;
+  }
+  if (d.queued && d.queued.length) return `<div class="banner wait">Sent, waiting for the session: <code>${esc(d.queued.join(' · '))}</code></div>`;
+  const log = d.panel_log || [];
+  const last = log[log.length - 1];
+  if (!last || last.fate === 'pending') return '';
+  const key = `${last.at}`;
+  READSEEN[key] = READSEEN[key] || Date.now();
+  if (Date.now() - READSEEN[key] > 5000) return '';
+  const why = last.reason ? ` (${esc(last.reason)})` : '';
+  return `<div class="banner ${GOOD.has(last.fate) ? 'ok' : 'bad'}"><code>${esc(last.line)}</code> → ${esc(FATE[last.fate] || last.fate)}${why}</div>`;
+}
+
+function tokensHtml(r){
+  if (!r || !r.current_sentence.length) return '';
+  return '<div class="toks">' + r.current_sentence.map(t => `<span class="tok ${esc(t.status)}" title="${esc(t.status)}">${esc(t.text)}</span>`).join('') + '</div>';
+}
+
+function renderRead(){
+  const info = $('#readinfo'), more = $('#readmore'), d = READ;
+  if (!d) { info.innerHTML = '<div class="explain">Looking for a session…</div>'; more.innerHTML = ''; updateActs(); return; }
+  if (d.state === 'db_error') { info.innerHTML = `<div class="errs">${esc(d.error)}</div>`; more.innerHTML = ''; updateActs(); return; }
+  if (d.state === 'none') { info.innerHTML = lastHtml(d.last); more.innerHTML = ''; updateActs(); return; }
+  const s = d.session || {}, act = d.activity, io = d.io || {}, r = d.reading, b = d.boundary || {};
+  const left = s.soft_left_s == null ? null : s.soft_left_s - since(d);
+  const who = d.learner && d.learner.name ? esc(d.learner.name) : (d.learner ? esc(d.learner.kind) : '–');
+  const page = d.page && d.page.printed != null ? `page ${d.page.printed}` : (d.page && d.page.id ? `page #${d.page.id}` : 'no page yet');
+  const now = act ? `<b>${esc(act.kind)}</b> <span class="m">chosen by ${esc(act.params.by ? 'the panel' : act.decided_by)}${Object.keys(act.progress || {}).length ? ' · ' + esc(Object.entries(act.progress).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ')) : ''}</span>`
+    : `<b>between activities</b> <span class="m">menu: ${esc((b.menu || []).join(', ') || '–')}${b.offer ? ' · offering ' + esc(b.offer) : ''}</span>`;
+  info.innerHTML = `<div class="${d.state === 'busy' ? 'stale' : ''}">
+    ${d.state === 'busy' ? '<div class="banner bad">The session did not answer in time: this is its last view.</div>' : ''}
+    ${d.panel && d.panel.dead ? '<div class="banner bad">The panel failed in this session; the session goes on. See the log.</div>' : ''}
+    ${bannerHtml(d)}
+    <div class="card"><div class="statusbar"><b>${who}</b><span>${esc((d.book && d.book.title) || 'no book yet')} · ${page}</span>
+      <span class="m">${mins(s.elapsed_s + since(d))} in · ${mins(left)} left${s.arm ? ' · ' + esc(s.arm) : ''}</span>
+      <span class="badge ${io.speaking ? 'on' : ''}">speaking</span><span class="badge ${io.listening ? 'on' : ''}">listening</span>
+      ${io.eye_online === false ? '<span class="badge">camera offline</span>' : ''}</div></div>
+    <div class="card"><h3>NOW</h3><div>${now}</div>
+      ${d.prompt && d.prompt.last_line ? `<div class="said" style="margin-top:8px">Leafi: ${esc(d.prompt.last_line)}</div>` : ''}</div>
+    ${r ? `<div class="card"><h3>READING</h3><div class="m">${r.sentences.completed} of ${r.sentences.total} sentences · committed ${r.tokens.committed + r.tokens.settled} · candidates ${r.tokens.candidate} · unread ${r.tokens.unread}</div>${tokensHtml(r)}</div>` : ''}
+  </div>`;
+  const log = (d.panel_log || []).slice().reverse();
+  more.innerHTML = `<div class="card"><h3>YOUR LINES</h3>${log.length ? '<ul class="loglist">' + log.map(x => `<li><code>${esc(x.line)}</code> → ${esc(FATE[x.fate] || x.fate)}${x.reason ? ' <span class="m">(' + esc(x.reason) + ')</span>' : ''}</li>`).join('') + '</ul>' : '<div class="m">None yet.</div>'}</div>
+    <div class="card"><h3>THIS SESSION</h3><ul class="loglist">${(d.activities || []).map(a => `<li>${esc(a.kind)} <span class="m">${esc(a.status)}${a.outcome && a.outcome.ended_by ? ' · ended by /do' : ''}${a.params && a.params.by ? ' · chosen on the ' + esc(a.params.by) : ''}</span></li>`).join('') || '<li class="m">No activity yet.</li>'}</ul></div>
+    <div class="card"><h3>LAST LINES ON THE FACES</h3><ul class="loglist">${(d.shown || []).slice(-12).reverse().map(x => `<li><span class="m">${esc(x.kind)}</span> ${esc(x.text)}</li>`).join('')}</ul></div>`;
+  updateActs();
+}
+
+function lastHtml(last){
+  if (!last) return '<div class="explain">No session is running, and none has run yet. Start one with <code>python -m leafi study --panel</code>.</div>';
+  const summ = last.summary || {};
+  return `<div class="explain">No session is running. Start one with <code>python -m leafi study --panel</code>. The last one:</div>
+    <div class="card"><div class="statusbar"><b>${esc(last.learner.name || last.learner.kind || '–')}</b>
+      <span class="m">session ${last.id} · ${esc((last.started_at || '').replace('T', ' ').slice(0, 16))} UTC · ended: ${esc(summ.end || (last.ended_at ? 'yes' : 'not recorded'))}</span></div>
+      <ul class="loglist" style="margin-top:8px">${last.activities.map(a => `<li>${esc(a.kind)} <span class="m">${esc(a.status)}</span></li>`).join('')}</ul></div>`;
+}
+
+function buildActs(){
+  const box = $('#readacts');
+  if (box.dataset.built) return;
+  box.dataset.built = '1';
+  box.innerHTML = `<div class="card acts" id="acts"><h3>MOVE THE SESSION</h3>
+    <div class="r"><button data-a="skip">Skip</button><button data-a="next_page" id="a-next">Next page</button>
+      <button data-a="yes">Yes</button><button data-a="no">No</button><button data-a="know" id="a-know">I know this word</button>
+      <span id="a-eases"><button data-ease="again">Again</button> <button data-ease="hard">Hard</button> <button data-ease="good">Good</button> <button data-ease="easy">Easy</button></span>
+      <span class="spacer"></span><button class="danger" data-a="stop">Stop session</button></div>
+    <div class="hint" id="h-skip">Skip cuts the line Leafi is saying; otherwise it skips the current question when Leafi next listens. Next page turns the page when Leafi next listens.</div>
+    <div class="r"><input id="a-answer" maxlength="500" placeholder="Answer for the child (never counted as the child's)"><button data-a="answer">Send answer</button></div>
+    <div class="r"><select id="a-kind">${KINDS.map(k => `<option>${k}</option>`).join('')}</select><button data-a="do" class="primary">Go to this activity</button></div>
+    <div class="hint">Takes effect at the next safe point: before Leafi asks the next question, while Leafi is listening, between two read-aloud sentences, or between activities — not during setup (name and book). A spoken line, a Brain answer or a page scan (OCR) always finishes first.</div>
+    <details><summary class="m">Fix a word · give a page's text</summary>
+      <div class="r" style="margin-top:8px"><input id="a-old" placeholder="Leafi has (one word)"><input id="a-new" placeholder="the book says"><button data-a="fix">Fix</button></div>
+      <div class="r"><input id="a-n" type="number" min="0" placeholder="page number" style="flex:0 1 140px"><textarea id="a-text" rows="4" placeholder="the page's text"></textarea><button data-a="page">Use this text</button></div>
+    </details></div>`;
+  box.querySelectorAll('[data-a]').forEach(btn => btn.onclick = () => act(btn.dataset.a));
+  box.querySelectorAll('[data-ease]').forEach(btn => btn.onclick = () => send({action: 'ease', text: btn.dataset.ease}));
+}
+
+function act(a){
+  if (a === 'stop' && !confirm('Stop the study session now?')) return;
+  if (a === 'answer') { const t = $('#a-answer').value.trim(); if (!t) return; send({action: a, text: t}).then(ok => { if (ok) $('#a-answer').value = ''; }); return; }
+  if (a === 'do') return send({action: a, text: $('#a-kind').value});
+  if (a === 'fix') return send({action: a, old: $('#a-old').value.trim(), text: $('#a-new').value.trim()});
+  if (a === 'page') return send({action: a, n: parseInt($('#a-n').value, 10), text: $('#a-text').value});
+  send({action: a});
+}
+
+async function send(body){
+  if (!READ || READ.state !== 'live') return false;
+  READBUSY = true; updateActs();
+  let r, res = {};
+  try {
+    r = await fetch('/api/study/action', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Leafi-Token': TOKEN},
+      body: JSON.stringify(Object.assign({session_id: READ.session_id, seen: READ.publish_t}, body))});
+    res = await r.json().catch(() => ({}));
+  } catch (e) { r = {ok: false, status: 0}; }
+  if (!r.ok) { READBUSY = false; toast(res.error || `Not sent (${r.status})`, true); }
+  updateActs();
+  return r.ok;
+}
+
+function updateActs(){
+  const box = $('#acts');
+  if (!box) return;
+  const d = READ, live = d && d.state === 'live' && d.io && d.io.accepting && !(d.panel && d.panel.dead);
+  box.hidden = !live;
+  if (!live) return;
+  const kind = d.activity ? d.activity.kind : null;
+  $('#a-next').hidden = !(kind === null || READING_KINDS.has(kind));
+  $('#a-eases').hidden = kind !== 'review_anki';
+  $('#a-know').hidden = !(kind === 'teach_items' || kind === 'recall_items');
+  box.querySelectorAll('button').forEach(btn => btn.disabled = READBUSY);
 }
 
 let GONE = [];
@@ -646,7 +833,7 @@ async function saveEnv(){
 }
 
 load();
-const fromHash = () => { if (location.hash === '#ocr' || location.hash === '#env') showTab(location.hash.slice(1)); };
+const fromHash = () => { if (['#ocr', '#env', '#read'].includes(location.hash)) showTab(location.hash.slice(1)); };
 fromHash();
 window.addEventListener('hashchange', fromHash);
 </script>

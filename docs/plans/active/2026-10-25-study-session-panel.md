@@ -180,4 +180,15 @@ mechanism; this table only lists the buttons.
   summary is "counts and enum strings by construction" (`tests/test_architecture.py::MAINTENANCE_COLUMNS`); answers
   that reach an activity are stored as `utterances` as before. Not measured: whether Windows Firewall prompts for the
   127.0.0.1 bind (research G2); none appeared to the agent, which cannot see the desktop.
-- [ ] Design steps 7–8.
+- [x] 2026-10-25 design step 7: the web UI's Reading tab. `agent/webui/study.py` (status proxied to the live
+  session's panel, found through `data/run` and checked by process; `busy` when it does not answer; the last session
+  from the database through `mode=ro`, closed at once; the action table and its validation; actions only to the
+  session shown); `__main__.py` routes (status needs the page token; actions need our Origin; every POST refuses a
+  `Sec-Fetch-Site` other than `same-origin`/`none`); `index.html` tab (status bar, banner with what a `/do` waits for
+  and each line's result, now / reading / your lines / this session / faces, the action panel built once with the
+  safe-point note and the Skip and Next page notes, Next page only where it acts, eases only in review).
+  `tests/test_webui_study.py` (16 tests); full suite 1205 passed. Checked in the browser pane against a real
+  `study --text --mock --panel` session on a scratch data dir: live view, a panel answer not aligned (`noop`,
+  0/3 sentences, `panel_inputs 1`), "Go to this activity: break" switching at once, the "no session" view from the
+  database after `/stop`; no console errors. Not checked: dark mode and phone width.
+- [ ] Design step 8.
