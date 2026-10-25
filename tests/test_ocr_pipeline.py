@@ -37,6 +37,26 @@ async def test_low_confidence_recaptures_once_then_asks_the_learner(settings):
     assert store.all("SELECT * FROM pages") == []
 
 
+def test_a_sideways_page_is_rotated_even_when_background_text_reads_upright(monkeypatch):
+    """2026-10-25 rehearsal: the timestamp overlay, a large title and a printed cushion read as 3 confident lines
+    at 0° while the page lay sideways; rotation must still be tried and the page's orientation kept."""
+    from types import SimpleNamespace
+
+    from leafi.services.ocr import rapidocr
+
+    def lines(texts):
+        boxes = [[[0, 40 * k], [300, 40 * k], [300, 40 * k + 30], [0, 40 * k + 30]] for k in range(len(texts))]
+        return SimpleNamespace(txts=texts, scores=[0.97] * len(texts), boxes=boxes)
+
+    background = ["2026/10/25 00:03:01", "SILVER UNDER", "Hello, my friend!"]
+    page = background[:2] + [f"line {k} of the page text" for k in range(10)]
+    monkeypatch.setattr(rapidocr, "rotated", lambda data, angle: f"{angle}".encode())
+    ocr = rapidocr.RapidOcr(SimpleNamespace(ocr_version="PP-OCRv6", ocr_auto_rotate=True))
+    ocr._engine = lambda data: lines(page if data == b"270" else background)
+    res = ocr._read(b"frame")
+    assert res.rotation == 270 and res.good_lines == 12
+
+
 def test_reading_order_is_top_to_bottom_then_left_to_right():
     lines = [OcrLine("second", 1, (0, 50, 100, 70)), OcrLine("right", 1, (200, 10, 300, 30)),
              OcrLine("left", 1, (0, 12, 100, 32))]
@@ -104,4 +124,5 @@ async def test_rapidocr_tries_rotations_when_the_upright_read_is_poor(settings):
     backend._engine = engine
     res = await backend.read(render(PAGES[0], number=1, width=1200))  # landscape render
     assert res.rotation == 90 and res.good_lines == 3 and "red kite" in res.text
-    assert len(engine.calls) == 2  # 0° read poorly, the first rotation (90°) read the page, nothing more was tried
+    # 0° read poorly; 90° read the page's 3 lines, below MIN_GOOD_LINES, so the other two were tried and lost
+    assert len(engine.calls) == 4

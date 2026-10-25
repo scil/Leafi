@@ -55,7 +55,10 @@ def to_result(res) -> OcrResult:
 
 
 ROTATIONS = (90, 270, 180)  # P-3: a book lying sideways is the common case; upside down the rare one
-MIN_GOOD_LINES = 3  # fewer confident lines at 0° → try the rotations and keep the best
+# Fewer confident lines than this at 0° → try the rotations and keep the best. Was 3 until the 2026-10-25 rehearsal:
+# the camera's timestamp overlay, a large title (readable even sideways) and printed text behind the book made 3 at
+# 0° while the page's own lines lay sideways, so rotation was never tried; at 90° the same frame read 10.
+MIN_GOOD_LINES = 8
 
 
 def rotated(data: bytes, angle: int) -> bytes:
