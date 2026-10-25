@@ -9,13 +9,20 @@
 第二个标签页编辑 .env(leafi/envedit.py,设计见 docs/plans/active/2026-10-21-env-settings-page.md)。
 只听回环挡不住"浏览器里别的网页"往 127.0.0.1 发请求,所以每个请求都查 Host,
 POST 再查 Content-Type、Origin 和启动时生成、嵌在页面里的 token(§6)。
+
+第三个标签页"OCR"只读:页面文字的每个版本(新的在前)和相对上一版改了哪些词(leafi/study/page_history.py)。
+它的两个 GET 也要 token:页面照片拍的是家里,别的网页不能用 <img> 把它载进来(主人 2026-10-25:点了才看照片)。
+`--tab ocr` 直接打开这一页;服务已经在跑时只开浏览器。
 """
+import argparse
 import json
 import logging
+import os
 import secrets
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from leafi import envedit
 
@@ -38,6 +45,21 @@ log = logging.getLogger("webui")
 
 HOST, PORT = "127.0.0.1", 8770
 PAGE = Path(__file__).with_name("index.html")
+TABS = ("tasks", "env", "ocr")
+
+
+def _ocr_store(settings_factory):
+    """(leafi Settings, an open Store) or (Settings, None) when there is no database yet; never creates one."""
+    from leafi.core.storage import Store
+
+    s = settings_factory()
+    return s, (Store(s.db_path) if s.db_path.exists() else None)
+
+
+def _leafi_settings():
+    from leafi.core.config import Settings
+
+    return Settings()
 
 
 def _meta() -> dict:
@@ -93,6 +115,36 @@ class Handler(BaseHTTPRequestHandler):
                 and (origin is None or origin in {f"http://{o}" for o in self._origins()})
                 and secrets.compare_digest(self.headers.get("X-Leafi-Token", ""), self.server.token))
 
+    def _token_ok(self) -> bool:
+        return self._host_ok() and secrets.compare_digest(self.headers.get("X-Leafi-Token", ""), self.server.token)
+
+    def _ocr(self, query: dict) -> None:
+        """GET /api/ocr (the revisions) and /api/ocr/image?id=N (one still); read-only, the store closed after."""
+        from leafi.core.storage import DatabaseInUse, SchemaError
+        from leafi.study import page_history
+
+        image = query.get("id", [None])[0] if self.path.startswith("/api/ocr/image") else None
+        try:
+            settings_, store = _ocr_store(self.server.leafi_settings)
+        except (SchemaError, DatabaseInUse) as e:
+            self._json(200, {"revisions": [], "error": str(e)})
+            return
+        if store is None:
+            self._json(200, {"revisions": [], "error": f"还没有数据库 {settings_.db_path}"})
+            return
+        try:
+            if image is None:
+                self._json(200, {"revisions": page_history.revisions(store)})
+                return
+            path = page_history.image_file(store, int(image), Path(settings_.cache_dir) / "pages") \
+                if image.isdigit() else None
+        finally:
+            store.close()
+        if path is None:
+            self._json(404, {"error": "照片已过保留期被删除,或不存在"})
+            return
+        self._send(200, path.read_bytes(), page_history.IMAGE_TYPES[path.suffix.lower()])
+
     def _forbidden(self) -> None:
         # 先读掉请求体再回 403:不读就关连接,Windows 会发 RST,客户端连 403 都收不到
         try:
@@ -126,6 +178,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"tasks": [s.to_dict() for s in all_specs()], "meta": _meta()})
         elif self.path == "/api/env":
             self._json(200, envedit.view(self.server.env_path))
+        elif urlsplit(self.path).path in ("/api/ocr", "/api/ocr/image"):
+            if not self._token_ok():
+                self._forbidden()
+                return
+            self._ocr(parse_qs(urlsplit(self.path).query))
         else:
             self._json(404, {"error": "没有这个地址"})
 
@@ -165,18 +222,34 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, "tasks": [s.to_dict() for s in all_specs()]})
 
 
+class _Server(ThreadingHTTPServer):
+    # Windows 上 SO_REUSEADDR 允许第二个进程绑同一端口(2026-10-25 实测:第二次 bind 成功),两个界面会同时"在跑";
+    # 关掉它,第二次启动才会失败,main() 才能改成只开浏览器。别的系统保留(重启时免等 TIME_WAIT)。
+    allow_reuse_address = os.name != "nt"
+
+
 def make_server(host: str = HOST, port: int = PORT, env_path: Path = Path(".env"),
-                data_dir: Path = Path("data")) -> ThreadingHTTPServer:
-    httpd = ThreadingHTTPServer((host, port), Handler)
+                data_dir: Path = Path("data"), leafi_settings=_leafi_settings) -> ThreadingHTTPServer:
+    httpd = _Server((host, port), Handler)
     httpd.token = secrets.token_urlsafe(32)  # 每次启动换一个;页面从 <meta> 里读
     httpd.env_path, httpd.data_dir = env_path, data_dir
+    httpd.leafi_settings = leafi_settings  # 每次请求现读:.env 改了数据库路径也跟得上
     return httpd
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    p = argparse.ArgumentParser(description="Leafi 动作与设置界面")
+    p.add_argument("--tab", choices=TABS, default="tasks", help="打开哪个标签页")
+    args = p.parse_args(argv)
     seed_defaults()  # 首次运行:把内置默认(含话术与终裁提问)落成 tasks.yml
-    url = f"http://{HOST}:{PORT}/"
-    with make_server() as httpd:
+    url = f"http://{HOST}:{PORT}/" + ("" if args.tab == "tasks" else f"#{args.tab}")
+    try:
+        server = make_server(HOST, PORT)
+    except OSError:  # 已经有一个在跑(端口被占):只把浏览器开到那一页
+        log.info("界面已在运行,打开 %s", url)
+        webbrowser.open(url)
+        return
+    with server as httpd:
         log.info("动作编辑界面已启动:%s (Ctrl+C 退出)", url)
         try:
             webbrowser.open(url)

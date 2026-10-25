@@ -50,6 +50,7 @@ switch ($Button) {
     'check-snapshot' { .venv\Scripts\python.exe scripts\probes\checks.py snapshot; Done }  # 摄像头截图
     'check-ocr' { .venv\Scripts\python.exe scripts\probes\checks.py ocr; Done @(1) }  # OCR(新拍)
     'check-ocr-last' { .venv\Scripts\python.exe scripts\probes\checks.py ocr-last; Done @(1) }  # OCR(最新截图)
+    'ocr-review' { cmd /c start "Leafi 动作与设置" /d E:\GitHub\scil\Leafi .venv\Scripts\python.exe -m agent.webui --tab ocr; Done }  # OCR 识别成果(网页)
     'check-mic' { .venv\Scripts\python.exe scripts\probes\checks.py mic; Done @(1) }  # 麦克风测试
     'check-tts' { .venv\Scripts\python.exe scripts\probes\checks.py tts; Done }  # 语音合成测试
     'check-speaker' { .venv\Scripts\python.exe scripts\probes\checks.py speaker; Done }  # PC 喇叭试音

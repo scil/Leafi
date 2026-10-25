@@ -100,13 +100,25 @@ code{font-family:var(--mono);font-size:.9em;background:var(--sunk);padding:1px 5
 .envbar ul{margin:0;padding-left:18px;font-size:13px;font-family:var(--mono);max-height:96px;overflow:auto;flex:1;min-width:240px}
 .envbar label{font-size:13px;display:block}
 .result{font-size:13.5px;line-height:1.7}
+.ocrwrap{max-width:1000px;margin:0 auto;padding:20px 20px 60px}
+.ocrbar{display:flex;gap:12px;align-items:center;margin:0 0 14px;font-size:13px;color:var(--ink-3)}
+.rev{padding:14px 18px;margin-bottom:12px}
+.rev.fresh{border-color:var(--mint);box-shadow:0 0 0 1px var(--mint)}
+.rev .hd{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;margin-bottom:8px}
+.rev .hd .nm{font-weight:600}
+.rev .hd .m{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.rev .txt{font-size:14.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word}
+.rev del{color:var(--rust);background:var(--rust-wash);text-decoration:line-through}
+.rev ins{color:var(--mint);background:var(--mint-wash);text-decoration:none}
+.rev .ops{margin-top:10px;display:flex;gap:10px;align-items:center}
+.rev img{display:block;max-width:100%;margin-top:10px;border:1px solid var(--line);border-radius:3px}
 </style>
 </head>
 <body>
 
 <header>
   <h1>Leafi</h1>
-  <div class="tabs"><button id="tab-tasks" class="on">动作</button><button id="tab-env">设置 (.env)</button></div>
+  <div class="tabs"><button id="tab-tasks" class="on">动作</button><button id="tab-env">设置 (.env)</button><button id="tab-ocr">OCR 识别</button></div>
   <span class="sub" id="file">config/tasks.yml</span>
   <span class="spacer"></span>
   <span class="sub" id="dirty"></span>
@@ -120,6 +132,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--sunk);padding:1px 5
 </div>
 
 <div class="envwrap" id="envview" hidden></div>
+<div class="ocrwrap" id="ocrview" hidden></div>
 <div class="envbar" id="envbar" hidden></div>
 
 <div class="toast" id="toast"></div>
@@ -399,15 +412,70 @@ let ENV = null, PENDING = {}, ENVERR = {}, ENVRESULT = '', LOCKED = false;
 const STATE = {set:'已设置', empty:'已设为空', default:'未设置(用默认)'};
 
 function showTab(which){
-  const env = which === 'env';
-  $('#tab-tasks').classList.toggle('on', !env); $('#tab-env').classList.toggle('on', env);
-  $('#tasksview').hidden = env; $('#taskbtns').hidden = env; $('#dirty').hidden = env;
-  $('#envview').hidden = !env; $('#envbar').hidden = !env;
-  $('#file').textContent = env ? '.env' : 'config/tasks.yml';
+  const env = which === 'env', ocr = which === 'ocr', tasks = !env && !ocr;
+  $('#tab-tasks').classList.toggle('on', tasks); $('#tab-env').classList.toggle('on', env);
+  $('#tab-ocr').classList.toggle('on', ocr);
+  $('#tasksview').hidden = !tasks; $('#taskbtns').hidden = !tasks; $('#dirty').hidden = !tasks;
+  $('#envview').hidden = !env; $('#envbar').hidden = !env; $('#ocrview').hidden = !ocr;
+  $('#file').textContent = env ? '.env' : ocr ? 'data/leafi.db · 页面文字版本' : 'config/tasks.yml';
   if (env && !ENV) loadEnv();
+  clearInterval(OCRTIMER); OCRTIMER = null;
+  if (ocr){ loadOcr(); OCRTIMER = setInterval(() => { if (!document.hidden) loadOcr(); }, 10000); }
+  history.replaceState(null, '', tasks ? location.pathname : '#' + which);
 }
 $('#tab-tasks').onclick = () => showTab('tasks');
 $('#tab-env').onclick = () => showTab('env');
+$('#tab-ocr').onclick = () => showTab('ocr');
+
+// ================================================================ OCR 识别(只读)
+// 每个页面文字版本,新的在前;和上一版比:删掉的词划线,新加的词标绿。每 10 秒自动刷新。
+// 照片默认不加载(拍的是家里),点"看照片"才取那一张;请求带 token,别的网页取不到。
+let OCRTIMER = null, OCRSEEN = null, OCROPEN = {};
+const SOURCE = {ocr:'OCR 识别', correction:'纠正', manual:'手工输入'};
+
+async function loadOcr(){
+  const r = await fetch('/api/ocr', {headers: {'X-Leafi-Token': TOKEN}});
+  const d = r.status === 403 ? {revisions: [], error: '请求被拒(页面过期?请刷新浏览器)'} : await r.json();
+  const newest = d.revisions.length ? d.revisions[0].revision_id : null;
+  const fresh = OCRSEEN === null ? new Set() : new Set(d.revisions.filter(x => x.revision_id > OCRSEEN).map(x => x.revision_id));
+  if (newest !== null) OCRSEEN = Math.max(OCRSEEN ?? 0, newest);
+  renderOcr(d, fresh);
+}
+
+function changesHtml(changes){
+  return changes.map(([op, w]) => op === '=' ? esc(w) : op === '-' ? `<del>${esc(w)}</del>` : `<ins>${esc(w)}</ins>`).join(' ');
+}
+
+function renderOcr(d, fresh){
+  const v = $('#ocrview');
+  const head = `<div class="ocrbar"><button id="ocrreload">刷新</button><span>共 ${d.revisions.length} 个版本 · 新的在前 · 每 10 秒自动刷新 · 更新于 ${new Date().toLocaleTimeString()}</span></div>`
+    + (d.error ? `<div class="errs">${esc(d.error)}</div>` : '')
+    + (!d.error && !d.revisions.length ? '<div class="explain">还没有页面文字。读书时摄像头每识别一页,这里就多一个版本。</div>' : '');
+  v.innerHTML = head + d.revisions.map(x => {
+    const conf = x.ocr_confidence == null ? '' : ` · 置信度 ${x.ocr_confidence.toFixed(2)}`;
+    const page = x.printed_number == null ? `页 #${x.page_id}` : `第 ${x.printed_number} 页`;
+    const body = x.changes ? changesHtml(x.changes) : esc(x.text);
+    const vs = x.previous_rev ? `对比第 ${x.previous_rev} 版` : '第一个版本';
+    const photo = x.image_id == null ? '' : `<button data-photo="${x.image_id}">${OCROPEN[x.image_id] ? '收起照片' : '看照片'}</button>`;
+    return `<div class="card rev${fresh.has(x.revision_id) ? ' fresh' : ''}">
+      <div class="hd"><span class="nm">${esc(x.book)} · ${page}</span>
+        <span class="m">第 ${x.rev} 版${x.current ? '(当前)' : ''} · ${SOURCE[x.source] || esc(x.source)}${conf} · ${esc(x.created_at.replace('T', ' ').slice(0, 19))} UTC · ${vs}</span></div>
+      <div class="txt">${body}</div>
+      <div class="ops">${photo}</div>
+      ${x.image_id != null && OCROPEN[x.image_id] ? `<img alt="识别时保存的照片" src="${OCROPEN[x.image_id]}">` : ''}
+    </div>`;
+  }).join('');
+  $('#ocrreload').onclick = loadOcr;
+  v.querySelectorAll('[data-photo]').forEach(b => b.onclick = () => togglePhoto(b.dataset.photo, d, fresh));
+}
+
+async function togglePhoto(id, d, fresh){
+  if (OCROPEN[id]){ URL.revokeObjectURL(OCROPEN[id]); delete OCROPEN[id]; renderOcr(d, fresh); return; }
+  const r = await fetch('/api/ocr/image?id=' + encodeURIComponent(id), {headers: {'X-Leafi-Token': TOKEN}});
+  if (!r.ok){ toast(r.status === 404 ? '照片已过保留期被删除' : '取照片失败', true); return; }
+  OCROPEN[id] = URL.createObjectURL(await r.blob());
+  renderOcr(d, fresh);
+}
 
 let GONE = [];
 async function loadEnv(){
@@ -578,6 +646,9 @@ async function saveEnv(){
 }
 
 load();
+const fromHash = () => { if (location.hash === '#ocr' || location.hash === '#env') showTab(location.hash.slice(1)); };
+fromHash();
+window.addEventListener('hashchange', fromHash);
 </script>
 </body>
 </html>
