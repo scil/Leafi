@@ -88,10 +88,10 @@ def cmd_forget(args: argparse.Namespace) -> int:
             if code:
                 return code
         if args.session is not None:
-            forget_session(store, args.session)
+            forget_session(store, args.session, settings.review_known_interval_days)
             print(f"forgot session {args.session}")
         if args.book is not None:
-            forget_book(store, args.book)
+            forget_book(store, args.book, settings.review_known_interval_days)
             print(f"forgot book {args.book} (archived)")
         if not store.checkpoint():
             print("another Leafi process is reading: the deleted rows stay in leafi.db-wal until the supervisor's "
@@ -326,14 +326,53 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         return 1
     cleanup = ("cleanup complete" if res.cleaned else
                "cleanup NOT complete (another process held the file); run python -m leafi migrate again")
+    refolded = _refold_items(settings)
     if res.from_version == storage.SCHEMA_VERSION:
-        print(f"{path.name} is already at schema {storage.SCHEMA_VERSION}; {cleanup}")
+        print(f"{path.name} is already at schema {storage.SCHEMA_VERSION}; {cleanup}; {refolded}")
         return 0
     first = f"; first learner #{res.learner_id} {args.learner.strip()}" if res.learner_id is not None else ""
     print(f"migrated {path.name} from schema {res.from_version} to {storage.SCHEMA_VERSION}{first}; rebuilt "
-          f"{len(res.rebuilt)} table(s), created {len(res.created)}; backup {res.backup}; {cleanup}")
+          f"{len(res.rebuilt)} table(s), created {len(res.created)}; backup {res.backup}; {cleanup}; {refolded}")
     print("A backup made before this migration is at the old schema and needs python -m leafi migrate again if "
           "restored; a backup older than a forget brings that learner back (ADR-0019 §8).")
+    return 0
+
+
+def _refold_items(settings) -> str:
+    """Item statuses re-folded from their evidence (M7 design D17): `leafi.core` cannot run the fold, so the
+    command does it after `migrate_file`, and again on every rerun (the fold is pure, so this is idempotent)."""
+    from leafi.core.storage import Store
+    from leafi.study import item_status
+
+    try:
+        with Store(settings.db_path) as store:
+            n = item_status.apply_all(store, settings.review_known_interval_days)
+    except Exception as e:  # the schema change stands; a rerun of migrate completes this
+        return f"item statuses NOT re-folded ({type(e).__name__}); run python -m leafi migrate again"
+    return f"item statuses re-folded ({n} changed)"
+
+
+def cmd_items(args: argparse.Namespace) -> int:
+    """`leafi items ignore|unignore --learner N --item ID` (M7 design D17): the owner's evidence row; the Brain may
+    only ask for `ignore`."""
+    from leafi.core import learner_store
+    from leafi.core.storage import Store
+    from leafi.study import item_status
+
+    settings = _settings()
+    with Store(settings.db_path) as store:
+        row = store.one("SELECT key, status FROM knowledge_items WHERE id=? AND learner_id=?",
+                        (args.item, args.learner))
+        if row is None:
+            print(f"learner #{args.learner} has no item #{args.item}")
+            return 1
+        try:
+            status = item_status.record(store, args.learner, args.item, args.action, "owner",
+                                        tz=settings.household_tz, known_days=settings.review_known_interval_days)
+        except learner_store.LearnerUnavailable:
+            print(f"learner #{args.learner} is being forgotten")
+            return 1
+    print(f"item #{args.item} {row['key']!r}: {row['status']} -> {status}")
     return 0
 
 
@@ -561,6 +600,12 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--learner", metavar="NAME", help="the first learner, who owns the sessions already recorded")
     m.add_argument("--restore", type=Path, metavar="BACKUP", help="put a backup back in place instead")
     m.set_defaults(fn=cmd_migrate)
+    it = sub.add_parser("items", help="mark a learner's item ignored (known, not to be taught) or undo it "
+                        "(ADR-0017 §6.2)")
+    it.add_argument("action", choices=("ignore", "unignore"))
+    it.add_argument("--learner", type=int, required=True, metavar="ID")
+    it.add_argument("--item", type=int, required=True, metavar="ID")
+    it.set_defaults(fn=cmd_items)
     sub.add_parser("supervisor", help="keep every Leafi service running, recover the ones that stop answering, "
                    "send alerts (ADR-0016)").set_defaults(fn=cmd_supervisor)
     tm = sub.add_parser("timing", help="supervision timings after validation, derived times, conflicts (ADR-0016)")

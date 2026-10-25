@@ -134,10 +134,12 @@ def _forgotten_while_sent(store: Store, learner_id: int, note_id: int) -> None:
             records._remember_notes(store, learner_id, [note_id])
 
 
-async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", model: str = "问答题") -> SyncReport:
+async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", model: str = "问答题", *,
+                      tz: str = "", known_days: float = 21) -> SyncReport:
     """Every learner's pending cards, each into that learner's deck (`deck` is the base name, `deck_for`). A learner
     being forgotten is skipped (ADR-0021 E9, X4): their rows are not read, and the claim to `'sent'` checks the
-    owner in its own statement."""
+    owner in its own statement. Each acknowledged card gets a `card_ack` (M7 design D17) after the outbox row's
+    acknowledgement, so a refusal never loses `anki_note_id`."""
     rep = SyncReport()
     rows = store.all("SELECT o.*, k.anki_item_key FROM anki_outbox o JOIN knowledge_items k ON "
                      "k.id = o.knowledge_item_id JOIN learners l ON l.id = o.learner_id "
@@ -189,6 +191,7 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
                     _forgotten_while_sent(store, row["learner_id"], note_id)
                     continue
                 rep.acked += 1
+                _ack_cards(store, row["learner_id"], item_id, [int(c) for c in cards], tz=tz, known_days=known_days)
             else:
                 prev = store.one("SELECT anki_note_id, card_ids, last_acked_fields FROM anki_outbox WHERE "
                                  "knowledge_item_id=? AND state='acked' AND anki_note_id IS NOT NULL "
@@ -215,6 +218,8 @@ async def sync_outbox(store: Store, client: AnkiClient, deck: str = "Leafi", mod
                               "last_acked_fields=?, last_error=?, updated_at=? WHERE id=?",
                               (note_id, prev["card_ids"], dumps(acked), err, now_iso(), oid))
                 rep.acked += 1
+                _ack_cards(store, row["learner_id"], item_id, [int(c) for c in loads(prev["card_ids"], [])], tz=tz,
+                           known_days=known_days)
         except AnkiUnavailable as e:
             store.execute("UPDATE anki_outbox SET state='pending', last_error=?, updated_at=? WHERE id=?",
                           (str(e), now_iso(), oid))
@@ -251,6 +256,8 @@ async def due_cards(store: Store, client: AnkiClient, learner_id: int, deck: str
         return []
     out = []
     for c in await client.cards_info(ids):
+        if not c or not c.get("cardId"):  # AnkiConnect's empty entry for a card deleted since `findCards`
+            continue
         r = store.one("SELECT knowledge_item_id FROM anki_outbox WHERE anki_note_id=? AND learner_id=? "
                       "ORDER BY id DESC LIMIT 1", (c.get("note"), learner_id))
         front = (c.get("fields", {}).get("正面", {}) or {}).get("value", "") or c.get("question", "")
@@ -259,13 +266,15 @@ async def due_cards(store: Store, client: AnkiClient, learner_id: int, deck: str
 
 
 async def answer(store: Store, client: AnkiClient, learner_id: int, card: DueCard, ease: int,
-                 known_days: int = 21) -> str:
-    """Write pending, set sent immediately before `answerCards`, acked on response. Never replayed."""
+                 known_days: float = 21, *, tz: str = "", activity_id: int | None = None) -> str:
+    """Write pending, set sent immediately before `answerCards`, acked on response. Never replayed. An
+    acknowledged answer records the card's new state (`card_state`, M7 design D17) and re-folds its item."""
     if ease not in EASES:
         raise ValueError(f"ease {ease}: 1 again, 2 hard, 3 good, 4 easy")
     rid = learner_store.insert(store, "review_answers", learner_id, knowledge_item_id=card.knowledge_item_id,
                                card_id=card.card_id, ease=ease, state="pending", created_at=now_iso())
-    store.execute("UPDATE review_answers SET state='sent', sent_at=? WHERE id=?", (now_iso(), rid))
+    sent_at = now_iso()
+    store.execute("UPDATE review_answers SET state='sent', sent_at=? WHERE id=?", (sent_at, rid))
     try:
         result = await client.invoke("answerCards", answers=[{"cardId": card.card_id, "ease": ease}])
     except AnkiUnavailable:
@@ -276,54 +285,128 @@ async def answer(store: Store, client: AnkiClient, learner_id: int, card: DueCar
         return "failed"
     if result and result[0]:
         store.execute("UPDATE review_answers SET state='acked', acked_at=? WHERE id=?", (now_iso(), rid))
-        _update_status(store, card, ease, known_days)
+        await _record_state(store, client, learner_id, card.knowledge_item_id, card.card_id, sent_at, None,
+                            tz=tz, known_days=known_days, activity_id=activity_id)
         return "acked"
     store.execute("UPDATE review_answers SET state='failed' WHERE id=?", (rid,))
     return "failed"
 
 
-def _update_status(store: Store, card: DueCard, ease: int, known_days: int) -> None:
-    if card.knowledge_item_id is None:
+def _review_after(reviews, card_id: int, sent_at: str) -> dict | None:
+    """The latest revlog entry of `card_id` at or after `sent_at` (revlog ids are epoch milliseconds)."""
+    sent_ms = dt.datetime.fromisoformat(sent_at).timestamp() * 1000
+    entries = (reviews or {}).get(str(card_id)) or (reviews or {}).get(card_id) or []
+    after = [e for e in entries if e.get("id", 0) >= sent_ms]
+    return max(after, key=lambda e: e.get("id", 0)) if after else None
+
+
+async def _record_state(store: Store, client: AnkiClient, learner_id: int, item_id: int | None, card_id: int,
+                        sent_at: str, reviews, *, tz: str, known_days: float, activity_id: int | None) -> None:
+    """A `card_state` from the review after `sent_at` (interval, type) and `cardsInfo` (lapses); session NULL, since
+    it describes the card, not the session. Anki unreachable: nothing, `observe_cards` catches up."""
+    if item_id is None:
         return
-    cur = store.one("SELECT status FROM knowledge_items WHERE id=?", (card.knowledge_item_id,))["status"]
-    passed = ease >= 3  # hard (2) is remembered with effort: it neither promotes nor lapses an item
-    new = cur
-    if cur == "new":
-        new = "learning"
-    elif cur == "learning" and passed and card.interval >= known_days:
-        new = "known"
-    elif cur == "known" and ease == 1:
-        new = "lapsed"
-    elif cur == "lapsed" and passed:
-        new = "learning"
-    if new != cur:
-        store.execute("UPDATE knowledge_items SET status=?, updated_at=? WHERE id=?",
-                      (new, now_iso(), card.knowledge_item_id))
+    from leafi.study import item_status
+
+    try:
+        if reviews is None:
+            reviews = await client.invoke("getReviewsOfCards", cards=[card_id])
+        info = await client.cards_info([card_id])
+    except (AnkiUnavailable, AnkiError):
+        return
+    entry = _review_after(reviews, card_id, sent_at)
+    card = info[0] if info else {}
+    if entry is None or not card.get("cardId"):
+        return
+    try:
+        item_status.record(store, learner_id, item_id, "card_state", "anki", tz=tz, known_days=known_days,
+                           activity_id=activity_id, card_id=card_id, ivl=item_status.ivl_days(entry.get("ivl", 0)),
+                           lapses=int(card.get("lapses", 0)), revlog_id=entry.get("id"), revlog_type=entry.get("type"))
+    except learner_store.LearnerUnavailable:
+        log.info("card state of a learner being forgotten not recorded")
 
 
-async def reconcile(store: Store, client: AnkiClient, known_days: int = 21) -> list[int]:
-    """`sent` answers: acked when Anki has a review after `sent_at`, applying the same knowledge-status
-    transition as a normal acknowledgement (once: only `sent` rows are looked at); the rest are returned."""
+async def reconcile(store: Store, client: AnkiClient, known_days: float = 21, *, tz: str = "") -> list[int]:
+    """`sent` answers of learners not being forgotten: acked when Anki has a review after `sent_at`, recording the
+    card's state as a normal acknowledgement does (once: only `sent` rows are looked at); the rest are returned."""
     unknown = []
-    for r in store.all("SELECT * FROM review_answers WHERE state='sent'"):
+    for r in store.all("SELECT a.* FROM review_answers a JOIN learners l ON l.id = a.learner_id "
+                       "WHERE a.state='sent' AND l.forgetting = 0"):
         try:
             reviews = await client.invoke("getReviewsOfCards", cards=[r["card_id"]])
         except (AnkiUnavailable, AnkiError):
             unknown.append(r["id"])
             continue
-        sent_ms = dt.datetime.fromisoformat(r["sent_at"]).timestamp() * 1000
-        entries = (reviews or {}).get(str(r["card_id"])) or (reviews or {}).get(r["card_id"]) or []
-        if any(e.get("id", 0) >= sent_ms for e in entries):
-            interval = 0
-            try:
-                info = await client.cards_info([r["card_id"]])
-                interval = int(info[0].get("interval", 0)) if info else 0
-            except (AnkiUnavailable, AnkiError):
-                pass
-            with store.transaction():
-                store.execute("UPDATE review_answers SET state='acked', acked_at=? WHERE id=?", (now_iso(), r["id"]))
-                _update_status(store, DueCard(r["card_id"], r["knowledge_item_id"], "", interval), r["ease"],
-                               known_days)
-        else:
+        if _review_after(reviews, r["card_id"], r["sent_at"]) is None:
             unknown.append(r["id"])
+            continue
+        store.execute("UPDATE review_answers SET state='acked', acked_at=? WHERE id=?", (now_iso(), r["id"]))
+        await _record_state(store, client, r["learner_id"], r["knowledge_item_id"], r["card_id"], r["sent_at"],
+                            reviews, tz=tz, known_days=known_days, activity_id=None)
     return unknown
+
+
+def _ack_cards(store: Store, learner_id: int, item_id: int, card_ids: list[int], *, tz: str,
+               known_days: float) -> None:
+    """A `card_ack` per card id with no live membership (no event, or its latest is `card_gone`), written after the
+    outbox acknowledgement and never inside it (round 10 #3); a learner being forgotten: logged, not written."""
+    from leafi.study import item_status
+
+    latest = item_status.latest_card_events(store, learner_id)
+    for cid in card_ids:
+        ev = latest.get(cid)
+        if ev is not None and ev["event"] != "card_gone":
+            continue
+        try:
+            item_status.record(store, learner_id, item_id, "card_ack", "anki", tz=tz, known_days=known_days,
+                               card_id=cid)
+        except learner_store.LearnerUnavailable:
+            log.info("card acknowledgement of a learner being forgotten not recorded")
+            return
+
+
+async def observe_cards(store: Store, client: AnkiClient, learner_id: int, *, tz: str = "",
+                        known_days: float = 21) -> int:
+    """Once per session, when Anki is reachable (D17): `cardsInfo` over every card of the learner's acknowledged
+    outbox rows, writing a `card_state` when the interval or lapses changed (or a gone card came back) and a
+    `card_gone` when Anki answers without the card. Anki errors propagate untouched; nothing is written then."""
+    from leafi.study import item_status
+
+    if store.one("SELECT 1 FROM learners WHERE id=? AND forgetting = 0", (learner_id,)) is None:
+        return 0
+    tracked: dict[int, int] = {}
+    for r in store.all("SELECT knowledge_item_id, card_ids FROM anki_outbox WHERE learner_id=? AND state='acked' "
+                       "ORDER BY id", (learner_id,)):
+        for cid in loads(r["card_ids"], []):
+            tracked[int(cid)] = r["knowledge_item_id"]
+    if not tracked:
+        return 0
+    ids = sorted(tracked)
+    found: dict[int, dict] = {}
+    for i in range(0, len(ids), 100):
+        for c in await client.cards_info(ids[i:i + 100]):
+            if c and c.get("cardId"):
+                found[int(c["cardId"])] = c
+    latest = item_status.latest_card_events(store, learner_id)
+    states = item_status.latest_card_states(store, learner_id)
+    written = 0
+    for cid in ids:
+        ev, c = latest.get(cid), found.get(cid)
+        try:
+            if c is None:
+                if ev is not None and ev["event"] != "card_gone":
+                    item_status.record(store, learner_id, tracked[cid], "card_gone", "anki", tz=tz,
+                                       known_days=known_days, card_id=cid)
+                    written += 1
+                continue
+            ivl, lapses = item_status.ivl_days(c.get("interval", 0)), int(c.get("lapses", 0))
+            st = states.get(cid)
+            if (ev is None or ev["event"] == "card_gone" or st is None or st["ivl_days"] != ivl
+                    or st["lapses"] != lapses):
+                item_status.record(store, learner_id, tracked[cid], "card_state", "anki", tz=tz,
+                                   known_days=known_days, card_id=cid, ivl=ivl, lapses=lapses)
+                written += 1
+        except learner_store.LearnerUnavailable:
+            log.info("card states of a learner being forgotten not recorded")
+            return written
+    return written

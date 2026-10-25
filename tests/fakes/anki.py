@@ -34,8 +34,24 @@ class FakeAnki:
         self.cards[cid].update(due=True, interval=interval)
         return cid
 
+    def set_card(self, card_id: int, **state) -> None:
+        """A change made in Anki itself (a review there, an edit of the schedule): `interval`, `lapses`, `due`."""
+        self.cards[card_id].update(state)
+
+    def delete_card(self, card_id: int) -> dict:
+        return self.cards.pop(card_id)
+
     def actions(self) -> list[str]:
         return [a for a, _ in self.calls]
+
+    @staticmethod
+    def _schedule(c: dict, ease: int) -> None:
+        """A rough Anki: again resets the interval (a lapse when it had one), the others grow it."""
+        if ease == 1:
+            c["lapses"] = c.get("lapses", 0) + (c["interval"] > 0)
+            c["interval"] = 0
+        else:
+            c["interval"] = max({2: 1, 3: 1, 4: 4}[ease], round(c["interval"] * {2: 1.2, 3: 2.5, 4: 3.0}[ease]))
 
     # ---- protocol
     def _new_note(self, deck: str, model: str, fields: dict, tags: list[str]) -> int:
@@ -87,9 +103,11 @@ class FakeAnki:
         elif action == "updateNoteFields":
             self.notes[p["note"]["id"]]["fields"].update(p["note"]["fields"])
         elif action == "cardsInfo":
+            # AnkiConnect answers an unknown card id with an empty entry
             result = [{"cardId": c, "note": self.cards[c]["note"], "interval": self.cards[c]["interval"],
+                       "lapses": self.cards[c].get("lapses", 0),
                        "fields": {f: {"value": v} for f, v in self.notes[self.cards[c]["note"]]["fields"].items()}}
-                      for c in p["cards"] if c in self.cards]
+                      if c in self.cards else {} for c in p["cards"]]
         elif action == "answerCards":
             result = []
             for a in p["answers"]:
@@ -98,8 +116,9 @@ class FakeAnki:
                     result.append(False)
                     continue
                 c["due"] = False
+                self._schedule(c, a["ease"])
                 self.reviews.setdefault(a["cardId"], []).append({"id": int(time.time() * 1000) + 1,
-                                                                 "ease": a["ease"]})
+                                                                 "ease": a["ease"], "ivl": c["interval"], "type": 1})
                 result.append(True)
         elif action == "getReviewsOfCards":
             result = {str(c): self.reviews.get(c, []) for c in p["cards"]}

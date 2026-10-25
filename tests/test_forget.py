@@ -58,6 +58,12 @@ def _history(store, learner, book, page, rev):
     store.insert("brain_calls", session_id=s, activity_id=act, purpose="decide", backend="mock", payload="p",
                  response="r", outcome="ok", created_at=now_iso())
     store.execute("UPDATE anki_outbox SET state='acked', anki_note_id=? WHERE learner_id=?", (700 + learner, learner))
+    learner_store.insert(store, "item_status_events", learner, item_id=item, at=now_iso(), day="2026-10-23",
+                         event="ignore", source="brain", session_id=s, activity_id=act)
+    learner_store.insert(store, "item_status_events", learner, item_id=item, at=now_iso(), day="2026-10-23",
+                         event="card_state", source="anki", activity_id=act, card_id=1, ivl_days=3.0, lapses=0)
+    learner_store.insert(store, "decision_records", learner, session_id=s, at=now_iso(), turn="t1",
+                         record='{"leaves": []}')
     return s, utt
 
 
@@ -80,8 +86,11 @@ def test_forget_learner_removes_every_owned_store_and_keeps_others_copies(store,
 
     assert learner_store.get(store, ada) is None
     for table in ("reading_sessions", "knowledge_items", "encounters", "difficulties", "anki_outbox",
-                  "review_answers", "learner_notes", "book_notes", "retrieval_events", "consents", "egress_log"):
+                  "review_answers", "learner_notes", "book_notes", "retrieval_events", "consents", "egress_log",
+                  "item_status_events", "decision_records"):
         assert store.one(f"SELECT COUNT(*) AS n FROM {table} WHERE learner_id=?", (ada,))["n"] == 0, table
+    for table in ("item_status_events", "decision_records"):  # Ben's own stay
+        assert store.one(f"SELECT COUNT(*) AS n FROM {table} WHERE learner_id=?", (ben,))["n"] >= 1, table
     # Ben keeps everything of his own, including the copies that quote Ada
     assert store.one("SELECT COUNT(*) AS n FROM activities WHERE assessment='Ada helped'")["n"] == 1
     assert store.one("SELECT COUNT(*) AS n FROM brain_calls WHERE session_id=?", (ben_session,))["n"] == 2
@@ -332,3 +341,20 @@ def test_forget_learner_command_confirms_first_and_says_what_is_kept(settings, m
     assert "forgot learner" in out and "check Anki" in out
     with Store(settings.db_path) as store:
         assert learner_store.get(store, ada) is None
+
+
+def test_discarding_a_guest_removes_its_status_events_and_decision_records(store):
+    """D22 (round 5 #8): a guest that wrote an `ignore` and a `card_ack` is discarded with foreign keys on."""
+    from leafi.study import item_status
+    from leafi.study.harness import guests
+
+    guest = guests.new_guest(store)
+    s = seed.session(store, None, learner_id=guest)
+    item = knowledge.upsert_item(store, guest, "word", "blew")
+    item_status.record(store, guest, item, "ignore", "learner", session_id=s)
+    item_status.record(store, guest, item, "card_ack", "anki", card_id=9)
+    learner_store.insert(store, "decision_records", guest, session_id=s, at=now_iso(), turn="t1", record="{}")
+    assert guests.discard(store, guest) == 1
+    for table in ("item_status_events", "decision_records", "knowledge_items"):
+        assert store.one(f"SELECT COUNT(*) AS n FROM {table}")["n"] == 0, table
+    assert store.one("PRAGMA foreign_key_check") is None

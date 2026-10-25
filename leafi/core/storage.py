@@ -156,7 +156,7 @@ LEGACY_STEPS: list[str] = [
     """,
 ]
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Provenance of a stored text (ADR-0018 §3) in the frozen schemas 5 and 6 only: a class and the json list of source
 # learner ids. Migration 7 drops these columns (ADR-0021 E8); keep `_PROV` for `SCHEMA_V5` / `SCHEMA_V6`.
@@ -455,6 +455,28 @@ for _old, _new in [
 del _old, _new
 if "provenance_class" in SCHEMA or "source_learners" in SCHEMA:
     raise AssertionError("schema 7 still holds a provenance column")
+
+# Frozen: migration 7 brings a version-6 file to exactly this, and migration 8 runs after it.
+SCHEMA_V7 = SCHEMA
+
+# 8 — item status as a fold over evidence (M7 design D17) and the Brain's replay set (D19). Both are owned by
+# `learner_id` (D22's `DIRECT_OWNED`); `item_status_events` is append-only but for `activity_id`, which `forget
+# --session` sets NULL before deleting that session's activities.
+SCHEMA += """
+    CREATE TABLE item_status_events(
+        id INTEGER PRIMARY KEY, learner_id INTEGER NOT NULL REFERENCES learners(id),
+        item_id INTEGER NOT NULL REFERENCES knowledge_items(id), at TEXT NOT NULL, day TEXT NOT NULL,
+        event TEXT NOT NULL CHECK(event IN ('ignore','unignore','card_ack','card_state','card_gone')),
+        source TEXT NOT NULL CHECK(source IN ('brain','learner','owner','anki')),
+        session_id INTEGER REFERENCES reading_sessions(id), activity_id INTEGER REFERENCES activities(id),
+        card_id INTEGER, ivl_days REAL, lapses INTEGER, revlog_id INTEGER, revlog_type INTEGER);
+    CREATE INDEX item_status_events_item ON item_status_events(item_id, at);
+    CREATE TABLE decision_records(
+        id INTEGER PRIMARY KEY, learner_id INTEGER NOT NULL REFERENCES learners(id),
+        session_id INTEGER NOT NULL REFERENCES reading_sessions(id), at TEXT NOT NULL, turn TEXT NOT NULL,
+        record TEXT NOT NULL);
+    CREATE INDEX decision_records_learner ON decision_records(learner_id, session_id);
+"""
 
 SEEDS = "INSERT OR IGNORE INTO privacy_state(key, value) VALUES('protected_version', 0)"
 
@@ -817,7 +839,8 @@ def migrate_file(path: Path | str, learner_name: str | None = None, *, backup_di
     transaction; a failure rolls that step back and leaves the file at the last completed version (ADR-0018 §7.2).
     Step 5 (a version-4 file) writes the first learner and needs `learner_name`; step 6 needs nothing but imports
     `legacy_terms` (the household's old `REDACT_TERMS`) as names to protect; step 7 drops the provenance columns
-    (ADR-0021 E8). After the steps, still under the lock, `_cleanup` runs `VACUUM` and a TRUNCATE checkpoint so
+    (ADR-0021 E8); step 8 adds `item_status_events` with one `card_ack` per acknowledged card and
+    `decision_records` (M7 design D17, D19; the `leafi migrate` command then re-folds item statuses). After the steps, still under the lock, `_cleanup` runs `VACUUM` and a TRUNCATE checkpoint so
     dropped values leave the file; on a file already at the latest version it runs again, so a cleanup cut off by
     a crash is completed by rerunning the command. `_hook(table)` runs before each rebuild, for the
     failure-injection test."""
@@ -871,8 +894,11 @@ def migrate_file(path: Path | str, learner_name: str | None = None, *, backup_di
             _step(conn, 6, SCHEMA_V6, {}, result, _hook, after=lambda c: _v6_data(c, legacy_terms))
             version = 6
         if version == 6:
-            _step(conn, 7, SCHEMA, {}, result, _hook)
+            _step(conn, 7, SCHEMA_V7, {}, result, _hook)
             version = 7
+        if version == 7:
+            _step(conn, 8, SCHEMA, {}, result, _hook, after=_v8_backfill)
+            version = 8
         result.cleaned = _cleanup(conn)
         return result
     finally:
@@ -949,6 +975,17 @@ def _step(conn: sqlite3.Connection, number: int, schema: str, copies: dict[str, 
         conn.execute("PRAGMA legacy_alter_table = OFF")
         conn.execute("PRAGMA foreign_keys = ON")
         target.close()
+
+
+def _v8_backfill(conn: sqlite3.Connection) -> None:
+    """Migration 8's rows (M7 design D17): one `card_ack` per distinct (learner, item, card id) of the acknowledged
+    outbox rows (an `add` row and its `update` rows carry the same ids), at the earliest acknowledgement. `day` is
+    that moment's UTC date: `migrate_file` takes no settings, and a `card_ack` is never counted by day."""
+    conn.execute(
+        "INSERT INTO item_status_events(learner_id, item_id, at, day, event, source, card_id) "
+        "SELECT o.learner_id, o.knowledge_item_id, MIN(o.updated_at), substr(MIN(o.updated_at), 1, 10), "
+        "'card_ack', 'anki', j.value FROM anki_outbox o, json_each(o.card_ids) j WHERE o.state = 'acked' "
+        "GROUP BY o.learner_id, o.knowledge_item_id, j.value ORDER BY MIN(o.updated_at), j.value")
 
 
 def _v6_data(conn: sqlite3.Connection, legacy_terms: list[str] | tuple[str, ...]) -> None:

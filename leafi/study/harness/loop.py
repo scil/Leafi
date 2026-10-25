@@ -245,7 +245,9 @@ async def deliver(s: Session, w: World, env: Env, summ: dict) -> None:
         from leafi.study import anki
 
         try:
-            rep = await anki.sync_outbox(s.store, env.anki, env.settings.anki_deck, env.settings.anki_model)
+            rep = await anki.sync_outbox(s.store, env.anki, env.settings.anki_deck, env.settings.anki_model,
+                                         tz=env.settings.household_tz,
+                                         known_days=env.settings.review_known_interval_days)
             summ["anki_synced"], summ["anki_pending"] = "done", rep.pending
         except Exception:
             log.warning("anki sync failed; outbox kept", exc_info=True)

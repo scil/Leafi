@@ -44,6 +44,7 @@ class World:
         self.first_boundary = True
         self.anki_due = 0
         self.anki_reachable = False
+        self.cards_observed = False
         self.activity_started = time.monotonic()
 
     # ---- facts (refresh() before each boundary: Anki is asynchronous, facts() is not)
@@ -53,9 +54,14 @@ class World:
             return
         from leafi.study import anki
 
+        cfg = self.settings
         try:
-            await anki.reconcile(self.store, self.anki, self.settings.review_known_interval_days)
-            cards = await anki.due_cards(self.store, self.anki, self.s.learner_id, self.settings.anki_deck, 20)
+            await anki.reconcile(self.store, self.anki, cfg.review_known_interval_days, tz=cfg.household_tz)
+            if not self.cards_observed:  # once per session, when Anki is reachable (M7 design D17)
+                await anki.observe_cards(self.store, self.anki, self.s.learner_id, tz=cfg.household_tz,
+                                         known_days=cfg.review_known_interval_days)
+                self.cards_observed = True
+            cards = await anki.due_cards(self.store, self.anki, self.s.learner_id, cfg.anki_deck, 20)
         except (anki.AnkiUnavailable, anki.AnkiError):
             return
         self.anki_reachable, self.anki_due = True, len(cards)

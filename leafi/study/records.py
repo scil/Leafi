@@ -137,9 +137,10 @@ def _marks(ids: list) -> str:
     return ",".join("?" * len(ids)) or "NULL"
 
 
-def _delete_session_records(store: Store, session_id: int) -> None:
+def _delete_session_records(store: Store, session_id: int) -> set[int]:
     """The session's evidence and the ADR-0017 §7.2 records reached through it, inside the caller's
-    transaction; the session row and its page reads (summary counts) stay."""
+    transaction; the session row and its page reads (summary counts) stay. Returns the items whose status evidence
+    lost rows (the caller re-folds those that still exist, M7 design D17)."""
     reads = [r["id"] for r in store.all("SELECT id FROM page_reads WHERE session_id=?", (session_id,))]
     marks = _marks(reads)
     utt = [r["id"] for r in store.all(
@@ -158,19 +159,32 @@ def _delete_session_records(store: Store, session_id: int) -> None:
     store.execute(f"DELETE FROM learner_notes WHERE id IN (SELECT note_id FROM learner_note_citations GROUP BY "
                   f"note_id HAVING SUM(activity_id NOT IN ({amarks})) = 0)", tuple(acts))
     store.execute(f"DELETE FROM learner_note_citations WHERE activity_id IN ({amarks})", tuple(acts))
+    affected = {r["item_id"] for r in store.all(
+        f"SELECT item_id FROM retrieval_events WHERE activity_id IN ({amarks}) UNION SELECT item_id FROM "
+        "item_status_events WHERE session_id=?", (*acts, session_id))}
     store.execute(f"DELETE FROM retrieval_events WHERE activity_id IN ({amarks})", tuple(acts))
+    # card evidence is session-less and stays (it describes a card that still exists); its activity link goes
+    store.execute(f"UPDATE item_status_events SET activity_id=NULL WHERE activity_id IN ({amarks})", tuple(acts))
+    store.execute("DELETE FROM item_status_events WHERE session_id=?", (session_id,))
+    store.execute("DELETE FROM decision_records WHERE session_id=?", (session_id,))
     store.execute("DELETE FROM brain_calls WHERE session_id=?", (session_id,))
     store.execute("DELETE FROM egress_log WHERE session_id=?", (session_id,))
     store.execute("UPDATE page_reads SET cycle_id=NULL WHERE session_id=?", (session_id,))
     store.execute("DELETE FROM activities WHERE session_id=?", (session_id,))
     store.execute("DELETE FROM cycles WHERE session_id=?", (session_id,))
+    return affected
 
 
-def forget_session(store: Store, session_id: int) -> None:
+def forget_session(store: Store, session_id: int, known_days: float = 21) -> None:
     """Delete the session's utterances, observations, practices, miscues, activities, cycles, Brain calls,
-    retrieval events and egress rows; keep the summary counts."""
+    retrieval events, session-bound status events, decision records and egress rows; keep the summary counts.
+    Items whose evidence lost rows are re-folded, so one with nothing left returns to `new` (D17)."""
+    from leafi.study import item_status
+
     with store.transaction():
-        _delete_session_records(store, session_id)
+        affected = _delete_session_records(store, session_id)
+        for item_id in sorted(affected):
+            item_status.apply(store, item_id, known_days)
         learner = learner_store.session_learner(store, session_id)
         if learner is not None:
             knowledge.recompute_difficulties(store, learner)
@@ -178,10 +192,10 @@ def forget_session(store: Store, session_id: int) -> None:
         log.warning("forget: another connection is reading; the supervisor's periodic checkpoint retries")
 
 
-def forget_book(store: Store, book_id: int) -> None:
+def forget_book(store: Store, book_id: int, known_days: float = 21) -> None:
     sessions = [r["id"] for r in store.all("SELECT id FROM reading_sessions WHERE book_id=?", (book_id,))]
     for sid in sessions:
-        forget_session(store, sid)
+        forget_session(store, sid, known_days)
     with store.transaction():
         store.execute("DELETE FROM book_notes WHERE book_id=?", (book_id,))
         page_ids = [r["id"] for r in store.all("SELECT id FROM pages WHERE book_id=?", (book_id,))]
@@ -244,7 +258,7 @@ def _remember_notes(store: Store, learner_id: int, note_ids: list[int]) -> None:
 
 
 _DIRECT_DELETES = ("learner_notes", "book_notes", "review_answers", "difficulties", "encounters", "anki_outbox",
-                   "egress_log")
+                   "egress_log", "item_status_events", "decision_records")
 
 
 def _delete_owned(store: Store, learner_id: int) -> None:

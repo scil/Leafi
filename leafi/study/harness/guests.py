@@ -50,7 +50,7 @@ def discard(store: Store, guest_id: int) -> int:
             store.execute("UPDATE reading_sessions SET learner_id=? WHERE id=?", (anon, sid))
         store.execute("DELETE FROM retrieval_events WHERE learner_id=?", (guest_id,))
         for table in ("review_answers", "difficulties", "encounters", "anki_outbox", "learner_notes", "book_notes",
-                      "consents"):
+                      "consents", "item_status_events", "decision_records"):
             store.execute(f"DELETE FROM {table} WHERE learner_id=?", (guest_id,))
         store.execute("DELETE FROM knowledge_items WHERE learner_id=?", (guest_id,))
         # the attempts stay on record (no body is ever stored), attributed to `anonymous` like the counts

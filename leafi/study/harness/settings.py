@@ -47,6 +47,9 @@ SPEC: dict[str, tuple[object, object]] = {
     "reading.encourage": ("specific", ("none", "specific", "frequent")),
     "reading.silence_backchannel_s": (3, (1, 30)),
     "reading.silence_prompt_s": (3, (1, 30)),
+    "mastery.mode": ("retrievals", ("retrievals", "anki")),  # §6.2; an item with a card follows Anki in both
+    "mastery.min_retrievals": (6, (1, 20)),
+    "mastery.min_days": (3, (1, 14)),
 }
 for _k in CONTENT_KINDS:
     SPEC[f"policy.content.{_k}"] = ("brain" if _k in BRAIN_ONLY else "code",

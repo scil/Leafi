@@ -23,7 +23,8 @@ from leafi.core.storage import Store, dumps, loads, now_iso
 from leafi.core.text import placeholder_reason
 
 DIRECT_OWNED = frozenset({"reading_sessions", "knowledge_items", "difficulties", "retrieval_events", "learner_notes",
-                          "book_notes", "review_answers", "anki_outbox", "consents", "encounters"})
+                          "book_notes", "review_answers", "anki_outbox", "consents", "encounters",
+                          "item_status_events", "decision_records"})
 DIRECT = DIRECT_OWNED  # the name M5–M7 code uses
 # Written after `post_done_at` too (the audit flush, post-session steps), so fenced; the other session tables are
 # written only by a live session or by recovery, which checks the owner itself (ADR-0021 E9).

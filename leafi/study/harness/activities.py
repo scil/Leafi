@@ -7,7 +7,6 @@ its own statuses. Nothing is practised inside reading and nothing is said there 
 
 from __future__ import annotations
 
-import datetime as dt
 import html
 import logging
 import math
@@ -17,7 +16,7 @@ from leafi.core import learner_store
 from leafi.core.ports import Display, Utterance
 from leafi.core.storage import dumps, loads, now_iso
 from leafi.core.text import words
-from leafi.study import cards, coach, controls, corrections, knowledge, miscues, pages, phrases
+from leafi.study import cards, coach, controls, corrections, item_status, knowledge, miscues, pages, phrases
 from leafi.study.alignment import (
     CandidateCreated,
     CandidateWithdrawn,
@@ -469,10 +468,15 @@ async def practise_errors(w: World, act: Activity, aid: int) -> tuple[str, dict]
 
 
 def _retrieval(w: World, item_id: int | None, aid: int, outcome: str, evidence: str) -> None:
+    """§3.4's retrieval event (household day, D17) and the item's re-fold, in one transaction."""
     if item_id is None:
         return
-    learner_store.insert(w.store, "retrieval_events", w.s.learner_id, item_id=item_id, activity_id=aid,
-                         at=now_iso(), day=dt.date.today().isoformat(), outcome=outcome, evidence=evidence)
+    cfg = w.settings
+    with w.store.transaction():
+        learner_store.insert(w.store, "retrieval_events", w.s.learner_id, item_id=item_id, activity_id=aid,
+                             at=now_iso(), day=item_status.household_day(cfg.household_tz), outcome=outcome,
+                             evidence=evidence)
+        item_status.apply(w.store, item_id, cfg.review_known_interval_days)
 
 
 async def review_anki(w: World, act: Activity, aid: int) -> tuple[str, dict]:
@@ -507,7 +511,8 @@ async def review_anki(w: World, act: Activity, aid: int) -> tuple[str, dict]:
             if kind in EASES:
                 _store_utterance(w, u, "answer")
                 ease = EASES[kind]
-                await anki.answer(w.store, w.anki, s.learner_id, card, ease, cfg.review_known_interval_days)
+                await anki.answer(w.store, w.anki, s.learner_id, card, ease, cfg.review_known_interval_days,
+                                  tz=cfg.household_tz, activity_id=aid)
                 if _confident(u):  # §3.4: an unconfident spoken answer writes no retrieval event
                     _retrieval(w, card.knowledge_item_id, aid, "fail" if ease == 1 else "success",
                                "typed" if u.typed else "heard_confident")

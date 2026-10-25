@@ -181,17 +181,111 @@ async def test_lost_add_recovery_does_not_adopt_parent_edits_as_leafi_values(sto
     assert rep.conflicts
 
 
-async def test_reconciled_review_applies_the_knowledge_status_transition(store):
-    """Review 1 #18: a lost first-review response, once reconciled, moves the item new → learning."""
+def _status(store, item):
+    return store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"]
+
+
+def _events(store, item):
+    return [(r["event"], r["card_id"], r["ivl_days"], r["lapses"], r["session_id"]) for r in store.all(
+        "SELECT * FROM item_status_events WHERE item_id=? ORDER BY id", (item,))]
+
+
+async def test_reconciled_review_records_the_card_state_once(store):
+    """Review 1 #18, as a fold (M7 design D17): the acknowledged card makes the item `learning`; a lost answer,
+    once reconciled, records the card's state once, session-less."""
     fake = FakeAnki()
     item = _item(store)
     await anki.sync_outbox(store, _client(fake))
-    fake.add_due_card("", note_id=next(iter(fake.notes)))
+    cid = fake.add_due_card("", note_id=next(iter(fake.notes)), interval=10)
+    assert _status(store, item) == "learning" and _events(store, item) == [("card_ack", cid, None, None, None)]
     (card,) = await anki.due_cards(store, _client(fake), seed.learner(store))
     fake.lose_next.add("answerCards")
     assert await anki.answer(store, _client(fake), seed.learner(store), card, 3) == "sent"
-    assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "new"
+    assert len(_events(store, item)) == 1
     assert await anki.reconcile(store, _client(fake)) == []
-    assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "learning"
+    assert _events(store, item)[1:] == [("card_state", cid, 25.0, 0, None)]
+    assert _status(store, item) == "known"  # 25 days ≥ REVIEW_KNOWN_INTERVAL_DAYS
     await anki.reconcile(store, _client(fake))  # idempotent
-    assert store.one("SELECT status FROM knowledge_items WHERE id=?", (item,))["status"] == "learning"
+    assert len(_events(store, item)) == 2
+
+
+async def test_an_answer_moves_the_item_with_its_card_known_then_lapsed(store):
+    fake = FakeAnki()
+    item = _item(store)
+    await anki.sync_outbox(store, _client(fake))
+    nid = next(iter(fake.notes))
+    fake.add_due_card("", note_id=nid, interval=10)
+    (card,) = await anki.due_cards(store, _client(fake), seed.learner(store))
+    assert await anki.answer(store, _client(fake), seed.learner(store), card, 3) == "acked"
+    assert _status(store, item) == "known"
+    fake.add_due_card("", note_id=nid)
+    (card,) = await anki.due_cards(store, _client(fake), seed.learner(store))
+    assert await anki.answer(store, _client(fake), seed.learner(store), card, 1) == "acked"
+    assert _status(store, item) == "lapsed"  # the same card was known and its lapses grew
+
+
+async def test_observe_cards_sees_changes_made_in_anki_a_deleted_and_a_restored_card(store):
+    fake = FakeAnki()
+    item = _item(store)
+    await anki.sync_outbox(store, _client(fake))
+    cid = next(iter(fake.cards))
+    learner = seed.learner(store)
+    assert await anki.observe_cards(store, _client(fake), learner) == 1  # first state of the card
+    assert await anki.observe_cards(store, _client(fake), learner) == 0  # unchanged: nothing written
+    fake.set_card(cid, interval=30)  # reviewed in Anki itself
+    assert await anki.observe_cards(store, _client(fake), learner) == 1 and _status(store, item) == "known"
+    saved = fake.delete_card(cid)  # cardsInfo now answers with an empty entry
+    assert await anki.observe_cards(store, _client(fake), learner) == 1 and _status(store, item) == "new"
+    assert await anki.observe_cards(store, _client(fake), learner) == 0  # already gone
+    fake.cards[cid] = saved  # restored in Anki
+    assert await anki.observe_cards(store, _client(fake), learner) == 1 and _status(store, item) == "known"
+    assert [e[0] for e in _events(store, item)] == ["card_ack", "card_state", "card_state", "card_gone",
+                                                    "card_state"]
+
+
+async def test_observe_cards_writes_nothing_when_anki_is_closed(store):
+    fake = FakeAnki()
+    item = _item(store)
+    await anki.sync_outbox(store, _client(fake))
+    fake.down = True
+    with pytest.raises(anki.AnkiUnavailable):
+        await anki.observe_cards(store, _client(fake), seed.learner(store))
+    assert [e[0] for e in _events(store, item)] == ["card_ack"]
+
+
+async def test_reconcile_skips_a_learner_being_forgotten_and_others_still_reconcile(store):
+    """Round 10 #2: a marked learner's `sent` answer is not read, so another learner's boundary never meets a
+    refused `card_state`."""
+    fake = FakeAnki()
+    mia = seed.learner(store)
+    leo = store.insert("learners", kind="learner", display_name="Leo", created_at="t")
+    for who in (mia, leo):
+        cid = fake.add_due_card(f"word {who}")
+        card = anki.DueCard(cid, None, "", 3)
+        fake.lose_next.add("answerCards")
+        assert await anki.answer(store, _client(fake), who, card, 3) == "sent"
+    store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (mia,))
+    assert await anki.reconcile(store, _client(fake)) == []
+    states = dict(store.all("SELECT learner_id, state FROM review_answers"))
+    assert states == {mia: "sent", leo: "acked"}
+
+
+async def test_a_learner_marked_between_the_claim_and_the_ack_keeps_the_note_id(store):
+    """Round 10 #3: the `card_ack` is written after the outbox acknowledgement, so its refusal loses nothing."""
+    fake = FakeAnki()
+    item = _item(store)
+    learner = seed.learner(store)
+    real = fake.handle
+
+    def mark_during_add(request):
+        response = real(request)
+        if b'"addNote"' in request.content:
+            store.execute("UPDATE learners SET forgetting=1 WHERE id=?", (learner,))
+        return response
+
+    fake.handle = mark_during_add
+    rep = await anki.sync_outbox(store, _client(fake))
+    assert rep.acked == 1
+    row = store.one("SELECT state, anki_note_id FROM anki_outbox WHERE knowledge_item_id=?", (item,))
+    assert row["state"] == "acked" and row["anki_note_id"] == next(iter(fake.notes))
+    assert _events(store, item) == []  # refused and logged, not raised

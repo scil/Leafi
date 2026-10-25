@@ -49,7 +49,9 @@ ADR-0017, ADR-0018 and ADR-0013 v2 change the shape above in one migration (ADR-
 | `miscues` | + `cycle_id` (the owning cycle); + `origin` (`substitution`/`deletion`/`supplied`); `unsure_reason` + `unclear`; `expected_token_index` stays the index at `page_revision_id`, the revision of creation (tokens are found by `miscue_id`); `observation_id` stays nullable (a supplied miscue has none); partial unique index on `(page_read_id, page_revision_id, expected_token_index) WHERE status = 'candidate'` | ADR-0013 → align rule 7, Supplying a word, Cycles, Practice |
 | `practices` | `outcome` + `unclear`, `idle`; `attempt` 1–2 per miscue across activities | ADR-0013 → Practice |
 | `page_revisions` | `tokenizer_version` 2 for new revisions (token boundaries unchanged) | ADR-0013 → `norm()` v2 |
-| `knowledge_items` | kind + `pattern`; status + `ignored`; status changed only by `item_status.apply` | ADR-0017 §6.2 |
+| `knowledge_items` | kind + `pattern`; status + `ignored`; status changed only by `item_status.apply`, a cache of the fold over `retrieval_events` and `item_status_events` | ADR-0017 §6.2 |
+| `item_status_events` | migration 8: learner_id, item_id, at, day (household date), event (`ignore`/`unignore`/`card_ack`/`card_state`/`card_gone`), source (`brain`/`learner`/`owner`/`anki`), session_id? (set only for `ignore`/`unignore`), activity_id?, card_id?, ivl_days?, lapses?, revlog_id?, revlog_type?; append-only but for `activity_id`; backfilled with one `card_ack` per acknowledged card | M7 design D17 |
+| `decision_records` | migration 8: learner_id, session_id, at, turn, record (json: the observation's leaves with their `book` flag, the menu, the decision, the executed activity and its outcome); written from M7e | M7 design D19 |
 | `encounters` | trigger + `teach_ok`, `teach_incorrect` | ADR-0013 → Difficulties |
 | `anki_outbox` | + `front`, `back`, `sentence` with provenance; written only by `add_cards` | ADR-0017 §7.2 |
 | `review_answers` | `ease IN (1,2,3,4)` | ADR-0017 §3.1 |

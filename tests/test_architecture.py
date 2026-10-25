@@ -164,6 +164,7 @@ MAINTENANCE_COLUMNS: dict[str, set[str]] = {
                     "card_ids",  # Anki card ids
                     "attempted_fields", "last_acked_fields",  # JSON of field hashes
                     "last_error"},  # an AnkiConnect error string
+    "item_status_events": {"activity_id"},  # an id, set NULL by `forget --session` before its activities go
 }
 _INSERT = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\{\}|\w+)", re.IGNORECASE)
 _UPDATE = re.compile(r"UPDATE\s+(\{\}|\w+)\s+SET\s+(.*?)(?:\s+WHERE\b|$)", re.IGNORECASE | re.DOTALL)

@@ -72,7 +72,7 @@ def test_v6_to_v7_drops_every_provenance_column_and_equals_a_fresh_file(v6, tmp_
     migrated = sqlite3.connect(str(v6))
     fresh = Store(tmp_path / "fresh.db")
     assert storage.schema_of(migrated) == storage.schema_of(fresh.conn)
-    assert migrated.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 7
+    assert migrated.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     for table in ("activities", "brain_calls", "utterances", "encounters", "learner_notes", "book_notes",
                   "anki_outbox"):
         cols = _columns(migrated, table)
@@ -98,7 +98,7 @@ def test_files_at_4_and_5_reach_7_in_one_run(tmp_path):
     v5_file(v5, V5_ROWS)
     storage.migrate_file(v4, "Ada")
     storage.migrate_file(v5)
-    assert _version(v4) == _version(v5) == 7
+    assert _version(v4) == _version(v5) == SCHEMA_VERSION
     for path in (v4, v5):
         conn = sqlite3.connect(str(path))
         assert "provenance_class" not in _columns(conn, "utterances")
@@ -116,17 +116,17 @@ def test_a_failure_in_step_7_leaves_version_6_and_reruns(v6):
         storage.migrate_file(v6, _hook=fail)
     assert _version(v6) == 6 and _counts(v6) == before
     storage.migrate_file(v6)
-    assert _version(v6) == 7
+    assert _version(v6) == SCHEMA_VERSION
 
 
 def test_a_cleanup_cut_off_after_the_commit_completes_on_the_next_run(v6, monkeypatch):
     real = storage._cleanup
     monkeypatch.setattr(storage, "_cleanup", lambda conn: False)  # the process died before VACUUM
     res = storage.migrate_file(v6)
-    assert _version(v6) == 7 and not res.cleaned
+    assert _version(v6) == SCHEMA_VERSION and not res.cleaned
     monkeypatch.setattr(storage, "_cleanup", real)
     again = storage.migrate_file(v6)
-    assert again.from_version == 7 and again.cleaned
+    assert again.from_version == SCHEMA_VERSION and again.cleaned
     wal = Path(str(v6) + "-wal")
     assert CANARY.encode() not in v6.read_bytes() + (wal.read_bytes() if wal.exists() else b"")
 
@@ -140,6 +140,6 @@ def test_the_migrate_command_reports_the_cleanup(settings, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_settings", lambda: settings)
     assert cli.main(["migrate"]) == 0
     out = capsys.readouterr().out
-    assert "from schema 6 to 7" in out and "cleanup complete" in out and "ADR-0019" in out
+    assert f"from schema 6 to {SCHEMA_VERSION}" in out and "cleanup complete" in out and "ADR-0019" in out
     assert cli.main(["migrate"]) == 0
-    assert "already at schema 7; cleanup complete" in capsys.readouterr().out
+    assert f"already at schema {SCHEMA_VERSION}; cleanup complete" in capsys.readouterr().out
