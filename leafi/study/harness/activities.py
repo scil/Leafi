@@ -768,6 +768,125 @@ async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dic
     return "completed", {"questions": asked, "answered": answered}
 
 
+# ---------------------------------------------------------------- teach_items, recall_items (ADR-0017 §3.1, §3.4)
+
+
+async def _ask_item(w: World, aid: int, i: int, item: int, key: str, prompt: str, expect: str):
+    """One item's question and its score. Returns (outcome, utterance, ended): outcome `success` / `fail` /
+    `unavailable` / `known` (the learner said "I know this word": the item is `ignored`, source learner, D17);
+    `ended` is the activity's own status when the question ended it (idle, a page turn)."""
+    from leafi.study.brain import scoring
+
+    s, io, cfg = w.s, w.inputs, w.settings
+    owner = ("act", aid, f"item{i}")  # D21: each item its own prompt
+    await io.ask(owner, prompt)
+    u = await io.listen(CHECK_ANSWER_S if io.voice else cfg.study_idle_s, owner, accepts_page=True)
+    s.checkpoint()
+    if (late := _late_pages(w, aid)) is not None and s.on_page is not None:
+        s.on_page(late)  # D21: remembered; the next boundary opens it
+    if u is None and not io.voice:
+        s.latch.terminate("idle_session")
+        return "unavailable", None, "idle_session"
+    ctl = controls.parse(u.text) if u is not None else None
+    if ctl is not None and ctl.kind in ("page", "next_page"):
+        _store_utterance(w, u, "control")
+        _page_turn(w, ctl)  # like a quiz, these kinds cannot end `page_turned` (§3.1): the next boundary opens it
+        return "unavailable", None, "completed"
+    if s.take_skip() or u is None:
+        return "unavailable", None, None
+    if ctl is not None and ctl.kind == "know":
+        _store_utterance(w, u, "control")
+        try:
+            item_status.record(w.store, s.learner_id, item, "ignore", "learner", tz=cfg.household_tz,
+                               known_days=cfg.review_known_interval_days, session_id=s.session_id, activity_id=aid)
+        except learner_store.LearnerUnavailable:
+            log.info("ignore of a learner being forgotten not recorded")
+        await io.line("teach_known")
+        return "known", u, None
+    _store_utterance(w, u, "answer")
+    if expect == "item_used":
+        outcome = await scoring.item_used(s, u, key, prompt)
+    elif expect == "cloze_word":
+        outcome = scoring.cloze_word(u, key, w.word_info)
+    else:
+        outcome = scoring.item_said(u, key, w.word_info)
+    return outcome, u, None
+
+
+async def _score_item(w: World, aid: int, item: int, key: str, outcome: str, u, sentence: str,
+                      explanation: str | None) -> None:
+    """§3.4: `success` / `fail` write a retrieval event and an encounter (`teach_ok` / `teach_incorrect`, §8.6)."""
+    if outcome == "success":
+        await w.inputs.line("check_correct")
+    elif outcome == "fail":
+        await w.inputs.line("teach_answer", word=key)
+    if outcome not in ("success", "fail"):
+        return
+    _retrieval(w, item, aid, outcome, "typed" if u.typed else "heard_confident")
+    knowledge.add_encounter(w.store, item, session_id=w.s.session_id,
+                            trigger="teach_ok" if outcome == "success" else "teach_incorrect",
+                            context_sentence=sentence, explanation_en=explanation)
+
+
+async def teach_items(w: World, act: Activity, aid: int) -> tuple[str, dict]:
+    """The Brain-written explanation of each item, then its prompt, scored by `expect` (§3.1, §3.4; the content
+    was checked at construction, D15)."""
+    w.activity_started = time.monotonic()
+    results: list[str] = []
+    await w.inputs.line("teach_intro", count=len(act.content["items"]))
+    for i, t in enumerate(act.content["items"]):
+        if w.activity_over():
+            break
+        await w.inputs.say(t["explanation"])
+        outcome, u, ended = await _ask_item(w, aid, i, t["item_id"], t["key"], t["prompt"], t["expect"])
+        results.append(outcome)
+        if ended:
+            return ended, {"items": len(results), "results": results}
+        await _score_item(w, aid, t["item_id"], t["key"], outcome, u, t["sentence"], t["explanation"])
+    return "completed", {"items": len(results), "results": results}
+
+
+def _cue(w: World, item: int, key: str) -> tuple[str, str, str] | None:
+    """`code` content for recall (§3.3): the item's stored explanation (say the word), else its stored sentence with
+    the word blanked (fill it in); (prompt, expect, sentence), or None when neither is stored."""
+    from leafi.study.brain.kinds import CLOZE
+
+    e = w.store.one("SELECT explanation_en, context_sentence FROM encounters WHERE knowledge_item_id=? AND "
+                    "explanation_en IS NOT NULL AND explanation_en != '' ORDER BY id DESC LIMIT 1", (item,))
+    if e is not None:
+        return phrases.say("recall_meaning", explanation=e["explanation_en"]), "item_said", e["context_sentence"]
+    for r in w.store.all("SELECT context_sentence FROM encounters WHERE knowledge_item_id=? AND context_sentence != '' "
+                         "ORDER BY id DESC", (item,)):
+        ws = words(r["context_sentence"])
+        k = [x.lower() for x in words(key)]
+        for j in range(len(ws) - len(k) + 1):
+            if [x.lower() for x in ws[j:j + len(k)]] == k:
+                blanked = " ".join(ws[:j] + [CLOZE] + ws[j + len(k):])
+                return phrases.say("recall_cloze", sentence=blanked), "cloze_word", r["context_sentence"]
+    return None
+
+
+async def recall_items(w: World, act: Activity, aid: int) -> tuple[str, dict]:
+    """Cued recall of items due by the §6.2 spacing, from their stored explanation (no generation, §3.1)."""
+    w.activity_started = time.monotonic()
+    marks = ",".join("?" * len(act.params["item_ids"]))
+    keys = {r["id"]: r["key"] for r in w.store.all(
+        f"SELECT id, key FROM knowledge_items WHERE id IN ({marks}) AND learner_id=?",
+        (*act.params["item_ids"], w.s.learner_id))}
+    todo = [(i, keys[i], c) for i in act.params["item_ids"] if i in keys and (c := _cue(w, i, keys[i]))]
+    results: list[str] = []
+    await w.inputs.line("recall_intro", count=len(todo))
+    for n, (item, key, (prompt, expect, sentence)) in enumerate(todo):
+        if w.activity_over():
+            break
+        outcome, u, ended = await _ask_item(w, aid, n, item, key, prompt, expect)
+        results.append(outcome)
+        if ended:
+            return ended, {"items": len(results), "results": results}
+        await _score_item(w, aid, item, key, outcome, u, sentence, None)
+    return "completed", {"items": len(results), "results": results}
+
+
 KINDS = {"read_listen": read_listen, "practise_errors": practise_errors, "review_anki": review_anki,
          "read_aloud": read_aloud, "add_cards": add_cards, "break": break_, "wait": wait, "end": end, "quiz": quiz,
-         "learner_questions": learner_questions}
+         "learner_questions": learner_questions, "teach_items": teach_items, "recall_items": recall_items}

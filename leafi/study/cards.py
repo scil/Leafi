@@ -28,8 +28,10 @@ def check(store: Store, learner_id: int, item_id: int, fields: dict[str, str], s
                  "o.learner_id=? AND o.front IS NOT NULL AND lower(k.key)=lower(?) AND k.id != ?",
                  (learner_id, item["key"], item_id)):
         return "reject", "a card for this word already exists"
+    from leafi.study.items import UNKNOWN  # one notion of unknown for ranking and cards (M7 design O6)
+
     others = [r["key"] for r in store.all("SELECT key FROM knowledge_items WHERE learner_id=? AND id != ? AND "
-                                          "status IN ('new','learning')", (learner_id, item_id))]
+                                          f"status IN ({','.join('?' * len(UNKNOWN))})", (learner_id, item_id, *UNKNOWN))]
     if any(_contains(sent, k) for k in others):
         return "flag", "another unknown word is in the sentence"
     return "pass", ""

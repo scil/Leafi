@@ -72,6 +72,12 @@ LINES: dict[str, list[str]] = {
     "questions_unavailable": ["I can't answer that one right now."],
     "questions_again": ["I didn't quite catch that. Can you ask again?"],
     "review_prompt_eases": ["Remember this one? \"{front}\" (again / hard / good / easy)"],
+    "teach_intro": ["Let's learn {count} new word(s) from the story."],
+    "teach_answer": ["The word was \"{word}\"."],
+    "teach_known": ["Great, you know that one already."],
+    "recall_intro": ["Let's remember {count} word(s) from before."],
+    "recall_meaning": ["Which word means this: {explanation}?"],
+    "recall_cloze": ["Which word fits here? {sentence}"],
 }
 
 _counters: dict[str, itertools.count] = {}

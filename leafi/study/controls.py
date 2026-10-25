@@ -17,7 +17,7 @@ MAX_SPOKEN_WORDS = 6
 
 @dataclass(frozen=True)
 class Control:
-    kind: str  # stop skip back page next_page explain fix again hard good easy yes no
+    kind: str  # stop skip back page next_page explain fix again hard good easy yes no dont_know know
     n: int | None = None
     text: str | None = None  # explain target / fix new text
     old: str | None = None  # fix: Leafi's (wrong) text
@@ -43,6 +43,8 @@ _SPOKEN: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^(?:yes|yeah|yep|sure|ok|okay)$"), "yes"),
     (re.compile(r"^(?:no|nope|no thanks)$"), "no"),
     (re.compile(r"^i (?:don't|do not) know$"), "dont_know"),
+    # M7 design D17: asks for the current item in teach_items / recall_items to be `ignored`; elsewhere a noop
+    (re.compile(r"^i (?:already )?know (?:this|that) (?:word|one)$"), "know"),
 ]
 
 
@@ -61,7 +63,7 @@ def parse_typed(text: str) -> Control | None:
     if not m:
         return None
     cmd, rest = m.group(1).lower(), m.group(2).strip()
-    if cmd in ("stop", "skip", "again", "hard", "good", "easy", "yes", "no"):
+    if cmd in ("stop", "skip", "again", "hard", "good", "easy", "yes", "no", "know"):
         return Control(cmd, typed=True)
     if cmd == "back":
         return Control("back", n=_to_int(rest) or 1, typed=True)

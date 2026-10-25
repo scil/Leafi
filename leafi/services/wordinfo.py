@@ -67,6 +67,10 @@ class LocalWordInfo:
                 found.append(name)
         if found:
             self.words = frozenset(words)
+        cyplex = Path(models_dir) / "wordlists" / "cyplex.txt"
+        self.cyplex: frozenset[str] | None = frozenset(
+            x.strip().lower() for x in cyplex.read_text(encoding="utf-8").splitlines() if x.strip()) \
+            if cyplex.exists() else None
         self._phones: dict[str, frozenset[str]] = {}
         self._lemmas: dict[str, frozenset[str]] = {}
         self._phonemize = self._load_phonemizer()
@@ -135,6 +139,11 @@ class LocalWordInfo:
         from lemminflect import getAllLemmas
 
         return bool(getAllLemmas(w))
+
+    def band(self, w: str) -> int:
+        """The level band for ranking new items (`leafi.study.items`): 0 in CYP-LEX (children's books, ages
+        7–12), 1 outside it; 0 for every word when the list is not installed."""
+        return 0 if self.cyplex is None or w in self.cyplex else 1
 
     def phones(self, w: str) -> frozenset[str]:
         if w not in self._phones:

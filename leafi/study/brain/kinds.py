@@ -219,7 +219,58 @@ def add_cards_check(s, sel, value: schemas.AddCardsContent) -> dict | Rejected:
     return {"cards": cards} if cards else Rejected("no cards to add")
 
 
+# ---------------------------------------------------------------- teach_items (ADR-0017 §3.1)
+
+
+CLOZE = "___"
+
+
+def _teach_items(s, sel) -> list[tuple[int, str, Sentence | None]]:
+    """The selected items with the cycle sentence each came from (its first occurrence), in selection order."""
+    sentences = cycle_sentences(s)
+    out = []
+    for item, key in _card_items(s, sel):
+        k = " " + " ".join(_norms(key)) + " "
+        hit = next((x for x in sentences if k in " " + " ".join(_norms(x.text)) + " "), None)
+        out.append((item, key, hit))
+    order = {i: n for n, i in enumerate(sel.get("item_ids") or ())}
+    return sorted(out, key=lambda t: order.get(t[0], len(order)))
+
+
+def teach_sections(s, sel) -> tuple[Section, ...] | Rejected:
+    items = _teach_items(s, sel)
+    if not items:
+        return Rejected("no new items")
+    return (_section("page", [Leaf(f"{x.rid} (for i{item}): {x.text}", book=True) for item, _, x in items if x]),
+            _section("cycle", [Leaf(f"i{i} '{k}'", book=True) for i, k, _ in items]))
+
+
+def teach_check(s, sel, value: schemas.TeachItemsContent) -> dict | Rejected:
+    """Each taught item is one of the selection, once; its lines pass the deny-list; a cloze prompt has the blank
+    and does not give the word away."""
+    known = {item: (key, x) for item, key, x in _teach_items(s, sel)}
+    taught: dict[int, dict] = {}
+    for t in value.items:
+        item = int(t.item_id[1:]) if t.item_id[:1] == "i" and t.item_id[1:].isdigit() else None
+        if item not in known or item in taught:
+            continue
+        key, sentence = known[item]
+        if not (t.explanation.strip() and t.prompt.strip() and phrases.safe(t.explanation) and phrases.safe(t.prompt)):
+            continue
+        if t.expect == "cloze_word" and (CLOZE not in t.prompt or set(_norms(key)) & set(_norms(t.prompt))):
+            continue
+        taught[item] = {"item_id": item, "key": key, "method": t.method, "explanation": t.explanation.strip(),
+                        "prompt": t.prompt.strip(), "expect": t.expect, "sentence": sentence.text if sentence else ""}
+    order = [i for i, _, _ in _teach_items(s, sel) if i in taught]
+    return {"items": [taught[i] for i in order]} if taught else Rejected("no new items")
+
+
 prompts.TASKS.update({
+    "teach_items": "Teach each item in <cycle> to a young reader: a short `explanation` in simple English (at most "
+                   "300 characters, using the item's sentence in <page> when there is one), then one `prompt` the "
+                   f"learner answers aloud. `expect` is item_said (the answer is the word itself), cloze_word (the "
+                   f"prompt is a sentence with {CLOZE} where the word goes, and does not contain the word) or "
+                   "item_used (the learner makes their own sentence with the word).",
     "quiz": "Write short comprehension questions about the sentences in <page>. Each question cites the sentence "
             "ids it rests on in `evidence`. For completion, recall and wh- questions give `answers` as keyword "
             "sets, every word of every set taken from the cited sentences; open-ended and distancing questions "
@@ -235,4 +286,5 @@ GENERATORS.update({
     "quiz": Generator(schemas.QuizContent, quiz_sections, quiz_check),
     "read_aloud": Generator(schemas.ReadAloudContent, read_aloud_sections, read_aloud_check),
     "add_cards": Generator(schemas.AddCardsContent, add_cards_sections, add_cards_check),
+    "teach_items": Generator(schemas.TeachItemsContent, teach_sections, teach_check),
 })

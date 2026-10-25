@@ -78,7 +78,26 @@ class World:
             open_candidates=tuple(self.ordered_candidates(cyc)) if cyc else (),
             read_sentences=bool(cyc) and self._cycle_read_sentences(cyc),
             cardable_items=tuple(self.cardable_items()),
+            new_item_candidates=tuple(self.new_items(s)) if cyc else (),
+            recall_due=tuple(self.recall_due(s)),
         )
+
+    def new_items(self, s: Session) -> list[int]:
+        """Ranked new-item candidates from the open cycle's read sentences (ADR-0017 §6.2), at most what the
+        cycle's new-item budget has left (R11: the menu offers `teach_items` from these)."""
+        from leafi.study import items
+        from leafi.study.brain import kinds  # lazy: the brain package imports the harness state
+
+        left = s.ledger.cycle_new_left(s.cycle_id)
+        return items.new_candidates(self.store, s.learner_id, [x.text for x in kinds.cycle_sentences(s)],
+                                    self.word_info, left) if left > 0 else []
+
+    def recall_due(self, s: Session) -> list[int]:
+        from leafi.study import item_status
+
+        cfg = self.settings
+        return item_status.recall_due(self.store, s.learner_id, item_status.household_day(cfg.household_tz),
+                                      cfg.review_known_interval_days)
 
     def _cycle_read_sentences(self, cycle_id: int) -> bool:
         return any(loads(r["reading_state"], {}).get("completed") for r in self.store.all(
