@@ -47,5 +47,10 @@ switch ($Button) {
     'study-pc' { cmd /c start "Leafi 读书 (PC 喇叭)" /d E:\GitHub\scil\Leafi cmd /k .venv\Scripts\python.exe -m leafi study --mouth pc; Done }  # 开始读书(PC 喇叭)
     'study-camera' { cmd /c start "Leafi 读书 (摄像头喇叭)" /d E:\GitHub\scil\Leafi cmd /k .venv\Scripts\python.exe -m leafi study; Done }  # 开始读书(摄像头喇叭)
     'brain-probe' { .venv\Scripts\python.exe scripts\probes\brain_compile.py; Done }  # Brain 连通测试
+    'check-snapshot' { .venv\Scripts\python.exe scripts\probes\checks.py snapshot; Done }  # 摄像头截图
+    'check-ocr' { .venv\Scripts\python.exe scripts\probes\checks.py ocr; Done @(1) }  # 页面 OCR 识别
+    'check-mic' { .venv\Scripts\python.exe scripts\probes\checks.py mic; Done @(1) }  # 麦克风测试
+    'check-tts' { .venv\Scripts\python.exe scripts\probes\checks.py tts; Done }  # 语音合成测试
+    'check-speaker' { .venv\Scripts\python.exe scripts\probes\checks.py speaker; Done }  # PC 喇叭试音
     default { Write-Output "Unknown console button: $Button"; exit 2 }
 }
