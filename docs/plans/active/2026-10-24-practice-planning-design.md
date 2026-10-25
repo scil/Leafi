@@ -10,6 +10,8 @@ Plan `2026-10-22-ai-led-study.md` → owner decisions 2026-10-24 (Decision log).
 
 History: rev 2 answered the owner's review of rev 1 (the Brain leads one conversation, orchestrated by pydantic-graph). Rev 3 opened the practice up (a hub around `BrainTurn`; P5's hard rules are all that stays fixed). **Rev 4** answers round 1 (`reviews/2026-10-24-practice-design-round-1-comparison.md`, themes T1–T26, cited as T*n*) and the owner's six answers of 2026-10-24: keep the pydantic-ai `Agent` (T4, against the recommendation, for the features to come), relax M7 D4, send the school when unknown even without the detector (T6), send the child's free speech as a transcript (T18), `stop` keeps an earlier fail (T10), `as_attempt` with `evidence = none` (T8), no re-offer after `EndPractice` and planner-ended words out of the comparison (T17). The upstream check behind the T4 answer (pydantic-ai 2.61.0 and main, 2026-10-24) is in the Decision log. The table at the end maps each theme to its answer.
 
+**Migration number:** this design's "migration 8" is **migration 9** (M5e's ADR-0021 lands as 7, M7's `item_status_events` as 8); renumbered in rev 5.
+
 **Superseded in part (owner, 2026-10-24, after rev 4):** egress now redacts by content only (plan Decision log). P4's stamps, the fail-closed guard and the per-request re-render, the `cloud.text` cases of P1, P5 rule 4 and P7, and P6's `[N, 0]` encoding no longer apply; rev 5 rewrites them once the content-only egress design exists.
 
 Status: rev 4 not reviewed. Per `AGENTS.md`, an increment round with one reviewer (codex, or a fresh Claude while its quota is out); the privacy-only choices (P7) need no review (owner, 2026-10-24). The prototype (step P2) runs before the ADR is written.
