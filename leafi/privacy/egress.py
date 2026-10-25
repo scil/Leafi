@@ -1,8 +1,10 @@
 """The one way out (ADR-0018 §2, M5 design D5–D9, D16): `prepare` at the call, a mediating transport at the wire.
 
 `prepare(destination, purpose, Outgoing(...))` takes a request as fields, before any encoding. Text that came
-from a person is a `Text` with its provenance; a plain string is the caller's own (`system`). It refuses what
-the destination, the purpose or the source learners' settings do not allow, replaces every protected name for a
+from a person or a book is a `Text`; a plain string is the caller's own constant (system text, a schema, a model
+id). It refuses what the destination or the purpose does not allow, never a text for its source (ADR-0021), and
+redacts every text by its content for a cloud destination: the protected-name lists on everything, the name
+detector on every `Text` that is not a book field (`Text.is_book`). It replaces every protected name for a
 cloud destination (`leafi.privacy.pseudonym`; for a model-bound destination such as Ollama, "cloud" is decided per
 model by `destinations.effective`, M7 design D1, and the body's model must be the one named to `prepare`), encodes the fields itself into the exact bytes to send, writes the
 `egress_log` row (`sending`) and returns a `Prepared` holding an attempt token.
@@ -17,8 +19,8 @@ before any byte leaves). Each transmission resolves and connects under a `netgua
 response stream is closed. Refusals are a synthetic 403 (`{"refused": reason}`); a text request is retried once
 on a connect error or a 5xx; a redirect is never followed.
 
-A learner's own words are also run through the name detector (`leafi.privacy.detector`) before they reach a
-cloud destination.
+Every `Text` but a book field is also run through the name detector (`leafi.privacy.detector`) before it reaches
+a cloud destination, so a book's characters keep their names and everything else is scanned (ADR-0021 E2).
 
 M5b: nothing calls this yet (M5c moves every caller). Not here yet, each landing with its callers in M5c: the
 synchronous transport and the `ops` download hops of D16 (doctor, the HF adapter), the WebSocket client (edge-tts
@@ -55,7 +57,6 @@ from leafi.core.storage import Store, _FileLock, now_iso
 from leafi.privacy import destinations as dests
 from leafi.privacy import pseudonym, versions
 from leafi.privacy import secret as keyfile
-from leafi.privacy import settings as privacy_settings
 from leafi.privacy.destinations import Destination
 from leafi.privacy.pseudonym import Mapping
 
@@ -67,7 +68,6 @@ DOWNLOAD_TTL_S = 120.0
 READ_ALLOWANCE_S = 30.0  # a response stream's grant may outlive the token's expiry by this much (D2, D7)
 RETRY_WAIT_S = 0.5
 BUSY_TIMEOUT_MS = 150
-CLOUD_TEXT_CLASSES = ("learner", "derived_from_learner")
 
 
 class Refused(PermissionError):
@@ -76,12 +76,18 @@ class Refused(PermissionError):
 
 @dataclass(frozen=True)
 class Text:
-    """A string with the provenance of ADR-0018 §3: `learner`, `derived_from_learner`, `parent`, `page` or
-    `system`, and the learners it came from."""
+    """A string to send. `book` marks a book field (page text, a sentence, an expected word, a title): the name
+    detector skips it, the lists still apply (ADR-0021 E2). `provenance` and `sources` no longer decide anything
+    in egress; until they go (ADR-0021 E6) a `page` provenance also marks a book field."""
 
     value: str
     provenance: str = "system"
     sources: tuple[int, ...] = ()  # may hold PARENT_SOURCE (0): parent text went into this (M7 design D2)
+    book: bool = False
+
+    @property
+    def is_book(self) -> bool:
+        return self.book or self.provenance == "page"
 
     @property
     def prov(self) -> Provenance:
@@ -378,26 +384,22 @@ class Egress:
         c.execute("BEGIN")
         try:
             snap = versions.snapshot(c, sources) if study else None
-            privacy = {i: privacy_settings.from_row(i, c.execute(
-                "SELECT kind, forgetting, settings FROM learners WHERE id=?", (i,)).fetchone()) for i in sources}
             p = pseudonym.build_read(c, self.key) if cloud else None
         finally:
             c.execute("COMMIT")
-        if cloud:
-            for t in texts:
-                _gate(t, privacy, self.settings)
         mapping = Mapping()
         words = {w.casefold() for t in texts for w in re.findall(r"\w+", t.value)}
         words |= {w.casefold() for s in _plain_strings(out) for w in re.findall(r"\w+", s)}
 
-        det = self.detector() if cloud and any(t.provenance in CLOUD_TEXT_CLASSES for t in texts) else None
+        # Content only (ADR-0021 E1, E2): nothing is refused for its source; the detector scans every Text that is
+        # not a book field. Plain strings are the caller's constants and get the lists only.
+        det = self.detector() if cloud and any(not t.is_book for t in texts) else None
 
         def fill(v: Text | str) -> str:
             if p is None:
                 return v.value if isinstance(v, Text) else v
             if isinstance(v, Text):
-                own = v.provenance in CLOUD_TEXT_CLASSES
-                return p.apply(v.value, mapping, payload_words=words, detector=det if own else None)
+                return p.apply(v.value, mapping, payload_words=words, detector=None if v.is_book else det)
             return p.apply(v, mapping, payload_words=words)
 
         path = out.path.format(**{k: quote(fill(v), safe="") for k, v in out.path_fields.items()})
@@ -432,22 +434,10 @@ class Egress:
         return Prepared(tok.id, tok.method, url, body, body_value, headers, mapping, tok.attempt_id)
 
     def may_send(self, destination: str, model: str | None, text: Text) -> bool:
-        """Whether `prepare` would let this leaf go to `destination` for `model` (M7 design D3): the same gate,
-        made public, so a caller's per-leaf filter and egress cannot disagree. A local destination takes all."""
-        dest = self.registry.get(destination)
-        if dest is None:
-            return False
-        if dests.effective(dest, model, self.settings) != "cloud":
-            return True
-        sources = [s for s in text.sources if s != PARENT_SOURCE]
-        c = self._conn()
-        privacy = {i: privacy_settings.from_row(i, c.execute(
-            "SELECT kind, forgetting, settings FROM learners WHERE id=?", (i,)).fetchone()) for i in sources}
-        try:
-            _gate(text, privacy, self.settings)
-        except Refused:
-            return False
-        return True
+        """Whether `prepare` would let this leaf go to `destination` (M7 design D3). Since ADR-0021 no text is
+        refused for its source, so every leaf may go to a known destination, redacted; the per-leaf filter that
+        calls this goes with ADR-0021 E6."""
+        return self.registry.get(destination) is not None
 
     def contains_protected(self, text: str) -> bool:
         """Whether `text` holds a listed name (TTS routing, design D13): such a line is spoken locally."""
@@ -670,25 +660,6 @@ def _walk(v, fill):
     if isinstance(v, list | tuple):
         return [_walk(x, fill) for x in v]
     return v
-
-
-def _gate(t: Text, privacy: dict[int, privacy_settings.LearnerPrivacy], settings: Settings) -> None:
-    """ADR-0018 §3 for a cloud destination: a learner's words only with every source learner allowing it; text
-    of parent origin (a mixed output carrying PARENT_SOURCE, M7 design D2) only with CLOUD_PARENT_TEXT on too."""
-    if PARENT_SOURCE in t.sources and not getattr(settings, "cloud_parent_text", False):
-        raise Refused("parent text may not leave (CLOUD_PARENT_TEXT off)")
-    if t.provenance in CLOUD_TEXT_CLASSES:
-        learners = [s for s in t.sources if s != PARENT_SOURCE]
-        if not learners:
-            raise Refused(f"{t.provenance} text without its source learners")
-        for s in learners:
-            p = privacy.get(s)
-            if p is None or not p.cloud_text_allowed:
-                raise Refused(f"learner {s}'s own words may not leave: cloud.text off, a guest, or not a learner")
-    elif t.provenance == "parent" and not getattr(settings, "cloud_parent_text", False):
-        raise Refused("parent text may not leave (CLOUD_PARENT_TEXT off)")
-    elif t.provenance not in ("page", "system", "parent"):
-        raise Refused(f"unknown provenance {t.provenance!r}")
 
 
 # ---------------------------------------------------------------- the transport

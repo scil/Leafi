@@ -156,9 +156,9 @@ async def test_a_body_or_header_the_adapter_did_not_prepare_is_refused(world):
     assert [r[3:] for r in _log(w)] == [("failed", 0)] * 3  # refused before any reservation
 
 
-async def test_learner_words_need_cloud_text_not_a_school_answer(world):
-    """Owner decision 2026-10-24 (M7 design A1): an unanswered school no longer keeps a learner's words local;
-    they leave pseudonymised (the lists, and the detector for an unlisted school)."""
+async def test_text_is_redacted_by_content_and_never_refused_for_its_source(world):
+    """ADR-0021 E1 (owner 2026-10-24): no text is refused for where it came from — a learner with `cloud.text` off,
+    a guest, text naming no source learner, parent text with CLOUD_PARENT_TEXT off — it leaves redacted."""
     w = world
     leo = learner_store.create(w.store, "Leo")
     body = {"messages": [{"role": "user", "content": Text("Leo here", "learner", (leo,))}]}
@@ -166,14 +166,15 @@ async def test_learner_words_need_cloud_text_not_a_school_answer(world):
     assert b"Leo" not in sent.body  # no school answer, still pseudonymised
     privacy.set_school(w.store, leo, None)
     privacy.write(w.store, leo, "cloud.text", False)
-    with pytest.raises(eg.Refused, match="cloud.text off"):
-        w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
-    with pytest.raises(eg.Refused, match="without its source"):
-        w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "learner")}), learner_id=w.rocco)
-    w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)  # default on
+    sent = w.egress.prepare("fake", "generate", Outgoing(json=body), learner_id=leo)
+    assert b"here" in sent.body and b"Leo" not in sent.body  # sent, redacted
+    guest = learner_store.create(w.store, "Guest", kind="guest")  # as guests.start_guest stores every guest
+    sent = w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("me and Leo", "learner", (guest,))}),
+                            learner_id=guest)
+    assert b"me and" in sent.body and b"Leo" not in sent.body  # a guest's words leave too, listed names replaced
+    w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "learner")}), learner_id=w.rocco)
     w.settings.cloud_parent_text = False
-    with pytest.raises(eg.Refused, match="parent text"):
-        w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)
+    w.egress.prepare("fake", "generate", Outgoing(json={"t": Text("x", "parent")}), learner_id=w.rocco)
     w.settings.local_models = "local:m1"
     local = w.egress.prepare("local", "generate", Outgoing(json={**body, "model": "m1"}), learner_id=leo,
                              model="m1")  # a local model may read it
@@ -203,7 +204,7 @@ async def test_a_model_bound_destination_is_local_only_for_a_listed_model(world)
     assert not probe.model_bound and dests.effective(probe, None, w.settings) == "local"  # ops: unchanged
 
 
-async def test_an_unlisted_local_model_is_gated_and_pseudonymised(world):
+async def test_an_unlisted_local_model_is_treated_as_cloud_and_redacted(world):
     w = world
     w.settings.local_models = "local:m1"
     sent = w.egress.prepare("local", "generate", Outgoing(json=_local_body("Rocco read it.", w.rocco, "m2")),
@@ -212,9 +213,9 @@ async def test_an_unlisted_local_model_is_gated_and_pseudonymised(world):
     leo = learner_store.create(w.store, "Leo")
     privacy.set_school(w.store, leo, None)
     privacy.write(w.store, leo, "cloud.text", False)
-    with pytest.raises(eg.Refused, match="cloud.text off"):
-        w.egress.prepare("local", "generate", Outgoing(json=_local_body("Leo here", leo, "m2")), learner_id=leo,
-                         model="m2")
+    sent = w.egress.prepare("local", "generate", Outgoing(json=_local_body("Leo here", leo, "m2")), learner_id=leo,
+                            model="m2")
+    assert b"Leo" not in sent.body  # ADR-0021: sent redacted, not refused
     kept = w.egress.prepare("local", "generate", Outgoing(json=_local_body("Leo here", leo, "m1")), learner_id=leo,
                             model="m1")
     assert b"Leo here" in kept.body  # listed: local, as LOCAL_MODELS allows
@@ -225,9 +226,9 @@ async def _send(w, dest: str, p) -> httpx2.Response:
         return await c.send(p.request())
 
 
-async def test_a_parent_origin_source_passes_admit_and_is_gated_by_cloud_parent_text(world):
+async def test_a_parent_origin_source_passes_admit_and_is_never_gated(world):
     """M7 design D2 / S1: source 0 marks parent origin in a mixed output. It never reaches the version snapshot
-    as a 'learner 0' (that refused every such request at admit), and a cloud send needs CLOUD_PARENT_TEXT."""
+    as a 'learner 0' (that refused every such request at admit); since ADR-0021 no source gates a send."""
     from leafi.core.provenance import PARENT_SOURCE
 
     w = world
@@ -240,12 +241,9 @@ async def test_a_parent_origin_source_passes_admit_and_is_gated_by_cloud_parent_
     p = w.egress.prepare("fake", "generate", Outgoing(path="/v1/messages", json=mixed), learner_id=w.rocco)
     assert (await _send(w, "fake", p)).status_code == 200
     w.settings.cloud_parent_text = False
-    with pytest.raises(eg.Refused, match="parent text"):
-        w.egress.prepare("fake", "generate", Outgoing(json=mixed), learner_id=w.rocco)
+    w.egress.prepare("fake", "generate", Outgoing(json=mixed), learner_id=w.rocco)
     only_parent = {"t": Text("x", "derived_from_learner", (PARENT_SOURCE,))}
-    w.settings.cloud_parent_text = True
-    with pytest.raises(eg.Refused, match="without its source"):  # names no learner: refused (round 4 #10)
-        w.egress.prepare("fake", "generate", Outgoing(json=only_parent), learner_id=w.rocco)
+    w.egress.prepare("fake", "generate", Outgoing(json=only_parent), learner_id=w.rocco)
     assert _log(w)[:2] == [("local", "generate", w.rocco, "sent", 1), ("fake", "generate", w.rocco, "sent", 1)]
 
 
@@ -485,6 +483,10 @@ async def test_the_detector_settles_off_at_once_and_never_loads_on_the_loop_in_a
     body = Outgoing(json={"m": Text("Rocco here", "learner", (w.rocco,))})
     with runtime.attributed(w.rocco), pytest.raises(eg.Refused, match="detector not ready"):
         e.prepare("fake", "generate", body, learner_id=w.rocco)
+    with runtime.attributed(w.rocco), pytest.raises(eg.Refused, match="detector not ready"):  # any non-book text
+        e.prepare("fake", "generate", Outgoing(json={"m": Text("a hint", "system")}), learner_id=w.rocco)
+    with runtime.attributed(w.rocco):  # book text alone does not wait for the detector (ADR-0021 E3)
+        e.prepare("fake", "generate", Outgoing(json={"m": Text("Rocco went home.", book=True)}), learner_id=w.rocco)
     gate.set()
     assert e.detector() == "DET" and e.detector_state == "ready"  # outside a session: waits for the load
     broken = eg.Egress(w.settings, registry=w.egress.registry, env_file=None)

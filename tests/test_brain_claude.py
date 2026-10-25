@@ -60,27 +60,32 @@ async def test_the_learner_context_ends_with_its_own_cache_breakpoint_on_the_wir
     assert marked == ["</learner_context>"]  # with the system text's: two breakpoints in all
 
 
-async def test_a_learners_words_are_replaced_by_their_substitute_when_they_may_not_leave(claude):
+async def test_a_learners_words_leave_redacted_never_as_their_substitute(claude):
+    """ADR-0021 E1: with `cloud.text` off a learner's words still leave, redacted by content; the substitute is
+    no longer used."""
     w, brain = claude
     privacy.write(w.store, w.rocco, "cloud.text", False)
     w.server.replies.append((200, _MESSAGE(json.dumps({"evidence": "", "strategy": "", "intention": ""})), {}))
-    leaves = [Leaf("he said hose", Provenance("learner", (w.rocco,)), substitute="expected 'horse': substitution"),
+    leaves = [Leaf("Rocco said hose", Provenance("learner", (w.rocco,)), substitute="expected 'horse': substitution"),
               Leaf("a note about him", Provenance("derived_from_learner", (w.rocco,)))]
     rec = await brain.call(_req(w, leaves))
     assert rec.outcome == "ok"
     body = w.server.requests[0]["body"]
-    assert b"hose" not in body and b"a note about him" not in body and b"expected 'horse'" in body
+    assert b"said hose" in body and b"a note about him" in body and b"expected 'horse'" not in body
+    assert b"Rocco" not in body
 
 
-async def test_an_assistant_turn_that_may_no_longer_leave_refuses_the_request(claude):
+async def test_an_assistant_turn_leaves_redacted_after_cloud_text_is_switched_off(claude):
     w, brain = claude
     privacy.write(w.store, w.rocco, "cloud.text", False)
+    w.server.replies.append((200, _MESSAGE(json.dumps({"evidence": "", "strategy": "", "intention": ""})), {}))
     turns = (Turn("user", (Section("page", (Leaf("The fox.", Provenance("page")),)),)),
              Turn("assistant", (Section("plan", (Leaf("Rocco struggles with fox",
                                                       Provenance("derived_from_learner", (w.rocco,))),)),)),
              Turn("user", (Section("turn", (Leaf("next"),)),)))
     rec = await brain.call(_req(w, [], turns=turns))
-    assert rec.outcome == "refused" and w.server.requests == []
+    body = w.server.requests[0]["body"]
+    assert rec.outcome == "ok" and b"struggles with fox" in body and b"Rocco" not in body
 
 
 async def test_over_budget_truncated_and_failed_outcomes(claude):

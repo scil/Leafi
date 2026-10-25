@@ -137,15 +137,13 @@ def test_the_parent_notification_names_a_learner_without_a_school_answer(setting
     assert notifier.body(Counts(kid, None, pages=1)).startswith("A reader")
 
 
-async def test_a_learners_own_words_leave_only_pseudonymised_and_only_when_allowed(settings):
-    """ADR-0018 §3: with `cloud.text` on (and here the school answered, so it is listed), a learner's words reach the Brain with every
-    listed name — the learner's, a sibling's in Chinese, a Latin name inside Chinese text, the school — replaced;
-    with `cloud.text` off they never leave."""
-    import pytest
-
+async def test_a_learners_own_words_leave_only_pseudonymised_whatever_cloud_text_says(settings):
+    """ADR-0018 §3 lists, ADR-0021 E1: a learner's words reach the Brain with every listed name — the learner's, a
+    sibling's in Chinese, a Latin name inside Chinese text, the school (answered here, so listed) — replaced; with
+    `cloud.text` off they still leave, redacted the same way (content only, owner 2026-10-24)."""
     from leafi.core import learner_store
     from leafi.privacy import settings as privacy
-    from leafi.privacy.egress import Outgoing, Refused, Text
+    from leafi.privacy.egress import Outgoing, Text
 
     e, sent = _wire(settings)
     store = Store(settings.db_path)
@@ -165,9 +163,11 @@ async def test_a_learners_own_words_leave_only_pseudonymised_and_only_when_allow
     _no_canary(sent, [NAME, SCHOOL, "Quillfield", "小明"])
     assert "the school" in req.content.decode() and "'s favourite word" in req.content.decode()
     privacy.write(store, kid, "cloud.text", False)
-    with pytest.raises(Refused, match="may not leave"):
-        e.prepare("anthropic", "generate", brain_body(), learner_id=kid)
-    assert len(sent) == 1
+    p = e.prepare("anthropic", "generate", brain_body(), learner_id=kid)
+    async with e.client("anthropic") as c:
+        await c.send(p.request())
+    assert len(sent) == 2
+    _no_canary(sent, [NAME, SCHOOL, "Quillfield", "小明"])
 
 
 async def test_operational_alerts_leave_only_as_catalog_sentences(settings, monkeypatch):
