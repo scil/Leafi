@@ -41,7 +41,6 @@ from leafi.study.harness.world import PageRequest, World
 log = logging.getLogger("leafi.harness.activities")
 
 PRON_CONFIRM_BELOW = 0.5  # scorer threshold for `confirmed` (only when PRON_AUTO_JUDGE is on)
-ANSWER_MIN_CONF = 0.8     # §3.4: a spoken answer counts only when every word is at least this confident
 EASES = {"again": 1, "hard": 2, "good": 3, "easy": 4}
 OUTCOME_OF = {"pass": "matched", "fail": "disagreed", "unclear": "unclear"}
 
@@ -54,7 +53,19 @@ def _store_utterance(w: World, u: Utterance, kind: str) -> int:
 
 
 def _confident(u: Utterance) -> bool:
-    return u.typed or all(x.conf is not None and x.conf >= ANSWER_MIN_CONF for x in u.words)
+    """§3.4 (amended 2026-10-25): the one predicate, also false for every panel line."""
+    from leafi.study.brain.scoring import counts_as_answer
+
+    return counts_as_answer(u)
+
+
+def _panel(u: Utterance) -> bool:
+    return u.source == controls.PANEL
+
+
+def _panel_data(u: Utterance, ctl: controls.Control | None) -> bool:
+    """A panel line that is no command: the owner's text, never the learner's reading, attempt or question."""
+    return _panel(u) and ctl is None
 
 
 def _page_turn(w: World, ctl: controls.Control) -> None:
@@ -178,7 +189,7 @@ async def _explain(w: World, target_text: str | None) -> None:
                             context_sentence=sentence)
 
 
-async def _correct(w: World, ctl: controls.Control, uid: int, typed: bool) -> None:
+async def _correct(w: World, ctl: controls.Control, uid: int, u: Utterance) -> None:
     if not ctl.old or not ctl.text:
         await w.inputs.line("noop")
         return
@@ -189,7 +200,7 @@ async def _correct(w: World, ctl: controls.Control, uid: int, typed: bool) -> No
     hi = min(st.n, st.pcur + math.ceil(1.5 * m) + 8)
     window = (st.tokens[lo].start, st.tokens[hi - 1].end) if st.n and hi > lo else None
     span = corrections.locate(w.rev.text, ctl.old, near, window) or corrections.locate(w.rev.text, ctl.old, near)
-    source = "text" if typed else "voice"
+    source = "parent" if _panel(u) else "text" if u.typed else "voice"  # a panel fix is the owner's (design D8)
     if span is None:
         await w.inputs.line("correction_not_found", old=ctl.old)
         corrections.record_unlocated(w.store, revision_id=w.rev.id, old_text=ctl.old, new_text=ctl.text,
@@ -212,13 +223,15 @@ _HINT_NO = {"no thank you", "not now", "no thanks"}
 
 
 def _hint_reply(u: Utterance) -> str | None:
-    """"yes" or "no" (also "yes please", "no thank you", "not now"); None: not an answer to the hint offer."""
-    flat = " ".join(u.text.lower().replace(",", " ").replace("’", "'").strip(" .!?").split())
-    if flat in _HINT_YES:
-        return "yes"
-    if flat in _HINT_NO:
-        return "no"
-    ctl = controls.parse(u.text)
+    """"yes" or "no" (also "yes please", "no thank you", "not now"); None: not an answer to the hint offer. A panel
+    line answers only by `/yes` or `/no`."""
+    if not _panel(u):
+        flat = " ".join(u.text.lower().replace(",", " ").replace("’", "'").strip(" .!?").split())
+        if flat in _HINT_YES:
+            return "yes"
+        if flat in _HINT_NO:
+            return "no"
+    ctl = controls.of(u)
     return ctl.kind if ctl is not None and ctl.kind in ("yes", "no") else None
 
 
@@ -326,7 +339,10 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                 w.state, _sid, _ = skip_read(w.state)
                 w.save_state()
                 continue
-            ctl = controls.parse(u.text)
+            ctl = controls.of(u)
+            if _panel_data(u, ctl) or (_panel(u) and ctl.kind == "explain"):
+                await io.line("noop")  # §3.4 as amended: the owner's text is never the learner's reading
+                continue
             if ctl is None:
                 n_before = len(w.state.completed)
                 await _reading_utterance(w, u)
@@ -338,7 +354,7 @@ async def read_listen(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                 if ctl.kind == "explain":
                     await _explain(w, ctl.text)
                 else:
-                    await _correct(w, ctl, uid, u.typed)
+                    await _correct(w, ctl, uid, u)
                 continue
             _store_utterance(w, u, "control")
             if ctl.kind in ("page", "next_page"):
@@ -431,7 +447,7 @@ async def practise_errors(w: World, act: Activity, aid: int) -> tuple[str, dict]
             s.checkpoint()
             if (late := _late_pages(w, aid)) is not None:  # a page turned during an earlier try
                 _store_utterance(w, late, "control")
-                _page_turn(w, controls.parse(late.text))
+                _page_turn(w, controls.of(late))
                 return "page_turned", {"practised": done}
             if u is None:
                 miscues.record_practice(w.store, mid, attempt + 1, "idle")
@@ -439,7 +455,10 @@ async def practise_errors(w: World, act: Activity, aid: int) -> tuple[str, dict]
             if s.take_skip():
                 miscues.record_practice(w.store, mid, attempt + 1, "skipped")
                 break
-            ctl = controls.parse(u.text)
+            ctl = controls.of(u)
+            if _panel_data(u, ctl):  # the owner's text is no attempt: no row, no budget used (design D8)
+                await io.line("noop")
+                continue
             if ctl is not None:
                 _store_utterance(w, u, "control")
                 if ctl.kind in ("page", "next_page"):
@@ -506,9 +525,9 @@ async def review_anki(w: World, act: Activity, aid: int) -> tuple[str, dict]:
                 return "idle_session", {"cards": answered}
             if s.take_skip():  # skips the current card
                 break
-            ctl = controls.parse(u.text)
+            ctl = controls.of(u)
             kind = ctl.kind if ctl else None
-            if kind in EASES:
+            if kind in EASES:  # a panel ease goes to Anki as the child's review (owner, 2026-10-25), with no event
                 _store_utterance(w, u, "answer")
                 ease = EASES[kind]
                 await anki.answer(w.store, w.anki, s.learner_id, card, ease, cfg.review_known_interval_days,
@@ -644,7 +663,7 @@ async def quiz(w: World, act: Activity, aid: int) -> tuple[str, dict]:
         if u is None and not io.voice:
             s.latch.terminate("idle_session")
             return "idle_session", {"questions": len(results), "results": results}
-        ctl = controls.parse(u.text) if u is not None else None
+        ctl = controls.of(u) if u is not None else None
         if ctl is not None and ctl.kind in ("page", "next_page"):
             _store_utterance(w, u, "control")
             _page_turn(w, ctl)  # a quiz cannot end `page_turned` (§3.1): the next boundary opens the page
@@ -731,8 +750,13 @@ async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dic
         owner = ("act", aid, f"q{turn}")
         if turn:
             await io.line("questions_next", owner=owner)
-        u = await io.listen(cfg.study_idle_s, owner, accepts_page=True)
-        s.checkpoint()
+        while True:
+            u = await io.listen(cfg.study_idle_s, owner, accepts_page=True)
+            s.checkpoint()
+            if u is None or not _panel_data(u, controls.of(u)):
+                break
+            # owner, 2026-10-25: the questions here come from the child; no `answer` call, no turn used
+            await io.hub.show(Display("status", phrases.say("questions_child_only")))
         if (late := _late_pages(w, aid)) is not None and s.on_page is not None:
             s.on_page(late)
         if u is None:
@@ -740,9 +764,9 @@ async def learner_questions(w: World, act: Activity, aid: int) -> tuple[str, dic
                 break  # no further question
             s.latch.terminate("idle_session")
             return "idle_session", {"questions": asked, "answered": answered}
-        if s.take_skip() or " ".join(u.text.lower().strip(" .!?").split()) in DONE:
+        if s.take_skip() or (not _panel(u) and " ".join(u.text.lower().strip(" .!?").split()) in DONE):
             break
-        ctl = controls.parse(u.text)
+        ctl = controls.of(u)
         if ctl is not None:
             _store_utterance(w, u, "control")
             if ctl.kind in ("page", "next_page"):
@@ -787,7 +811,7 @@ async def _ask_item(w: World, aid: int, i: int, item: int, key: str, prompt: str
     if u is None and not io.voice:
         s.latch.terminate("idle_session")
         return "unavailable", None, "idle_session"
-    ctl = controls.parse(u.text) if u is not None else None
+    ctl = controls.of(u) if u is not None else None
     if ctl is not None and ctl.kind in ("page", "next_page"):
         _store_utterance(w, u, "control")
         _page_turn(w, ctl)  # like a quiz, these kinds cannot end `page_turned` (§3.1): the next boundary opens it
@@ -796,8 +820,9 @@ async def _ask_item(w: World, aid: int, i: int, item: int, key: str, prompt: str
         return "unavailable", None, None
     if ctl is not None and ctl.kind == "know":
         _store_utterance(w, u, "control")
-        try:
-            item_status.record(w.store, s.learner_id, item, "ignore", "learner", tz=cfg.household_tz,
+        try:  # a panel `/know` is the owner's (design D8)
+            item_status.record(w.store, s.learner_id, item, "ignore", "owner" if _panel(u) else "learner",
+                               tz=cfg.household_tz,
                                known_days=cfg.review_known_interval_days, session_id=s.session_id, activity_id=aid)
         except learner_store.LearnerUnavailable:
             log.info("ignore of a learner being forgotten not recorded")

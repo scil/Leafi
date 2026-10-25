@@ -79,6 +79,8 @@ def parse_typed(text: str) -> Control | None:
         return Control("next_page", typed=True)
     if cmd == "explain":
         return Control("explain", text=rest or None, typed=True)
+    if cmd == "say":  # /say TEXT: TEXT as an answer, never a command (session panel design D6)
+        return Control("say", text=rest or None, typed=True)
     if cmd == "fix":  # /fix Y X : Leafi has Y, the book says X
         parts = rest.split(None, 1)
         if len(parts) == 2:
@@ -111,3 +113,14 @@ def parse_spoken(text: str) -> Control | None:
 
 def parse(text: str) -> Control | None:
     return parse_typed(text) if text.strip().startswith("/") else parse_spoken(text)
+
+
+PANEL = "panel"  # `Utterance.source` of a line the owner sent from the session panel
+
+
+def of(u) -> Control | None:
+    """The control in an utterance. A panel line is a typed command or plain data: the spoken grammar never reads
+    it, so a panel answer "stop" or "good" is an answer (session panel design D8)."""
+    if u.source == PANEL:
+        return parse_typed(u.text) if u.text.strip().startswith("/") else None
+    return parse(u.text)

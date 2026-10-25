@@ -81,7 +81,7 @@ async def _confirm(s: Session, question: str) -> bool:
     await s.talk.ask(owner, question)
     u = await s.talk.listen(ASK_S, owner)
     s.checkpoint()
-    ctl = controls.parse(u.text) if u is not None else None
+    ctl = controls.of(u) if u is not None else None
     return ctl is not None and ctl.kind == "yes"
 
 

@@ -53,7 +53,7 @@ def parse_choice(u: Utterance | None) -> str:
     """yes | no | skip | named:<kind> | none | unparsed"""
     if u is None or not u.text.strip():
         return "none"
-    ctl = controls.parse(u.text)
+    ctl = controls.of(u)
     if ctl is not None:
         if ctl.kind in ("yes", "no", "skip"):
             return ctl.kind
@@ -170,7 +170,7 @@ async def negotiate(s: Session, prop, menu: set[str], epoch: tuple) -> Run | _Re
         else:
             await talk.ask(owner, f"Would you like to {describe_choices(s, a, m, st['negotiation.choices'])}?")
         u = await talk.listen(float(st["negotiation.ask_s"]), owner, accepts_page=True)
-        if u is not None and s.on_page is not None and (pc := controls.parse(u.text)) is not None \
+        if u is not None and s.on_page is not None and (pc := controls.of(u)) is not None \
                 and pc.kind == "page":
             s.on_page(u)  # a page turn during an offer: the boundary re-observes for the new page (D21)
             return REOBSERVE

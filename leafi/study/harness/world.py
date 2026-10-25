@@ -152,7 +152,7 @@ class World:
             if found.status == "uncertain":
                 await self.inputs.ask(("world", "confirm_page"), found.message)
                 u = await self.inputs.listen(self.settings.study_idle_s, ("world", "confirm_page"), accepts_page=True)
-                ctl = controls.parse(u.text) if u is not None else None
+                ctl = controls.of(u) if u is not None else None
                 if ctl is not None and ctl.kind == "page" and self.s.on_page is not None:
                     self.s.on_page(u)  # another page named instead of a yes: acquire that one (D21)
                     return None
@@ -185,7 +185,7 @@ class World:
             u = await self.inputs.listen(self.settings.study_idle_s, owner, accepts_page=True)
             if u is None:
                 return None
-            ctl = controls.parse(u.text)
+            ctl = controls.of(u)
             if ctl is not None and ctl.kind == "page":
                 text = None
                 if ctl.path is not None:

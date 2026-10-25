@@ -1,7 +1,9 @@
 """Answer scores (ADR-0017 §3.4; M7 design D16): pure and local, except `item_used`, which is one `judge` call.
 
-A spoken answer counts only when it was confidently recognised (every word ≥ `ANSWER_MIN_CONF`); otherwise the
-outcome is `unavailable`, whatever it seems to say (owner decision 6). Typed answers always count.
+A spoken answer counts only when it was confidently recognised (it has words, every word ≥ `ANSWER_MIN_CONF`);
+otherwise the outcome is `unavailable`, whatever it seems to say (owner decision 6). Typed answers always count,
+except a panel line, which never counts (ADR-0017 §3.4 as amended 2026-10-25). `counts_as_answer` is the one
+predicate for this; the activities use it too.
 - `item_said`: success when the answer's content words are exactly the item's words, each by ADR-0013's pair class
   `exact` or `phones` ("through", "it's through" succeed; "I don't know what through means" does not).
 - `cloze_word`: success when the answer's content words are exactly the cloze word by the same classes (a
@@ -25,7 +27,12 @@ ANSWER_MIN_CONF = 0.8  # untuned
 Outcome = Literal["success", "fail", "unavailable"]
 
 
-def confident(u: Utterance) -> bool:
+PANEL = "panel"  # `controls.PANEL`; not imported, so scoring stays free of the control grammar
+
+
+def counts_as_answer(u: Utterance) -> bool:
+    if u.source == PANEL:
+        return False
     return u.typed or (bool(u.words) and all(w.conf is not None and w.conf >= ANSWER_MIN_CONF for w in u.words))
 
 
@@ -42,14 +49,14 @@ def _same_words(answer: list[str], target: list[str], info: WordInfo) -> bool:
 
 
 def item_said(u: Utterance | None, item_key: str, info: WordInfo | None = None) -> Outcome:
-    if u is None or not u.text.strip() or not confident(u):
+    if u is None or not u.text.strip() or not counts_as_answer(u):
         return "unavailable"
     return "success" if _same_words(_content(u.text), _content(item_key) or [norm(item_key)],
                                     info or NullWordInfo()) else "fail"
 
 
 def cloze_word(u: Utterance | None, cloze: str, info: WordInfo | None = None) -> Outcome:
-    if u is None or not u.text.strip() or not confident(u):
+    if u is None or not u.text.strip() or not counts_as_answer(u):
         return "unavailable"
     return "success" if _same_words(_content(u.text), [norm(cloze)], info or NullWordInfo()) else "fail"
 
@@ -68,7 +75,7 @@ def judge_sections(u: Utterance, item_key: str, prompt: str) -> tuple[Section, .
 async def item_used(s, u: Utterance | None, item_key: str, prompt: str) -> Outcome:
     """`item_used`: one `judge` call (`yes | no | cannot_tell`). An unconfident or empty answer, no eligible
     backend, a timeout or `cannot_tell` → `unavailable` (§3.4)."""
-    if u is None or not u.text.strip() or not confident(u) or s.brain is None:
+    if u is None or not u.text.strip() or not counts_as_answer(u) or s.brain is None:
         return "unavailable"
     from leafi.study.brain import call as bc
     from leafi.study.brain import generate, prompts, routing, schemas

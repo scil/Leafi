@@ -71,6 +71,7 @@ LINES: dict[str, list[str]] = {
     "questions_next": ["Another question? Or say \"done\"."],
     "questions_unavailable": ["I can't answer that one right now."],
     "questions_again": ["I didn't quite catch that. Can you ask again?"],
+    "questions_child_only": ["The questions here come from the child."],  # Faces only: a panel line (design D8)
     "review_prompt_eases": ["Remember this one? \"{front}\" (again / hard / good / easy)"],
     "teach_intro": ["Let's learn {count} new word(s) from the story."],
     "teach_answer": ["The word was \"{word}\"."],

@@ -165,7 +165,13 @@ class Inputs:
                 await self._send.send(_Item("timeout", None, self.owner_at(asked)))
             return
         owner = self.owner_at(u.ended_at if u.ended_at is not None else time.monotonic())
-        ctl = controls.parse(u.text)
+        ctl = controls.of(u)
+        if ctl is not None and ctl.kind == "say":  # `/say TEXT`: TEXT as typed; from the panel, data (design D6)
+            if not ctl.text:
+                self._request(name)  # it satisfied no listen: read the source again
+                return
+            u = typed_utterance(ctl.text, u.source, u.ended_at)
+            ctl = controls.of(u)
         if ctl is not None and ctl.kind == "stop":
             await self.hub.stop_speaking()
             self.latch.terminate("stop")

@@ -98,7 +98,7 @@ async def identify_book(s: Session, w: World, env: Env) -> None:
             await io.line("confirm_title", title=guess.title, owner=("setup", "confirm_title"))
             u = await io.listen(env.settings.study_idle_s, ("setup", "confirm_title"))
             s.checkpoint()
-            ctl = controls.parse(u.text) if u is not None else None
+            ctl = controls.of(u) if u is not None else None
             if ctl is not None and ctl.kind == "yes":
                 title, isbn = guess.title, guess.isbn
     while not title:
@@ -108,7 +108,7 @@ async def identify_book(s: Session, w: World, env: Env) -> None:
         if u is None:
             s.latch.terminate("idle_session")
             s.checkpoint()
-        title = u.text.strip() if controls.parse(u.text) is None else None
+        title = u.text.strip() if controls.of(u) is None else None
     w.book_id = books.find_or_create(s.store, title, isbn, language=env.settings.study_language)
     s.store.execute("UPDATE reading_sessions SET book_id=? WHERE id=?", (w.book_id, s.session_id))
     if env.page_text is not None:
@@ -123,7 +123,7 @@ async def identify_book(s: Session, w: World, env: Env) -> None:
     await io.line("continue_offer", page=printed or prev["page_id"], owner=("setup", "continue"))
     u = await io.listen(env.settings.study_idle_s, ("setup", "continue"))
     s.checkpoint()
-    ctl = controls.parse(u.text) if u is not None else None
+    ctl = controls.of(u) if u is not None else None
     if ctl is not None and ctl.kind == "yes":
         w.page_id, w.pending = prev["page_id"], None  # read_listen opens it with range `rest` (§8.5)
 
@@ -356,7 +356,7 @@ def _drain_late(w: World) -> None:
 
 def _page_request(w: World, u) -> None:
     """A page turn heard outside an activity (`/page N`, `--text FILE`, or the Eye) becomes the pending page."""
-    ctl = controls.parse(u.text)
+    ctl = controls.of(u)
     text = None
     if ctl is not None and ctl.path is not None:
         try:
