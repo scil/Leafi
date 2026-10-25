@@ -140,4 +140,8 @@ mechanism; this table only lists the buttons.
 - [x] 2026-10-25 round 2 (codex on rev 2, 13 findings) → rev 3 (`/do` restated on activity cancellation); round 3
   (codex on D7, 9 findings: cancelling at any await is unsafe) → rev 4 (`/do` at safe points; TD-29, TD-30); owner:
   show the safe-point rule in the UI; round 4 (fresh Claude for codex, out of quota; 0 High) → rev 5.
-- [ ] Optional: a codex increment round on rev 5 (quota back 20:06). Then implementation, design steps 1–8.
+- [x] 2026-10-25 owner: start implementation without the optional codex round on rev 5; design docs committed
+  (2f6f55a).
+- [x] 2026-10-25 design step 1 (7e667d5): ADR-0017 §1, §2.1, §3.4 amended; `scoring.counts_as_answer` is the one
+  predicate; `controls.of`, `/say`; every D8 site; `tests/test_panel_lines.py` (13 tests); full suite 1142 passed.
+- [ ] Design steps 2–8.
