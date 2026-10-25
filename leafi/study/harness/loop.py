@@ -255,8 +255,10 @@ async def deliver(s: Session, w: World, env: Env, summ: dict) -> None:
 
 
 async def extract_notes(s: Session, w: World, env: Env, summ: dict) -> None:
-    """§7.1 post-session learner notes: M7 (no Brain yet); skipped for guests."""
-    summ["notes"] = "skipped"
+    """§7.1 post-session learner notes (M7 design D18), skipped for guests and without a Brain."""
+    from leafi.study.brain import notes
+
+    await notes.extract_notes(s, w, env, summ, deadline_s=EXTRACT_S - 1.0)
 
 
 async def run_session(env: Env) -> int:

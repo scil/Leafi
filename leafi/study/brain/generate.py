@@ -91,7 +91,7 @@ async def boundary_wait(s, call):
 def learner_context(s) -> Section:
     """The session-level block every `generate`, `answer` and `judge` request starts with, after the system text
     and marked for prompt caching (owner decision 2026-10-24, "give Claude enough information"): the learner's
-    Difficulties and this cycle's errors, expected and heard (learner notes join in M7d). Byte-stable: a fixed
+    Difficulties, this cycle's errors, expected and heard, and the current learner notes (D18). Byte-stable: a fixed
     order and fixed formatting, rebuilt only when its inputs change (another learner, another cycle, a new
     error); heard words are non-book leaves that egress redacts by content (ADR-0021 E1; D3's substitute went with
     E6)."""
@@ -99,7 +99,10 @@ def learner_context(s) -> Section:
     errors = () if s.cycle_id is None else tuple(tuple(r) for r in s.store.all(
         "SELECT id, expected, heard, origin FROM miscues WHERE cycle_id=? AND status='candidate' ORDER BY id",
         (s.cycle_id,)))
-    inputs = (s.learner_id, s.cycle_id, tuple((w, f"{x:.1f}") for w, x in weights), errors)
+    from leafi.study.brain import notes
+
+    inputs = (s.learner_id, s.cycle_id, tuple((w, f"{x:.1f}") for w, x in weights), errors,
+              tuple(notes.current_notes(s.store, s.learner_id)))
     if s.learner_context is not None and s.learner_context[0] == inputs:
         return s.learner_context[1]
     leaves = [Leaf(f"difficulty '{w}' {x}", book=True) for w, x in inputs[2]]
@@ -107,6 +110,7 @@ def learner_context(s) -> Section:
         leaves.append(Leaf(f"error '{expected}' {origin}", book=True))
         if heard:
             leaves.append(Leaf(f"heard '{heard}' for '{expected}'"))
+    leaves += [Leaf(f"note: {text}") for _nid, text in inputs[4]]
     section = Section("learner_context", tuple(leaves or [Leaf("nothing recorded yet")]), cache=True)
     s.learner_context = (inputs, section)
     return section

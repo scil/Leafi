@@ -42,6 +42,7 @@ class ObservationInput:
     new_items: tuple[Item, ...] = ()
     recall_due: tuple[Item, ...] = ()
     cardable: tuple[Item, ...] = ()
+    notes: tuple[str, ...] = ()  # the learner's current notes (§7.1), the Brain's own interpretation
     menu: tuple[str, ...] = ()
     default_chain: tuple[str, ...] = ()
     last_activity: dict | None = None  # kind, status, counts: Leafi's own record, no text
@@ -72,6 +73,7 @@ def observe(o: ObservationInput) -> Observation:
     if o.unread_from is not None:
         page.append(Leaf(f"unread from s{o.page_read_id}.{o.unread_from}"))
     memory = [Leaf(f"difficulty '{w}' {weight:.1f}", book=True) for w, weight in o.difficulties[:10]]
+    memory += [Leaf(f"note: {text}") for text in o.notes]  # not a book field: egress redacts it by content
     cycle = []
     for c in o.candidates:
         rid = f"m{c.miscue_id}"

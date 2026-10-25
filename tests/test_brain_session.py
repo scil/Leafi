@@ -42,9 +42,12 @@ async def test_the_brain_proposes_the_activity_and_its_reason_is_offered(setting
     assert tuple(row) == ("read_listen", "brain", "brain")
     assert any("Reading first keeps the story going." in t for t in e.face.texts)  # D13: its own reason
     assert model.requests and model.requests[0].purpose == "decide"
-    calls = e.store.all("SELECT purpose, outcome FROM brain_calls WHERE session_id=?", (sid,))
+    calls = e.store.all("SELECT purpose, outcome FROM brain_calls WHERE session_id=? AND purpose='decide'", (sid,))
     assert calls and all(tuple(c) == ("decide", "ok") for c in calls)
     assert summary(e.store, sid)["arm"] == "brain"
+    # D18: after the session one `generate` for notes; this mock has no reply for it, so none are written
+    notes = e.store.all("SELECT purpose FROM brain_calls WHERE session_id=? AND purpose='generate'", (sid,))
+    assert notes and e.store.one("SELECT COUNT(*) AS n FROM learner_notes")["n"] == 0
 
 
 async def test_without_an_answer_the_default_chain_decides_and_the_session_stays_in_the_brain_arm(settings):

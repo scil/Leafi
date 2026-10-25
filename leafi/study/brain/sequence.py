@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from leafi.study import knowledge
 from leafi.study.brain import call as bc
-from leafi.study.brain import generate, prompts, schemas
+from leafi.study.brain import generate, notes, prompts, schemas
 from leafi.study.brain.filler import with_filler
 from leafi.study.brain.observe import Candidate, Item, ObservationInput, observe
 from leafi.study.harness.menu import MENU_ORDER
@@ -66,7 +66,8 @@ def gather(s, w, menu: set[str], chain: list[str]) -> ObservationInput:
     return ObservationInput(
         page_read_id=w.read_id, sentences=sentences, unread_from=unread, difficulties=difficulties,
         candidates=cands, new_items=items(facts.new_item_candidates), recall_due=items(facts.recall_due),
-        cardable=items(facts.cardable_items), menu=tuple(k for k in MENU_ORDER if k in menu),
+        cardable=items(facts.cardable_items), notes=tuple(t for _, t in notes.current_notes(store, learner)),
+        menu=tuple(k for k in MENU_ORDER if k in menu),
         default_chain=tuple(chain), last_activity=dict(last) if last else None,
         session={"elapsed_min": round(s.ledger.minutes(), 1), "autonomy": s.autonomy,
                  "brain_units_left": round(s.ledger.limits.brain_calls - s.ledger.brain_spent, 2)},
@@ -108,6 +109,7 @@ def to_spec(spec, obs) -> Spec | None:
 async def sequence(s, w, brain: bc.Brain, menu: set[str], chain: list[str]):
     """One `decide` (§3.3). Returns a Proposal, None (the default chain decides), or REOBSERVE_PAGE."""
     obs = observe(gather(s, w, menu, chain))
+    epoch = s.epoch()
     ctx = generate.context(s, generate.moment(s))  # D14: decide and construction share the boundary's moment
     mouth = s.mouth
     policy = prompts.policy_text(autonomy=s.autonomy, age_band=None)
@@ -126,6 +128,8 @@ async def sequence(s, w, brain: bc.Brain, menu: set[str], chain: list[str]):
         s.boundary.override = "brain_unavailable"
         return None
     d = result.value
+    if d.records:  # §7.1: written before the next activity, each on its own, while this epoch is live (D18)
+        notes.apply_records(s, w, d.records, obs.ids, epoch)
     rationale = d.rationale.strategy if d.rationale is not None and d.rationale.strategy.strip() else None
     return Proposal(to_spec(d.activity, obs), to_spec(d.alternative, obs) if d.alternative else None,
                     rationale, d.say_before, d.records)

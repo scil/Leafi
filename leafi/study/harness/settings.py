@@ -41,6 +41,7 @@ SPEC: dict[str, tuple[object, object]] = {
     "limits.activity_max_min": (8, (1, 30)),
     "limits.activities_per_cycle": (6, (1, 20)),
     "limits.brain_calls_per_session": (40, (0, 200)),
+    "limits.extract_calls": (2, (0, 5)),  # the post-session allowance of `extract_notes` (§2, §7.1)
     "policy.sequencer": ("brain", ("brain", "default")),
     "policy.explore_share": (0.1, (0.0, 1.0)),
     "reading.interrupt": ("stuck_only", ("never", "stuck_only", "sentence_end")),
