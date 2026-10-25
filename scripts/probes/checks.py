@@ -62,6 +62,25 @@ async def snapshot(settings: Settings, *, show: bool = True) -> Path | None:
     return path
 
 
+def _ocr_parameters(settings: Settings, backend, data: bytes) -> None:
+    """The evaluation window: the parameters the page OCR runs with, and the score of every orientation (the
+    session stops at the first that reads like a page; this reads all four, so the choice can be seen)."""
+    from leafi.services.ocr import rapidocr
+
+    if not isinstance(backend, rapidocr.RapidOcr):
+        print(f"     backend {settings.ocr_backend}: no per-rotation scores")
+        return
+    print(f"     params: {backend.version}, auto-rotate {'on' if backend.auto_rotate else 'off'}, "
+          f"MIN_GOOD_LINES {rapidocr.MIN_GOOD_LINES}, confident = conf >= 0.85 and > 3 chars, "
+          f"rotation order {rapidocr.ROTATIONS}")
+    eng = backend._load()
+    scores = []
+    for angle in (0, *rapidocr.ROTATIONS):
+        res = rapidocr.to_result(eng(data if angle == 0 else rapidocr.rotated(data, angle)))
+        scores.append(f"{angle}°: {res.good_lines} confident / {len(res.lines)}")
+    print(f"     rotations: {', '.join(scores)}")
+
+
 async def ocr(settings: Settings, file: Path | None) -> int:
     from leafi.core.ports import Frame
     from leafi.services import ocr as ocr_service
@@ -74,8 +93,10 @@ async def ocr(settings: Settings, file: Path | None) -> int:
         print(f"FAIL ocr {settings.ocr_backend}: {state} {detail}")
         return 1
     backend = ocr_service.REGISTRY.create(settings.ocr_backend, settings)
+    data = Path(path).read_bytes()
+    _ocr_parameters(settings, backend, data)
     t = time.monotonic()
-    res = await backend.read(Frame(Path(path).read_bytes()))
+    res = await backend.read(Frame(data))
     lines = ocr_service.reading_order(res.lines)
     verdict = "ok  " if res.good_lines >= 8 else "WEAK"
     print(f"{verdict} {len(lines)} lines, {res.good_lines} confident, rotation {res.rotation}°, "
