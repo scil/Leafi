@@ -1,0 +1,25 @@
+Leafi
+Copyright (C) 2026 scil
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero
+General Public License as published by the Free Software Foundation, version 3 (see LICENSE), with the
+additional terms below.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
+License for more details.
+
+Additional terms under section 7 of the GNU Affero General Public License
+
+a. Names and marks (section 7(e)). This license does not grant any right to use the name "Leafi", its logo,
+   or any name or mark of its authors, except to describe truthfully that a work is derived from Leafi.
+
+b. Origin (section 7(c)). Nobody may present a modified version as the original Leafi, or as made or
+   endorsed by its authors. A modified version must carry a different name, or be clearly marked as
+   modified, and must keep this NOTICE and the copyright lines.
+
+c. Attribution (section 7(b)). A conveyed copy, and the interface of a version offered over a network, must
+   keep the notice "Based on Leafi" with a link to its source.
+
+Third-party components keep their own licenses (for example tools/go2rtc/, and the packages listed in
+requirements*.txt). Model files under models/ are downloaded separately and keep their own licenses.

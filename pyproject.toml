@@ -3,6 +3,8 @@
 name = "leafi"
 version = "0.1.0"
 requires-python = ">=3.12"
+license = "AGPL-3.0-only"  # with the section 7 terms in NOTICE
+license-files = ["LICENSE", "NOTICE"]
 
 [tool.ruff]
 line-length = 110
