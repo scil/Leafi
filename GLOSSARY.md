@@ -235,6 +235,19 @@ The per-learner rule for when a Knowledge item counts as known: enough spaced re
 The persona of everything Leafi says to the Learner: coach and teammate, equal, funny, never scolding, never babyish.
 _Avoid_: tone, persona
 
+**Session panel**:
+The owner's live view of a running study session, and buttons that move it: the web UI's Reading tab, fed by the `panel` device of a session started with `study --panel` (loopback only). Industry term: operator console.
+_Avoid_: admin page, dashboard
+
+**Panel line**:
+A typed line the owner sends from the Session panel (`Utterance.source = "panel"`). It moves the session and never counts as the Learner's: no evidence, no reading, no practice attempt, never sent to the Brain as the Learner's words.
+
+**Want**:
+A `/do <kind>`: the owner (or the console) names the next Activity. One slot; it takes effect only at a Safe point.
+
+**Safe point**:
+Where a Want may end the running Activity: its next natural step, the start of its next owned prompt, or its next listen (where an Ear switch already ends it); at a Boundary, every exit of negotiation. Speech, Brain calls, OCR and Anki calls finish first.
+
 ## Habits (first track)
 
 **Task**:

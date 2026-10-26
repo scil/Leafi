@@ -191,4 +191,35 @@ mechanism; this table only lists the buttons.
   `study --text --mock --panel` session on a scratch data dir: live view, a panel answer not aligned (`noop`,
   0/3 sentences, `panel_inputs 1`), "Go to this activity: break" switching at once, the "no session" view from the
   database after `/stop`; no console errors. Not checked: dark mode and phone width.
-- [ ] Design step 8.
+- [x] 2026-10-25 design step 8: console buttons `study-pc-panel` (a PC-speaker session with `--panel`) and
+  `study-panel` (the Reading tab) in `scripts/win/run_for_obsidian_console.ps1`, two rows and a folded card in the
+  vault note's 学习 → 读书 (outside the repo); `check-console.js` exit 0 (读书: 4 buttons). The keys were not run by
+  the agent: one speaks through the PC speaker, the other opens windows on the owner's desktop; `--tab read` and
+  `--panel` were checked with `--help`. `study-camera` was not changed (CLAUDE.md: plan mode before anything that
+  can make the camera speak). `GLOSSARY.md` (Session panel, Panel line, Want, Safe point), `docs/ownership-map.md`,
+  `docs/engineering/code-locator.md`.
+- [ ] Open: whether Windows Firewall prompts for the 127.0.0.1 bind (G2); the Reading tab in dark mode and at phone
+  width; the owner's first real session with the panel.
+
+## Surprises & discoveries
+
+- Round 1's three reviewers on one model found 24 themes and no false finding; codex (another model) then found 13
+  more on rev 2 and 9 on rev 3. `/do` drew findings in three rounds running until it was restated on the existing
+  `StaleInput` positions (safe points); cancelling an activity at any await and continuing the session is unsafe
+  in this harness (an Anki answer acknowledged but never recorded, a page request lost during OCR).
+- Two predicates decided "does this answer count" (`activities._confident`, `scoring.confident`); the second made
+  teach and recall score any typed line. Now one, `scoring.counts_as_answer`.
+- Practice settled a token in the stored reading state but not in the World's (`rows.settle_in` fixes both).
+- `security.md`'s egress table had no row for `decide`.
+- Step 5 first wrote the owner's free text into `reading_sessions.summary`, which is "counts and enum strings by
+  construction" (raw UPDATEs are allowed only for that); fixed in step 6 to commands only.
+- Two older harness issues found by codex were recorded, not fixed: TD-29, TD-30.
+
+## Outcomes & retrospective
+
+- Delivered: a running `study --panel` session can be watched and moved from the web UI's Reading tab; every
+  button is one typed line from a fixed table; a panel line never counts as the child's; `/do` acts at safe points
+  and the page says what it waits for. Eight design steps, one commit each, the full suite green after each
+  (1142 → 1205 passed).
+- Lesson for `code-plan-review`: when an interruption is designed, ask first where the code already interrupts
+  safely (here `StaleInput` at a listen), before designing a new cancellation path.
