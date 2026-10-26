@@ -6,7 +6,8 @@
 The labeling view adds page-level fields to Label Studio's OCR template: the page's text (typed once per book
 page: other photos of the same page give only the page id), the printed page number and the condition tags.
 The template's boxes with per-box text stay available but are not needed for CER. Synthetic photos arrive
-already annotated from synthetic.json. Talks only to http://localhost:19080 with the token from stack.env.
+already annotated from synthetic.json. The tag groups come from tags.json; change them with tags.py, which also
+moves the labels already given. Talks only to http://localhost:19080 with the token from stack.env.
 """
 
 from __future__ import annotations
@@ -21,21 +22,15 @@ import evalenv  # noqa: E402
 import requests  # noqa: E402
 
 TITLE = "Leafi OCR"
-TAGS = {
-    "angle": ["0", "90", "180", "270", "tilted"],
-    "hand": ["none", "edge", "covering"],
-    "desk": ["clean", "cluttered"],
-    "light": ["normal", "dim", "glare"],
-    "layout": ["plain", "decorative font", "text around picture", "spread"],
-}
+TAGS = evalenv.tags()
 EXTS = {".jpg", ".jpeg", ".png"}
 
 
-def config() -> str:
+def config(tags: dict[str, list[str]] | None = None) -> str:
     choices = "\n".join(
         f'  <Header value="{k}"/>\n  <Choices name="{k}" toName="image" choice="single" showInline="true">\n'
         + "\n".join(f'    <Choice value="{v}"/>' for v in vals) + "\n  </Choices>"
-        for k, vals in TAGS.items())
+        for k, vals in (TAGS if tags is None else tags).items())
     return f"""<View>
   <Image name="image" value="$image" zoom="true" rotateControl="true"/>
   <Header value="Page id (book-page, for example zog-p12): the same id on every photo of the page"/>
@@ -113,7 +108,7 @@ def push() -> None:
             result = [text_value("page_id", m["page_id"]), text_value("page_text", m["truth"])]
             if m["page_number"] is not None:
                 result.append(text_value("page_number", str(m["page_number"])))
-            result += [choice_value(k, m[k]) for k in TAGS]
+            result += [choice_value(k, m[k]) for k in TAGS if m.get(k)]  # a group added later stays unset
             task["annotations"] = [{"result": result}]
         ls("POST", f"/api/projects/{p['id']}/import", json=[task])
         added += 1

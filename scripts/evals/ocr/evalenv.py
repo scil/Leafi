@@ -6,8 +6,10 @@ to a vendor cloud (the Langfuse SDK defaults to https://cloud.langfuse.com).
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,6 +21,10 @@ TELEMETRY_OFF = {
     "MLFLOW_DISABLE_AGENT_HINT": "1",
 }
 os.environ.update(TELEMETRY_OFF)
+# Piped output (the Obsidian console) defaults to cp1252, which has no → or Chinese: print would raise.
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]  # this checkout (code, git commit)
@@ -29,6 +35,7 @@ EVALS = MAIN / "cache" / "evals"
 DATA = EVALS / "ocr"
 PHOTOS = DATA / "photos"
 TRUTH = DATA / "truth.json"
+TAGS_FILE = HERE / "tags.json"  # the condition tags: group → options; changed only through tags.py
 DATASET = "leafi-ocr"
 os.environ.setdefault("FIFTYONE_DATABASE_DIR", str(EVALS / "fiftyone" / "db"))
 
@@ -47,6 +54,10 @@ def local(url: str) -> str:
 
 for _u in (MLFLOW_URI, PHOENIX_URL, LANGFUSE_URL, LABEL_STUDIO_URL):
     local(_u)
+
+
+def tags() -> dict[str, list[str]]:
+    return json.loads(TAGS_FILE.read_text(encoding="utf-8"))
 
 
 def secrets() -> dict[str, str]:

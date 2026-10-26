@@ -59,6 +59,8 @@ switch ($Button) {
     'eval-add-snapshot' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 add-snapshot; Done }  # 最新截图加入评测集
     'eval-labels-push' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 labels-push; Done }  # 照片同步到 Label Studio
     'eval-labels-pull' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 labels-pull; Done }  # 取回标注
+    'eval-tags-list' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 tags-list; Done }  # 查看标签
+    'eval-tags-edit' { cmd /c start "Leafi 修改标签" /d E:\GitHub\scil\Leafi cmd /k pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 tags; Done }  # 修改标签
     'eval-run-default' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline default; Done }  # OCR 评测(默认)
     'eval-run-probe-k2' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline probe-k2; Done }  # OCR 评测(probe-k2)
     'eval-run-scan-only' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline scan-only; Done }  # OCR 评测(scan-only)

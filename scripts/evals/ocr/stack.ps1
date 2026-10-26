@@ -9,12 +9,13 @@
 #   scripts\evals\ocr\stack.ps1 stop      down + stop the MLflow and FiftyOne processes
 #   scripts\evals\ocr\stack.ps1 add-snapshot   copy cache\checks\snapshot.jpg into the photo set, then labels push
 #   scripts\evals\ocr\stack.ps1 labels-push | labels-pull   Label Studio tasks / annotations (labels.py)
+#   scripts\evals\ocr\stack.ps1 tags | tags-list   change the condition tags and move given labels (tags.py menu) / list them
 #   scripts\evals\ocr\stack.ps1 run -Pipeline default|probe-k2|scan-only   one evaluation run (run.py)
 #
 # Data and secrets live in the main checkout's gitignored cache\evals\ (stack.env is created on first `up`).
 param(
     [Parameter(Mandatory)][ValidateSet('up', 'down', 'mlflow', 'fiftyone', 'status', 'start', 'stop', 'add-snapshot',
-        'labels-push', 'labels-pull', 'run')][string]$Action,
+        'labels-push', 'labels-pull', 'tags', 'tags-list', 'run')][string]$Action,
     [ValidateSet('default', 'probe-k2', 'scan-only')][string]$Pipeline = 'default'
 )
 $ErrorActionPreference = 'Stop'
@@ -150,5 +151,7 @@ switch ($Action) {
     }
     'labels-push' { Invoke-Py @((Join-Path $here 'labels.py'), 'push') }
     'labels-pull' { Invoke-Py @((Join-Path $here 'labels.py'), 'pull') }
+    'tags' { Invoke-Py @((Join-Path $here 'tags.py')) }
+    'tags-list' { Invoke-Py @((Join-Path $here 'tags.py'), 'list') }
     'run' { Invoke-Py @((Join-Path $here 'run.py'), '--pipeline', $Pipeline) }
 }

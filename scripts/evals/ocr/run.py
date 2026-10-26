@@ -56,7 +56,7 @@ from PIL import Image  # noqa: E402
 import leafi.services.ocr.rapidocr as rapid  # noqa: E402
 from leafi.study.page_tracker import is_partial, missing_words, split_number  # noqa: E402
 
-TAG_KEYS = ("angle", "hand", "desk", "light", "layout", "source")
+TAG_KEYS = (*evalenv.tags(), "source")
 EXTS = {".jpg", ".jpeg", ".png"}
 EXPERIMENT = "leafi-ocr"
 
