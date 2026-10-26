@@ -64,6 +64,9 @@ switch ($Button) {
     'eval-run-default' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline default; Done }  # OCR 评测(默认)
     'eval-run-probe-k2' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline probe-k2; Done }  # OCR 评测(probe-k2)
     'eval-run-scan-only' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline scan-only; Done }  # OCR 评测(scan-only)
+    'eval-run-camera' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline default -Source camera; Done }  # OCR 评测(只相机照片)
+    'eval-run-synthetic' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 run -Pipeline default -Source synthetic; Done }  # OCR 评测(只合成照片)
+    'eval-reset-results' { pwsh -NoProfile -File scripts\evals\ocr\stack.ps1 reset-results; Done }  # 清空评测结果
     'eval-netwatch' { pwsh -NoProfile -File scripts\evals\ocr\netwatch.ps1 -Seconds 60 -Control; Done }  # 出站流量检查
     'check-mic' { .venv\Scripts\python.exe scripts\probes\checks.py mic; Done @(1) }  # 麦克风测试
     'check-tts' { .venv\Scripts\python.exe scripts\probes\checks.py tts; Done }  # 语音合成测试

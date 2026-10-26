@@ -10,13 +10,17 @@
 #   scripts\evals\ocr\stack.ps1 add-snapshot   copy cache\checks\snapshot.jpg into the photo set, then labels push
 #   scripts\evals\ocr\stack.ps1 labels-push | labels-pull   Label Studio tasks / annotations (labels.py)
 #   scripts\evals\ocr\stack.ps1 tags | tags-list   change the condition tags and move given labels (tags.py menu) / list them
-#   scripts\evals\ocr\stack.ps1 run -Pipeline default|probe-k2|scan-only   one evaluation run (run.py)
+#   scripts\evals\ocr\stack.ps1 run -Pipeline default|probe-k2|scan-only [-Source all|camera|synthetic]
+#                                   one evaluation run (run.py) over the photos that have page text
+#   scripts\evals\ocr\stack.ps1 reset-results   stop everything, then delete every run's results (MLflow, FiftyOne,
+#                                   Phoenix, Langfuse, ocr\runs); photos, truth.json and Label Studio stay
 #
 # Data and secrets live in the main checkout's gitignored cache\evals\ (stack.env is created on first `up`).
 param(
     [Parameter(Mandatory)][ValidateSet('up', 'down', 'mlflow', 'fiftyone', 'status', 'start', 'stop', 'add-snapshot',
-        'labels-push', 'labels-pull', 'tags', 'tags-list', 'run')][string]$Action,
-    [ValidateSet('default', 'probe-k2', 'scan-only')][string]$Pipeline = 'default'
+        'labels-push', 'labels-pull', 'tags', 'tags-list', 'run', 'reset-results')][string]$Action,
+    [ValidateSet('default', 'probe-k2', 'scan-only')][string]$Pipeline = 'default',
+    [ValidateSet('all', 'camera', 'synthetic')][string]$Source = 'all'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -153,5 +157,22 @@ switch ($Action) {
     'labels-pull' { Invoke-Py @((Join-Path $here 'labels.py'), 'pull') }
     'tags' { Invoke-Py @((Join-Path $here 'tags.py')) }
     'tags-list' { Invoke-Py @((Join-Path $here 'tags.py'), 'list') }
-    'run' { Invoke-Py @((Join-Path $here 'run.py'), '--pipeline', $Pipeline) }
+    'run' { Invoke-Py @((Join-Path $here 'run.py'), '--pipeline', $Pipeline, '--source', $Source) }
+    'reset-results' {
+        docker info --format '{{.ServerVersion}}' *> $null
+        if ($LASTEXITCODE) { Write-Host 'Docker is not running: start Docker Desktop, then click again.'; exit 1 }
+        docker @compose down 2>&1 | Select-Object -Last 1
+        Stop-HostServers
+        # Langfuse (postgres, clickhouse, minio, redis) and Phoenix volumes; label_studio_data holds the labels.
+        foreach ($v in docker volume ls -q --filter 'label=com.docker.compose.project=leafi-eval') {
+            $key = docker volume inspect -f '{{index .Labels "com.docker.compose.volume"}}' $v
+            if ($key -eq 'label_studio_data') { continue }
+            docker volume rm $v | Out-Null
+            Write-Host "deleted volume $v"
+        }
+        foreach ($d in @((Join-Path $evals 'mlflow'), (Join-Path $evals 'fiftyone'), (Join-Path $evals 'ocr\runs'))) {
+            if (Test-Path $d) { Remove-Item -LiteralPath $d -Recurse -Force; Write-Host "deleted $d" }
+        }
+        Write-Host 'Results gone; photos, truth.json and Label Studio kept. Start the tools again before the next run.'
+    }
 }

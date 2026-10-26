@@ -1,10 +1,11 @@
 """OCR evaluation run (trial): Leafi's page OCR on every photo, scored with jiwer, logged to every tool.
 
     .venv-eval\\Scripts\\python scripts/evals/ocr/run.py --pipeline default
-    .venv-eval\\Scripts\\python scripts/evals/ocr/run.py --pipeline probe-k2 [--source synthetic] [--sinks mlflow,phoenix]
+    .venv-eval\\Scripts\\python scripts/evals/ocr/run.py --pipeline probe-k2 [--source synthetic] [--all] [--sinks mlflow,phoenix]
 
 What one run does:
-1. Reads cache/evals/ocr/truth.json (from `labels.py pull`) and every photo under cache/evals/ocr/photos/.
+1. Reads cache/evals/ocr/truth.json (from `labels.py pull`) and the photos under cache/evals/ocr/photos/ that have
+   page text there (`--all`: every photo; `--source camera|synthetic`: one folder).
 2. Runs `RapidOcr` (`purpose="page"`) with the named pipeline's parameters, carrying the remembered angle from
    one photo to the next as the live reader does. Each internal step is an OpenTelemetry span
    (read → remembered pass → probe → probe/scan passes → choose → page number → missing-words guard → score).
@@ -172,7 +173,8 @@ class Photo:
         return [f"{k}:{v}" for k, v in self.tags.items() if v]
 
 
-def photos(source: str) -> list[Photo]:
+def photos(source: str, everything: bool) -> list[Photo]:
+    """The photos of `source` that have page text in truth.json; with `everything`, the unlabeled ones too."""
     truth = {r["file"]: r for r in json.loads(evalenv.TRUTH.read_text(encoding="utf-8"))} \
         if evalenv.TRUTH.exists() else {}
     out = []
@@ -184,7 +186,9 @@ def photos(source: str) -> list[Photo]:
         if source not in ("all", src):
             continue
         r = truth.get(rel, {})
-        num = (r.get("page_number") or "").strip()
+        if not (everything or r.get("page_text")):
+            continue
+        num =(r.get("page_number") or "").strip()
         out.append(Photo(rel, path, r.get("page_text") or None, int(num) if num.isdigit() else None,
                          {**{k: r.get(k, "") for k in TAG_KEYS[:-1]}, "source": src}, r.get("page_id", "")))
     return out
@@ -486,6 +490,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pipeline", choices=sorted(PIPELINES), default="default")
     ap.add_argument("--source", choices=("all", "synthetic", "camera"), default="all")
+    ap.add_argument("--all", action="store_true", dest="everything",
+                    help="also photos with no page text yet (rotation and time only, no CER)")
     ap.add_argument("--sinks", default="fiftyone,mlflow,phoenix,langfuse")
     ap.add_argument("--no-images", action="store_true", help="keep photos out of the traces")
     ap.add_argument("--limit", type=int)
@@ -498,7 +504,9 @@ def main() -> None:
     run_name = args.run_name or f"{args.pipeline}-{stamp}"
     meta = {"pipeline": args.pipeline, "pipeline_version": PIPELINE_VERSION, "git_commit": commit,
             "git_dirty": dirty, "source": args.source, "run": run_name}
-    items = photos(args.source)[: args.limit]
+    items = photos(args.source, args.everything)[: args.limit]
+    if not items:
+        raise SystemExit(f"no {args.source} photo with page text: label one in Label Studio, then labels pull")
 
     exp_id = None
     if "mlflow" in sinks:
