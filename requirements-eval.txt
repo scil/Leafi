@@ -1,0 +1,15 @@
+# Evaluation tools (scripts/evals/ocr/), development only: never installed into .venv, and nothing under
+# leafi/ or agent/ imports them. They live in their own venv because fiftyone and mlflow pull a large tree
+# (docs/research/2026-10-25-ocr-eval-tools-trial.md). Versions are the ones measured there. Install with:
+#   uv venv --python 3.12 .venv-eval
+#   uv pip install --python .venv-eval -r requirements-eval.txt
+fiftyone==1.22.1             # photo dataset, tags, per-run predictions (fo_app.py, run.py)
+mlflow==3.17.2               # runs, parameters, metrics (stack.ps1 mlflow, run.py)
+jiwer==4.0.0                 # CER / WER (run.py)
+arize-phoenix-client==3.5.0  # Phoenix experiments (run.py)
+arize-phoenix-otel==0.17.2   # OTLP spans to Phoenix, MLflow, Langfuse (run.py)
+langfuse==5.0.4              # not imported (run.py reaches Langfuse over OTLP and HTTP); kept from the trial
+# What run.py imports from leafi/ (leafi.services.ocr.rapidocr), same pins as requirements-study.txt.
+rapidocr==3.10.0
+onnxruntime==1.31.0
+portalocker[win32]==4.4.1

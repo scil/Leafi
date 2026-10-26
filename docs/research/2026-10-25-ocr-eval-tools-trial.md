@@ -18,7 +18,7 @@ gitignored `cache/evals/`. Tiers: T1 = measured here or read in the installed pa
 | Traces, datasets, dataset runs, scores | Langfuse 4.70.0 (Docker Compose: web, worker, Postgres, ClickHouse, Redis, MinIO) | `docker-compose.yml` | 19300 (MinIO 19090) |
 
 Versions are the latest releases on 2026-10-25 (PyPI and GitHub releases checked that day). `.venv-eval` is a
-separate uv venv (Python 3.12); the project `.venv` is untouched.
+separate uv venv (Python 3.12) built from `requirements-eval.txt`; the project `.venv` is untouched.
 
 Commands (PowerShell, from the repository root):
 
